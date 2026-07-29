@@ -1,0 +1,67 @@
+name: linguaai
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: linguaai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-linguaai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-linguaai_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-linguaai}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-linguaai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: linguaai-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: linguaai-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI
+
+  minio:
+    image: minio/minio:latest
+    container_name: linguaai-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-linguaai}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-linguaai_dev_password}
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Console
+    volumes:
+      - minio_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+# Note: apps/api, apps/web, and services/* are run via `pnpm dev` (Turborepo)
+# during local development for fast HMR. This compose file provisions only
+# the stateful infrastructure. A separate infrastructure/docker/docker-compose.prod.yml
+# (see docs/DEPLOYMENT.md) defines the containerized production topology.

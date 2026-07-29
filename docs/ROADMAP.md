@@ -1,0 +1,169 @@
+# LinguaAI — Product Roadmap
+
+Status: **v1.1 — Consolidated baseline** · Owner: CPO · Last updated: 2026-07-29
+
+Supersedes Draft v1.0. See [BASELINE.md](BASELINE.md) for the current authoritative summary. This roadmap sequences the 30 product modules from PRD.md §6, plus the additional capabilities identified during the Architecture Review Gate, across three phases and 23 MVP-phase epics. Phase boundaries are defined by product/business readiness, not fixed calendar dates — each phase has explicit exit criteria.
+
+## Phase 1 — MVP (Foundation & Core Learning Loop)
+
+**Goal:** Prove the core value proposition — an AI teacher that assesses, personalizes, and coaches — with a sustainable unit economics model, on web first.
+
+**In scope:**
+- Module 1 — User Identity Platform (email + social auth, RBAC, mandatory admin MFA — ADR-011)
+- Module 2 — AI Language Assessment Engine
+- Module 3 — Personalized Learning Engine
+- Module 4 — AI Teacher Platform (all 7 agents, memory-enabled, single-Orchestrator handoff protocol — ADR-007, RAG-grounded — ADR-008)
+- Module 5 — Course Management System (including AI-assisted content authoring)
+- Module 6 — Vocabulary Intelligence System
+- Module 7 — Speaking Practice System
+- Module 8 — Pronunciation Lab
+- Module 9 — Listening System
+- Module 10 — Reading System
+- Module 11 — Writing Assistant
+- Module 12 — AI Story Generator
+- Module 15 — Gamification Engine (core: XP, streaks, levels, badges, anti-gaming safeguards)
+- Module 19 — Exam Preparation (1–2 exam programs at launch, RAG-grounded scoring)
+- Module 21 — Certificate System (basic completion certificates)
+- Module 22 — Subscription Platform (Free, Premium via Stripe, including trial and cancellation/downgrade flows)
+- Module 23 — Analytics Platform (internal, including CEFR-progression outcome measurement)
+- Module 24 — Admin Platform (content & user management essentials)
+- Module 25 — Notification System (email + push, granular preferences)
+- Module 26 — Security System (full — non-negotiable at every phase; RLS multi-tenancy, mandatory admin MFA)
+- Module 28 — Mobile Application (Flutter, core learning loop, last-write-wins offline sync)
+- Module 29 — AI Infrastructure (gateway, agents, RAG, memory, model management, cost circuit breaker — ADR-012)
+- Module 30 — Internal Platform Services (logging, monitoring, jobs, queues, domain events)
+
+**Deferred out of MVP:**
+- Module 13 — AI Translation Camera → Growth
+- Module 14 — Video Learning → Growth
+- Module 16 — Community Platform → Growth (basic friends/leaderboards may land late-MVP if capacity allows)
+- Module 17 — AI Avatar Teacher → Enterprise/Future
+- Module 18 — Teacher Marketplace → Growth (`TEACHER` role exists at MVP with scoped, non-monetized capability — PRD.md §5.1)
+- Module 20 — Enterprise LMS → Enterprise
+- **Module 22 — Family plan → Version 2, blocked on a fully specified COPPA parental-consent flow (ADR-013); Business plan → Enterprise**
+- Module 27 — Public API Platform → Future
+- Referral/viral growth program, gift subscriptions, cosmetic in-app purchases → Version 1.1 (PRD.md §7)
+
+**Exit criteria (see PRD.md §8 for full detail):**
+- Assessment completion rate ≥ 70%.
+- Voice conversation latency within budget (PERFORMANCE.md §2).
+- 10 launch target languages with complete A1–B2 content, 1 launch UI language (English).
+- Zero open P0/P1 security findings; all 8 Architecture Review blockers closed (see BASELINE.md).
+- Positive or credibly-trending-positive unit economics (AI cost per active user vs. Premium conversion, PRD.md §7).
+
+## MVP implementation epics
+
+23 epics sequence the MVP phase. Full detail (objective, business value, dependencies, complexity, acceptance criteria, risks, deliverables) for each is maintained here as the living, current source — the original Architecture Review draft of this sequence (`ARCHITECTURE_REVIEW.md`, now archived) is preserved for historical reference only.
+
+| # | Epic | Complexity | Key dependency |
+|---|---|---|---|
+| E1 | Foundation & DevOps Bootstrap | L | None (first epic) |
+| E2 | Identity & Access Platform | L | E1 |
+| E3 | Design System & Component Library v1 | M | E1 |
+| E4 | Database Schema & Core Data Layer | L | E1 |
+| E5 | AI Gateway & Agent Orchestration Core | XL | E1, E4 |
+| E6 | AI Language Assessment Engine | L | E4, E5 |
+| E7 | Personalized Learning Engine | L | E4, E6 |
+| E8 | Course Management System | XL | E4 |
+| E9 | Vocabulary Intelligence (SRS) | M | E4, E8 |
+| E10 | Speaking Practice & Speech Pipeline | XL | E5 |
+| E11 | Pronunciation Lab | L | E10 |
+| E12 | Listening & Reading Systems | M | E5, E8 |
+| E13 | Writing Assistant & AI Story Generator | L | E5, E9 |
+| E14 | Gamification Engine | M | E4, E3 |
+| E15 | Subscription & Billing Platform | L | E2, E4 |
+| E16 | Notification System | M | E4, E1 |
+| E17 | Analytics Platform & Instrumentation | L | E4, E6 |
+| E18 | Admin Platform | M | E2, E4, E8 |
+| E19 | Exam Preparation System | L | E5, E13 |
+| E20 | Certificate System | S | E8 |
+| E21 | Mobile Application (Flutter parity) | XL | E2–E17 |
+| E22 | Security Hardening & Compliance Gate | L | E2, E4, E5, E15 |
+| E23 | Public Beta Launch Readiness | M | All prior epics |
+
+Each epic's objective, acceptance criteria, and top risk are cross-referenced against the module/ADR that motivates it above; the epic sequence is reviewed at the start of each sprint planning cycle and updated in place (not forked into a separate tracking document) so this table never drifts from what engineering is actually building.
+
+**Growth/Enterprise-phase epics** (scoped in detail when their phase begins, named now for dependency awareness): E24 Community Platform (module 16), E25 AI Translation Camera (module 13), E26 Video Learning (module 14), E27 Teacher Marketplace (module 18, depends on the `TEACHER`-role decisions made in E2), E28 Enterprise LMS (module 20, depends on E22's RLS work), E29 Public API Platform (module 27, depends on API_GUIDELINES.md's versioning discipline having been followed since E2).
+
+## Feature classification (MVP / V1.1 / V2 / Enterprise / Future Research)
+
+| Feature / Module | Classification | Rationale |
+|---|---|---|
+| User Identity Platform, mandatory admin MFA | **MVP** | Blocks everything; ADR-011 |
+| AI Language Assessment Engine | **MVP** | Core value prop entry point |
+| Personalized Learning Engine | **MVP** | Retention mechanic |
+| AI Teacher Platform (7 agents, Orchestrator handoff, RAG grounding) | **MVP** | Core value prop; ADR-007, ADR-008 |
+| Course Management + AI-assisted content authoring | **MVP** | No product without content; required to hit 10-language scope affordably |
+| Vocabulary Intelligence (SRS) | **MVP** | Low-cost, high-engagement |
+| Speaking Practice, Pronunciation Lab | **MVP** | Signature differentiator |
+| Listening, Reading, Writing, Story Generator | **MVP** | Core skill coverage |
+| Gamification + anti-gaming safeguards | **MVP** | Core engagement loop; safeguards launch-blocking (RISK_REGISTER.md R-15) |
+| Subscription — Free/Premium, trial, cancellation | **MVP** | Revenue; billing needs an off-ramp to launch |
+| Analytics — CEFR-progression outcome measurement | **MVP** | Proves PRD.md §8's core success metric |
+| Admin Platform (core), Notification System | **MVP** | Operate content/support and retention at launch |
+| Security System (full, incl. RLS, MFA) | **MVP** | Non-negotiable |
+| Mobile Application (core loop) | **MVP** | Category-standard usage pattern |
+| AI Infrastructure, Internal Platform Services | **MVP** | Foundational |
+| Referral / viral growth loop | **Version 1.1** | High value, needs its own fraud-prevention design first (RISK_REGISTER.md R-15) |
+| Cosmetic in-app purchases, gift subscriptions | **Version 1.1** | Monetization upside, not core value prop |
+| Proactive AI coaching nudges, selectable AI teacher personality | **Version 1.1** | Engagement upside once baseline usage data exists |
+| Automated re-assessment triggers | **Version 1.1** | Manual/user-triggered re-assessment is an acceptable MVP substitute |
+| Certificate System (public verification depth) | **Version 1.1** | Nice-to-have proof point |
+| Exam Preparation — full 6-program breadth | **Version 1.1** | MVP ships 1–2 programs; breadth is a fast-follow |
+| Full multi-device/offline conflict resolution | **Version 1.1** | MVP ships simpler last-write-wins semantics |
+| AI Translation Camera, Video Learning | **Version 2** | New modality, independent of core loop |
+| Community Platform (full: groups, voice rooms) | **Version 2** | Meaningful moderation investment required first (RISK_REGISTER.md R-16) |
+| **Family plan** | **Version 2** | Blocked on ADR-013's parental-consent flow |
+| Business plan / SSO | **Enterprise** | Depends on E22 RLS work and SSO integration |
+| Enterprise LMS (full) | **Enterprise** | Depends on Business plan, reporting rollups |
+| Teacher Marketplace | **Enterprise** (or late V2) | Depends on `TEACHER` role, payments/payouts, content governance |
+| Public API Platform | **Future Research** | No committed demand signal yet; API_GUIDELINES.md written to not preclude it |
+| AI Avatar Teacher | **Future Research** | Significant unproven infra investment (real-time video generation) |
+| White-labeling / custom branding | **Future Research** | Only relevant once Enterprise demand is validated |
+
+## Phase 2 — Growth (Engagement, Content Breadth, Monetization Depth)
+
+**Goal:** Deepen engagement and monetization once the core loop is validated; expand content modalities and community.
+
+**In scope:**
+- Module 13 — AI Translation Camera
+- Module 14 — Video Learning System (YouTube/subtitle learning)
+- Module 16 — Community Platform (groups, discussions, voice rooms, challenges) — moderation design (RISK_REGISTER.md R-16) precedes launch, not follows it
+- Module 18 — Teacher Marketplace (teacher profiles, courses, revenue sharing, content-governance workflow)
+- Module 19 — Exam Preparation — full breadth across all 6 exam programs
+- Module 21 — Certificate System — public verification, richer achievement records
+- **Module 22 — Family plan, gated on the parental-consent flow required by ADR-013 being fully built and tested**
+- Referral/viral growth program (with fraud prevention designed before launch), gift subscriptions, cosmetic in-app purchases
+- Full mobile offline conflict-resolution UX (superseding MVP's last-write-wins)
+- Expanded language catalog beyond the 10 MVP launch languages; possible additional UI languages (PRD.md §5.1)
+
+**Exit criteria:**
+- Demonstrated retention lift from community/gamification deepening (cohort-measured, not assumed).
+- Teacher Marketplace live with a defined revenue-share model and moderation/quality bar.
+- Family plan's parental-consent flow independently verified against COPPA and relevant app-store child-safety policies before enabling for any user.
+- Video/camera modules meeting the same loading/empty/error/success and accessibility bar as MVP modules (DESIGN_SYSTEM.md §5) — new modalities do not get a lower quality bar.
+
+## Phase 3 — Enterprise & Platform
+
+**Goal:** Open new revenue lines (B2B, marketplace-adjacent, API) once consumer product-market fit and operational maturity (SOC 2-track security posture, DEPLOYMENT.md observability maturity) support enterprise sales cycles.
+
+**In scope:**
+- Module 20 — Enterprise LMS (organization accounts, employee training, reporting, assignments, SCIM roster sync)
+- Module 22 — Subscription Platform — Business plan, SSO (SECURITY.md §2)
+- Module 17 — AI Avatar Teacher (real-time avatars, interactive virtual classroom)
+- Module 27 — API Platform (public Language API / AI education API, developer ecosystem, built on API_GUIDELINES.md conventions)
+- SOC 2 Type II certification pursuit (SECURITY.md §10)
+- Multi-region infrastructure expansion, if justified by enterprise data-residency requirements (MULTITENANCY.md §5, DEPLOYMENT.md §9)
+
+**Exit criteria:**
+- Enterprise LMS live with at least reference-customer validation of reporting/compliance requirements.
+- Public API has documented rate limits, authentication, and a defined support/versioning commitment (API_GUIDELINES.md §10).
+
+## Cross-phase, always-on priorities
+
+These are not phase-gated — they are continuously invested in from MVP onward:
+- Security & compliance (SECURITY.md, MULTITENANCY.md) — no phase ships with known-open critical findings.
+- AI quality evaluation and governance (AI_GOVERNANCE.md §3) — golden-set and factual-accuracy regression testing gates every prompt/model change, every phase.
+- Accessibility (DESIGN_SYSTEM.md §5) — WCAG AA bar applies to every new module, every phase.
+- Documentation currency (CLAUDE.md, CHANGELOG.md) — docs/ updates ship in the same PR as the architectural change they describe, every phase; significant changes get an ADR (DECISIONS.md).
+- Risk register review (RISK_REGISTER.md) — reviewed at every phase transition, not only at MVP planning.
