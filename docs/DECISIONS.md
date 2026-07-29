@@ -86,6 +86,30 @@ Format: Context → Decision → Consequences → Status.
 **Consequences:** Removes a launch blocker by scope reduction rather than compressed delivery; Premium/Family pricing messaging in PRD.md §7 reflects Free/Premium only at MVP.
 **Status:** Accepted. **Resolves Architecture Review blocker #8.**
 
+### ADR-014 — Split test runner: Jest for NestJS surfaces, Vitest elsewhere
+**Context:** Epic E1 (Foundation & Engineering Platform Bootstrap) needs one settled test-runner choice per surface before any package/app is scaffolded — deferring this to each Epic individually would produce inconsistent tooling across the monorepo.
+**Decision:** `apps/api` and all `services/*` (NestJS) use **Jest** — the framework's default, with zero-friction integration for `@nestjs/testing` and decorator/metadata reflection. `apps/web`, `apps/admin`, and all `packages/*` use **Vitest** — faster, native-ESM, the standard for modern Vite/Next.js-adjacent TypeScript code, with no NestJS-specific constraints to work around.
+**Consequences:** Two test runners exist in one monorepo rather than one, which is a real DX cost; accepted because forcing Vitest onto NestJS (or Jest onto the frontend) fights each framework's well-trodden defaults for no functional benefit at this stage. Turborepo's `test` pipeline task treats both uniformly (same `pnpm test` entry point per package regardless of runner). Revisit only if NestJS's own tooling recommends a runner change upstream.
+**Status:** Accepted.
+
+### ADR-015 — Dependency-boundary enforcement via ESLint, not a second monorepo tool
+**Context:** ADR-002's modular-monolith boundary rules (and ARCHITECTURE.md §2.1's bounded-context map) are only real if a broken boundary fails CI — Epic E1 must deliver that enforcement mechanism, not just document the rule.
+**Decision:** Use `eslint-plugin-boundaries` (or equivalent import-boundary ESLint rule) configured against the `apps/ → packages/`, `services/ → packages/`, `packages/ ↛ apps/|services/` dependency direction and the six bounded contexts, rather than adopting a second monorepo/graph tool (e.g., Nx) alongside the already-chosen Turborepo (ADR-001).
+**Consequences:** One monorepo toolchain, not two competing ones; boundary violations surface as a standard lint failure in the existing `pnpm lint` / CI pipeline, with no new tool for engineers to learn. The ruleset requires maintenance as new packages/services are added — owned by whoever's Epic introduces them (CODE_REVIEW_CHECKLIST.md already checks for this).
+**Status:** Accepted.
+
+### ADR-016 — Observability stack: OpenTelemetry SDK, CloudWatch (logs), AWS X-Ray via ADOT (traces), Sentry (errors), Jaeger locally
+**Context:** The Epic E1 Independent Production Readiness Review (2026-07-29, [epics/E1-production-readiness-review.md](epics/E1-production-readiness-review.md)) found E1 shipped the first deployable applications with no logging, metrics, or tracing wired in — a direct contradiction of DEPLOYMENT.md §5's existing "wired in from first deploy, not retrofitted" commitment, and a finding that E1 could not satisfy its own [DEFINITION_OF_DONE.md](DEFINITION_OF_DONE.md). A concrete technology decision was required, not just a restated policy.
+**Decision:** All apps/services instrument via the **OpenTelemetry SDK** (one vendor-neutral instrumentation layer, per OBSERVABILITY.md's existing tooling direction), wrapped in a new shared package `packages/observability` so no app/service hand-rolls its own bootstrap. Export targets: structured JSON logs to **CloudWatch Logs**; traces via the **AWS Distro for OpenTelemetry (ADOT)** collector to **AWS X-Ray**; errors to **Sentry**; metrics via the OTel Metrics SDK to **CloudWatch Metrics** (through the same ADOT collector). Locally, the same OTel SDK exports to a lightweight **Jaeger all-in-one** container (traces) and console/stdout (logs, metrics) via `docker-compose.yml` — no local Prometheus/Grafana stack, to avoid overbuilding local infrastructure ahead of real usage. The correlation ID used in logs, the JSON error envelope's `requestId` field (API_GUIDELINES.md §3), and the OTel trace ID are **the same identifier** — no parallel ID scheme is maintained.
+**Consequences:** One instrumentation layer (OTel) across every language/framework the platform uses, consistent with the AWS-native infrastructure choice (ADR-009); ADOT is AWS's own supported distribution for exactly this CloudWatch/X-Ray export path, minimizing custom glue code. `packages/observability` becomes a required dependency of every `apps/*`/`services/*` skeleton from Epic E1 onward, not bolted on later.
+**Status:** Accepted. **Remediates Architecture Review blocker (Critical 1, E1 review).**
+
+### ADR-017 — Container supply-chain security: Syft (SBOM) + Trivy (scan) + cosign (sign) + GitHub native attestation (provenance)
+**Context:** The same E1 review found no SBOM, image signing, or build-provenance attestation planned for any container image the CI/CD pipeline produces — a direct, named gap against the SLSA supply-chain framework.
+**Decision:** Every container image built in CI passes through a fixed chain before it is eligible for deployment: **Syft** generates an SPDX SBOM → **Trivy** scans the image (and SBOM) for vulnerabilities, blocking on Critical/High severity CVEs with an available fix (CVEs with no fix yet are logged and tracked per SECURITY.md §6's patch SLA, not blocking) → **cosign** signs the image **keylessly** via GitHub Actions OIDC (Sigstore Fulcio/Rekor — no long-lived signing key to manage or leak) → **GitHub's native `actions/attest-build-provenance`** generates a SLSA-aligned provenance attestation → the deploy workflow **verifies** the signature and provenance before referencing the image in an ECS task definition update, and aborts with an alert if verification fails.
+**Consequences:** No new key-management burden (keyless signing); the chain is fully automatable in GitHub Actions with first-party or well-maintained actions, avoiding a custom-built signing pipeline. A CVE with no upstream fix does not perpetually block deployment, but is tracked, not silently ignored.
+**Status:** Accepted. **Remediates Architecture Review blocker (Critical 2, E1 review).**
+
 ---
 
 ## ADR index
@@ -105,5 +129,9 @@ Format: Context → Decision → Consequences → Status.
 | ADR-011 | Mandatory MFA for privileged roles | Accepted |
 | ADR-012 | Platform-level AI cost circuit breaker | Accepted |
 | ADR-013 | Family plan descoped from MVP | Accepted |
+| ADR-014 | Split test runner: Jest (NestJS) / Vitest (elsewhere) | Accepted |
+| ADR-015 | Dependency-boundary enforcement via ESLint | Accepted |
+| ADR-016 | Observability stack: OTel + CloudWatch + X-Ray (ADOT) + Sentry + local Jaeger | Accepted |
+| ADR-017 | Container supply chain: Syft + Trivy + cosign + GitHub attestation | Accepted |
 
 New ADRs are appended, never renumbered or rewritten in place.

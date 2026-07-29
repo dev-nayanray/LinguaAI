@@ -1,6 +1,6 @@
 # LinguaAI — Security, Privacy & Compliance
 
-Status: **v1.1 — Consolidated baseline** · Owner: Security Architect · Last updated: 2026-07-29
+Status: **v1.2 — Consolidated baseline** · Owner: Security Architect · Last updated: 2026-07-29 (updated during the Epic E1 remediation)
 
 Supersedes Draft v1.0. See [BASELINE.md](BASELINE.md) for the current authoritative summary. Deep-dive companions: [MULTITENANCY.md](MULTITENANCY.md) (tenant isolation detail), [AI_GOVERNANCE.md](AI_GOVERNANCE.md) (AI safety governance), [RISK_REGISTER.md](RISK_REGISTER.md) (risk tracking). Security is a launch requirement, not a post-launch hardening pass. This document is binding on every module in PRD.md §6.
 
@@ -62,6 +62,8 @@ LinguaAI handles: authentication credentials, voice recordings, personal writing
 - CSRF protection on cookie-based session flows; CORS explicitly allow-listed per environment, never wildcard in production.
 - Content Security Policy and standard security headers (via Helmet in NestJS) on all responses.
 - Dependency scanning (automated, in CI) and a defined SLA for patching known-critical vulnerabilities.
+- **Container supply-chain integrity (added — ADR-017):** every container image is accompanied by an SBOM (Syft), scanned for vulnerabilities (Trivy, blocking on Critical/High CVEs with an available fix), signed keylessly via cosign/Sigstore (GitHub Actions OIDC — no long-lived signing key), and carries a SLSA-aligned build-provenance attestation (GitHub native `actions/attest-build-provenance`). The deploy pipeline verifies signature and provenance immediately before an image is referenced in an ECS task definition update, aborting with an alert on failure. This closes a gap the Epic E1 Independent Production Readiness Review found: images were previously deployable with no way to prove what was in them or how they were built. Full pipeline: [epics/E1-foundation-platform-bootstrap.md](epics/E1-foundation-platform-bootstrap.md) Part 10, Part 12.
+- **Container hardening:** non-root user, read-only root filesystem, dropped Linux capabilities (`--cap-drop=ALL`, explicit re-adds only if proven necessary), and explicit CPU/memory resource limits on every ECS task definition — CIS Docker Benchmark-aligned controls added during the E1 remediation, not left at container-runtime defaults.
 - File upload handling (voice recordings, OCR camera images) validates content type/size server-side and stores via S3 with virus/malware scanning on ingest, never executed or served from the same origin as the app.
 - **Bot/scraping protection (added)**: WAF-level bot detection mitigates scraping of commercially valuable content endpoints (course/vocabulary content) — a gap the Architecture Review identified, since this content has no protection today beyond standard auth.
 - **Distributed rate limiting**: enforced via a Redis-backed limiter shared across the horizontally-scaled fleet (API_GUIDELINES.md §7) — an in-memory, per-instance limiter would be silently bypassable given the stateless scaling model (ARCHITECTURE.md §7).

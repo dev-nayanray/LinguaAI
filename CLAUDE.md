@@ -34,6 +34,31 @@ Full product/architecture context lives in [`docs/`](docs/). **Start with [docs/
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Dated history of the architecture baseline itself |
 | [docs/ARCHITECTURE_REVIEW.md](docs/ARCHITECTURE_REVIEW.md) | *Archived.* Original review gate findings — historical record only, superseded by BASELINE.md |
 
+### Engineering Execution Framework (mandatory for every Epic — read before writing code)
+
+| Doc | Purpose |
+|---|---|
+| [docs/IMPLEMENTATION_GUIDE.md](docs/IMPLEMENTATION_GUIDE.md) | **Start here for delivery process.** The 20-phase Epic lifecycle and 11 quality gates every Epic must pass |
+| [docs/EPIC_TEMPLATE.md](docs/EPIC_TEMPLATE.md) | Copy per Epic — scope, objective, gate sign-off log |
+| [docs/FEATURE_SPEC_TEMPLATE.md](docs/FEATURE_SPEC_TEMPLATE.md) | Copy per feature — functional requirements, states, acceptance criteria |
+| [docs/TECHNICAL_DESIGN_TEMPLATE.md](docs/TECHNICAL_DESIGN_TEMPLATE.md) | Copy per feature needing real design — feeds the Architecture Gate |
+| [docs/API_SPEC_TEMPLATE.md](docs/API_SPEC_TEMPLATE.md) | Copy per endpoint — feeds the API Gate |
+| [docs/DATABASE_CHANGE_TEMPLATE.md](docs/DATABASE_CHANGE_TEMPLATE.md) | Copy per schema change — feeds the Database Gate |
+| [docs/UI_UX_REVIEW_TEMPLATE.md](docs/UI_UX_REVIEW_TEMPLATE.md) | Copy per screen — feeds the Frontend and Accessibility Gates |
+| [docs/TEST_PLAN_TEMPLATE.md](docs/TEST_PLAN_TEMPLATE.md) | Copy per feature — feeds the Testing Gate |
+| [docs/SECURITY_REVIEW_TEMPLATE.md](docs/SECURITY_REVIEW_TEMPLATE.md) | Copy per security-relevant feature — feeds the Security Gate |
+| [docs/CODE_REVIEW_CHECKLIST.md](docs/CODE_REVIEW_CHECKLIST.md) | Standing checklist every PR reviewer applies |
+| [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) | Standing checklist before any deploy — feeds the Deployment Gate |
+| [docs/DEFINITION_OF_DONE.md](docs/DEFINITION_OF_DONE.md) | The single non-negotiable checklist for calling a feature/Epic "Done" |
+
+### Epic design packages (`docs/epics/`)
+
+Each Epic's filled-out EPIC_TEMPLATE.md + TECHNICAL_DESIGN_TEMPLATE.md lives in `docs/epics/E<n>-<slug>.md`.
+
+| Epic | Design doc | Status |
+|---|---|---|
+| E1 — Foundation & Engineering Platform Bootstrap | [docs/epics/E1-foundation-platform-bootstrap.md](docs/epics/E1-foundation-platform-bootstrap.md) | **Remediated** — [independent review](docs/epics/E1-production-readiness-review.md) returned NO GO (2 Critical + 3 High); [E1-remediation-report.md](docs/epics/E1-remediation-report.md) documents the fix; awaiting a second, independent Architecture Gate review before T1 begins |
+
 ## Repository layout
 
 This is a **Turborepo + pnpm workspaces monorepo**.
@@ -73,6 +98,8 @@ Rules for this layout:
 ## Workflow rule for this repository
 
 Architecture and planning precede feature development. If `docs/` does not yet describe a module, write or update the doc and get it reviewed before implementing the module. Do not scaffold or implement application features until the corresponding module has an approved design in `docs/PRD.md` and, where relevant, `docs/ARCHITECTURE.md`. A significant architecture decision gets a new entry in `docs/DECISIONS.md`, not an implicit choice buried in code — see `docs/CHANGELOG.md` for how baseline changes are tracked over time.
+
+**Once implementation begins**, every Epic (E1–E23, `docs/ROADMAP.md`) follows the mandatory process in `docs/IMPLEMENTATION_GUIDE.md` — the 20-phase lifecycle and 11 quality gates. No Epic skips a phase; no gate is self-approved by its own implementer.
 
 ## Common commands (once the toolchain is installed)
 

@@ -57,7 +57,7 @@ Supersedes Draft v1.0. See [BASELINE.md](BASELINE.md) for the current authoritat
 
 | # | Epic | Complexity | Key dependency |
 |---|---|---|---|
-| E1 | Foundation & DevOps Bootstrap | L | None (first epic) |
+| E1 | [Foundation & Engineering Platform Bootstrap](epics/E1-foundation-platform-bootstrap.md) | L | None (first epic) — **[remediated](epics/E1-remediation-report.md) after NO GO from [independent review](epics/E1-production-readiness-review.md); pending second Architecture Gate review before T1 begins** |
 | E2 | Identity & Access Platform | L | E1 |
 | E3 | Design System & Component Library v1 | M | E1 |
 | E4 | Database Schema & Core Data Layer | L | E1 |

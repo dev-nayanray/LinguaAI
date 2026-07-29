@@ -1,6 +1,6 @@
 # LinguaAI — Deployment & Infrastructure
 
-Status: **v1.1 — Consolidated baseline** · Owner: DevOps Lead · Last updated: 2026-07-29
+Status: **v1.2 — Consolidated baseline** · Owner: DevOps Lead · Last updated: 2026-07-29 (updated during the Epic E1 remediation)
 
 Supersedes Draft v1.0. See [BASELINE.md](BASELINE.md) for the current authoritative summary. SLO targets and alerting policy are owned canonically by [OBSERVABILITY.md](OBSERVABILITY.md); performance budgets by [PERFORMANCE.md](PERFORMANCE.md) — referenced below, not restated.
 
@@ -36,15 +36,16 @@ AWS WAF ── ALB (Application Load Balancer, TLS termination)
 
 ## 2. Containerization
 
-- Every app/service in `apps/` and `services/` ships a multi-stage `Dockerfile` (build stage with full toolchain, slim runtime stage) under `infrastructure/docker/`, producing minimal, non-root production images.
+- Every app/service in `apps/` and `services/` ships a multi-stage `Dockerfile` (build stage with full toolchain, slim runtime stage) under `infrastructure/docker/`, producing minimal, non-root, `node:22-alpine`-based production images (decided during Epic E1's remediation — DECISIONS.md ADR references in epics/E1-foundation-platform-bootstrap.md Part 8) with a read-only root filesystem, dropped Linux capabilities, and explicit ECS CPU/memory resource limits.
 - Images are built and pushed to Amazon ECR by CI (see §4), tagged with the Git SHA — deployments reference immutable image tags, never `:latest` in production.
-- **Container image vulnerability scanning** (Trivy/Grype) is a build-gate step, distinct from and in addition to the source-dependency scan in `security-scan.yml` (§4) — closes a gap the Architecture Review identified where only dependency scanning, not image scanning, was specified.
-- Local development uses the root `docker-compose.yml` for stateful dependencies (Postgres, Redis, MinIO, Mailhog) while apps run natively via `pnpm dev` for fast iteration; `infrastructure/docker/docker-compose.prod.yml` mirrors the production container topology for staging parity testing.
+- **Container supply-chain pipeline (ADR-017):** every image is built → SBOM-generated (Syft) → vulnerability-scanned (Trivy, blocking on Critical/High CVEs with an available fix) → signed keylessly (cosign via GitHub Actions OIDC) → provenance-attested (GitHub native `actions/attest-build-provenance`, SLSA-aligned) → verified at deploy time before an ECS task definition update proceeds. This is a build-gate step, distinct from and in addition to the source-dependency scan in `security-scan.yml` (§4). Full pipeline diagram: [epics/E1-foundation-platform-bootstrap.md](epics/E1-foundation-platform-bootstrap.md) Part 10.
+- Local development uses the root `docker-compose.yml` for stateful dependencies (Postgres, Redis, MinIO, Mailhog, plus a local Jaeger/OTel Collector for observability — OBSERVABILITY.md §3) while apps run natively via `pnpm dev` for fast iteration; `infrastructure/docker/docker-compose.prod.yml` mirrors the production container topology for staging parity testing.
 
 ## 3. Infrastructure as code (`infrastructure/terraform`)
 
-- Modular Terraform: separate modules for networking (VPC/subnets), data (RDS/ElastiCache/S3), compute (ECS services/task definitions), and edge (CloudFront/WAF/Route53) — composed per environment, not duplicated per environment.
-- State stored remotely (S3 backend + DynamoDB lock table), never local state committed to the repo.
+- Modular Terraform: separate modules for networking (VPC/subnets), data (RDS/ElastiCache/S3), compute (ECS services/task definitions, including an ADOT Collector sidecar per task for observability export — OBSERVABILITY.md §3), and edge (CloudFront/WAF/Route53) — composed per environment, not duplicated per environment.
+- State stored remotely (S3 backend + DynamoDB lock table), **with versioning and cross-region replication enabled on the state bucket from Epic E1 onward** — the Terraform state itself is real, valuable content from the first `apply`, unlike product data (which has no cross-region replication story until Epic E4, when real data exists — tracked in RISK_REGISTER.md R-26). Never local state committed to the repo.
+- The RDS data module enables point-in-time recovery and a default 7-day backup retention period from its first creation, regardless of whether the epic creating it populates real data yet — this is the minimum DR foundation Epic E1 established (§6 below), so no later epic has to remember to turn it on.
 - All infrastructure changes go through plan review (`terraform plan` output attached to the PR) before `apply` — no direct production infra changes outside this flow.
 
 ## 4. CI/CD (`.github/workflows`)
@@ -73,7 +74,8 @@ Full standard — logging, tracing, metrics catalog, SLO targets, alerting sever
 - Automated RDS snapshots (point-in-time recovery enabled) with a defined retention window; snapshot restore tested periodically (an untested backup is not a backup).
 - **Cross-region snapshot replication** *(added)* — Multi-AZ protects against an availability-zone failure but not a full regional AWS outage; cross-region backup replication is the minimum DR posture for that scenario, independent of and ahead of any future multi-region *active* expansion (ARCHITECTURE.md §9).
 - S3 versioning enabled on buckets holding user-generated/critical content, with lifecycle policies for cost-managed long-term retention.
-- A documented RTO/RPO target is defined and reviewed before general-availability launch, informing the Multi-AZ/backup/cross-region configuration choices above — verified in Epic E23 (ROADMAP.md).
+- A documented RTO/RPO target is defined and reviewed before general-availability launch, informing the Multi-AZ/backup/cross-region configuration choices above — verified in Epic E23 (ROADMAP.md). **Draft placeholder targets set in Epic E1** (RPO ≤ 24h, RTO ≤ 4h for a full regional failure), explicitly labeled draft and revisited with real production data at E23, not treated as final here.
+- **DR foundation established in Epic E1, before any product data exists** (remediating a gap the E1 Independent Production Readiness Review found): Terraform state bucket versioning + cross-region replication (§3), and RDS point-in-time-recovery + 7-day backup retention enabled by default in the data module from its first creation. Cross-region replication of actual *product* data is intentionally deferred to Epic E4 (when the schema and real data first exist) — tracked in RISK_REGISTER.md R-26, not silently skipped.
 
 ## 6.1 Cost optimization (added)
 

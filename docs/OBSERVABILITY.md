@@ -1,13 +1,14 @@
 # LinguaAI — Observability Standards
 
-Status: **v1.1 — Consolidated baseline** · Last updated: 2026-07-29
+Status: **v1.2 — Consolidated baseline** · Last updated: 2026-07-29 (updated during the Epic E1 remediation)
 
-Canonical reference for logging, metrics, tracing, SLOs, and alerting across every `apps/*` and `services/*`. [DEPLOYMENT.md](DEPLOYMENT.md) §5 summarizes the tooling choices; this document is the detailed standard engineers implement against. Resolves the Architecture Review finding that alerting thresholds were described as "reviewed as scale" with no concrete starting SLOs.
+Canonical reference for logging, metrics, tracing, SLOs, and alerting across every `apps/*` and `services/*`. [DEPLOYMENT.md](DEPLOYMENT.md) §5 summarizes the tooling choices; this document is the detailed standard engineers implement against. Resolves the Architecture Review finding that alerting thresholds were described as "reviewed as scale" with no concrete starting SLOs. **Implementation mechanism (added — ADR-016):** every app/service consumes the shared `packages/observability` package rather than hand-rolling its own logging/tracing/metrics bootstrap — this is what Epic E1 (Foundation & Engineering Platform Bootstrap) delivers, from its first skeleton deploy onward, per the "wired in from first deploy, not retrofitted" requirement in DEPLOYMENT.md §5. See [epics/E1-foundation-platform-bootstrap.md](epics/E1-foundation-platform-bootstrap.md) Part 7–8 and [epics/E1-remediation-report.md](epics/E1-remediation-report.md) for how this standard was made concrete and enforced starting with the platform's first deployable code.
 
 ## 1. Logging standard
 
 - Structured JSON logs from every service, shipped to CloudWatch Logs.
-- Required fields on every log line: `timestamp`, `level`, `service`, `requestId`, `userId` (if authenticated), `tenantId` (if applicable), `message`.
+- Required fields on every log line: `timestamp`, `level`, `service`, `requestId`, `userId` (if authenticated), `tenantId` (if applicable), `message`. **`requestId` is the same identifier as the OpenTelemetry trace ID** (ADR-016) — logs, traces, and the API error envelope's `requestId` field (API_GUIDELINES.md §3) all correlate on one value, not three parallel ID schemes.
+- Request lifecycle logging: an incoming-request log line (method, path, `requestId`) and a response log line (status, duration) bracket every request, emitted by `packages/observability`'s middleware/interceptor — not left to each app to add ad hoc.
 - PII redaction is applied at the logging middleware layer, not left to call-site discipline — raw conversation transcripts, emails, and names are never written to general application logs (SECURITY.md §4); they exist only in the database records designed to hold them.
 - Log levels: `error` (needs investigation), `warn` (unexpected but handled), `info` (significant state change — user registered, subscription changed), `debug` (verbose, disabled in production by default).
 
@@ -16,15 +17,17 @@ Canonical reference for logging, metrics, tracing, SLOs, and alerting across eve
 | Category | Metrics |
 |---|---|
 | Infrastructure | CPU/memory per service, request rate, error rate, p50/p95/p99 latency per endpoint class |
-| Database | Connection pool utilization, query latency, replication lag (once read replicas exist) |
-| Queue | BullMQ queue depth per queue, job failure rate, DLQ depth (EVENT_ARCHITECTURE.md §5) |
+| **Application (baseline, every service)** | `http_request_duration_seconds` (histogram, by route/method/status), `http_requests_total` (counter), `http_errors_total` — emitted from `packages/observability`'s base metric helpers from Epic E1 onward, populated with real label values as each epic adds real routes |
+| Database | Connection pool utilization, `db_query_duration_seconds`, replication lag (once read replicas exist) |
+| Queue | BullMQ queue depth per queue, `queue_job_duration_seconds`, job failure rate, DLQ depth (EVENT_ARCHITECTURE.md §5) |
 | AI/product | Cost per request (by agent/model), latency per pipeline stage (AI_SYSTEM.md §7 / PERFORMANCE.md §2), entitlement-rejection rate, golden-set pass rate trend (AI_GOVERNANCE.md §3), circuit-breaker trip count |
 | Business | Activation rate, D1/D7/D30 retention, Free→Premium conversion, CEFR-progression rate (PRD.md §7–§8) — sourced from `analytics-service`, surfaced on shared dashboards so engineering and product see the same numbers |
 
 ## 3. Tracing
 
-- OpenTelemetry instrumentation across `apps/api` and all `services/*`; a single `requestId`/trace ID propagates through every hop, including the multi-service speaking-practice pipeline (`apps/api` → `speech-service` → `ai-engine` → `speech-service`) — this is the only practical way to diagnose the latency budget in PERFORMANCE.md.
+- OpenTelemetry instrumentation across `apps/api` and all `services/*`, via `packages/observability`; a single `requestId`/trace ID propagates through every hop, including the multi-service speaking-practice pipeline (`apps/api` → `speech-service` → `ai-engine` → `speech-service`) — this is the only practical way to diagnose the latency budget in PERFORMANCE.md.
 - Span naming: `<service>.<operation>` (e.g., `ai-engine.generate-response`, `speech-service.stt-transcribe`).
+- **Export path**: local development exports to a single-container **Jaeger all-in-one** (visualized at `localhost:16686`); staging/production export via the **AWS Distro for OpenTelemetry (ADOT) Collector**, run as an ECS sidecar per task, to **AWS X-Ray** (ADR-016) — one instrumentation layer, environment-appropriate backends.
 
 ## 4. SLOs & error budgets
 

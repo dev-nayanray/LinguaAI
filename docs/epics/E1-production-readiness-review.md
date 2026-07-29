@@ -1,0 +1,221 @@
+# Epic E1 — Independent Production Readiness Review
+
+Status: **Review complete — NO GO pending remediation** · Reviewers: CTO, Principal Enterprise Architect, Principal DevOps Architect, Principal Platform Engineer, Principal Security Engineer, Principal Database Architect, Principal Frontend Architect, Principal Backend Architect, Principal QA Architect, Staff SRE · Reviewed: 2026-07-29
+
+This is an independent review of [E1-foundation-platform-bootstrap.md](E1-foundation-platform-bootstrap.md) ("the design"), performed as the Architecture Gate / Production Readiness Gate under [IMPLEMENTATION_GUIDE.md](../IMPLEMENTATION_GUIDE.md) §3–4. Per that framework's no-self-approval rule, this review was conducted without assuming the design's own Part 15 self-assessment (90/100, "approved to proceed") is correct — every claim in the design was checked against the canonical baseline it cites, not taken at face value.
+
+**No implementation code was written or reviewed — none exists yet.** This is a design-artifact review only.
+
+---
+
+## SECTION 1 — Architecture Validation
+
+| Area | Finding |
+|---|---|
+| Repository architecture | Sound overall. Directory ownership and naming (Part 4) are clear and consistent with ARCHITECTURE.md. |
+| Package boundaries | The dependency-direction table (Part 4) is correct and ADR-015-consistent. **Gap:** the intra-app NestJS module boundary rule (last row of Part 4's table — "enforced via madge/dependency-cruiser") is named but **has no corresponding task in Part 13**. A rule with no implementation task is a rule that doesn't ship. |
+| Domain ownership | **Gap:** `packages/types`/`validation` subpath examples ("identity/, courses/, billing/") name only 3 of the 6 bounded contexts ARCHITECTURE.md §2.1 actually defines (Identity, Learning, **AI Coaching**, **Commerce**, **Community**, **Enterprise**) and use "billing" where the baseline says "Commerce." The subpath convention should be pinned to the exact six context names now, in E1, or every subsequent epic invents its own subpath naming ad hoc. |
+| Build graph | **Contradiction found:** Part 5's build graph states `packages/types, packages/validation (depend on config/utils)`. Part 13's task table has T5 (types) and T6 (validation) depending only on **T1–T2**, not T4 (config) or T7 (utils). One of these is wrong — as written, T5/T6 could be scheduled before their stated dependency is built. |
+| Dependency direction | Correct as designed (Part 4 table), no issue beyond the above. |
+| Layering rules | The controller→service→repository rule (CODING_STANDARDS.md §2) is correctly referenced but, per above, not yet backed by an enforcement task. |
+| Future scalability | Not meaningfully addressed — no discussion of what happens as `packages/types`/`validation` grow large enough to need their own internal parallelization, or how a 7th bounded context would be introduced. Low severity at E1's size, but the section was explicitly asked for and the design is silent. |
+| Team scalability | **Gap:** no `CODEOWNERS` file is planned anywhere in Part 3 (Deliverables) or Part 13 (Tasks), despite "team scalability" being an explicit review criterion. Without it, PR review routing across bounded contexts is manual and will not scale past a handful of engineers. |
+| Monorepo suitability | Turborepo + pnpm is a reasonable, defensible choice (ADR-001). One accepted limitation worth naming explicitly rather than leaving implicit: Turborepo's "affected-only" test/build detection is weaker than Nx's — accepted per ADR-015's rationale (one tool, not two), but should be a named, conscious tradeoff in the design rather than unstated.
+
+**Architecture Score: 82/100**
+
+---
+
+## SECTION 2 — Engineering Validation
+
+| Area | Finding |
+|---|---|
+| TypeScript strategy | Strict mode is stated (CODING_STANDARDS.md §1 reference). **Gap:** no mention of TypeScript project references / composite builds, which matter significantly for both IDE "go to definition" behavior and incremental cross-package typechecking at this repo's scale. Absent from Part 5 and Part 7 entirely. |
+| Workspace strategy | Correct — `workspace:*` protocol, single lockfile. No issue. |
+| Build pipeline | **Finding:** `test` unconditionally `dependsOn: ["build"]` in the `turbo.json` shown (Part 5). For Vitest-based packages (`packages/ui`, `apps/web`), this is atypical — Vitest normally runs directly against TSX/TS source, not compiled output. Forcing a full build before every test run will slow the inner dev loop unnecessarily for the Vitest half of ADR-014's split. Recommend splitting into a source-level `test` (no build dependency) and a `test:integration`/`test:e2e` (build-dependent) task. |
+| Development workflow | **Gap:** no description of how a change to `packages/ui` propagates to `apps/web`'s running dev server. This is one of the most common monorepo pain points (does it hot-reload, or does a developer need to manually rebuild `packages/ui` first?) and is unaddressed anywhere in Part 5 or Part 6. |
+| Local developer experience | Well covered — T23's onboarding smoke test, run by someone other than the implementer, is a genuinely good practice already present in the design. No finding. |
+| Testing strategy | ADR-014's Jest/Vitest split is a reasonable, defensible call. **Ambiguity found:** the design's single `test:e2e` Turborepo task conflates two different things TESTING.md treats separately — NestJS's own `*.e2e-spec.ts` API-level tests (conventionally Jest-run, scoped to `apps/api`) and the root `tests/e2e` Playwright browser-level suite. As written it's unclear which `test:e2e` refers to, or whether both exist under that one task name. |
+| Package versioning | No issue — internal-only `workspace:*`, external publishing correctly deferred. |
+| Release workflow | Git-SHA-only versioning is reasonable for MVP. **Minor gap:** no deployment manifest/registry is proposed beyond "GitHub Actions run history" as the record of what's in production — thin as a long-term source of truth, though acceptable to defer past E1. |
+
+**Engineering Score: 78/100**
+
+---
+
+## SECTION 3 — DevOps Validation
+
+| Area | Finding |
+|---|---|
+| Docker architecture | **Finding:** Part 8 states the runtime base image as "distroless **or** `node:alpine`" — an unresolved either/or, not a decision. Every other tooling choice in this design (and in DECISIONS.md generally) is made decisively with a stated rationale; this one isn't. |
+| Container networking | Local networking (named bridge network) is well specified. **Gap:** production networking — security-group rules between ECS services, and between services and RDS/Redis — is deferred to DEPLOYMENT.md/T16 by reference only; the design doesn't state the *model* (e.g., default-deny with explicit allow rules) even at a principle level. |
+| Local development | Well specified (Part 8 table). No finding beyond the MinIO/Mailhog healthcheck gaps the design already flags as open ("add explicit healthcheck in E1" — correctly self-identified, not a new finding). |
+| Secrets management | Reasonable. **Minor gap:** no explicit mitigation against a developer copying `.env.example`'s labeled dev-password placeholders into a real staging/production `.env` by mistake — low likelihood, but a one-line safeguard (e.g., a boot-time check rejecting known placeholder values outside `NODE_ENV=development`) is cheap and currently unconsidered. |
+| GitHub Actions | Well specified (Part 10). No finding. |
+| Build optimization | Turborepo + `prune` is appropriate. No finding. |
+| CI performance | **Gap:** the "<5 minutes" success metric (Part 1) doesn't state whether it's a cold-cache or warm-cache target. The first-ever CI run has no cache to hit by definition; without this distinction the metric is unfalsifiable. |
+| Disaster recovery readiness | **Significant gap.** DEPLOYMENT.md §6 (already part of the frozen baseline) requires cross-region backup snapshot replication as the minimum DR posture, and separately, Terraform remote state itself needs a backup/versioning story. **Neither is mentioned anywhere in E1's Part 8 or T16.** E1 is silent on DR rather than explicitly deferring it with a reason — for a "Foundation" epic whose entire job is to set the infrastructure pattern every later epic inherits, this should at minimum be a stated, reasoned deferral (e.g., "no real data exists until E4; cross-region replication is scoped to land alongside E4's database work, tracked here"), not an absence. |
+
+**DevOps Score: 74/100**
+
+---
+
+## SECTION 4 — Security Validation
+
+| Area | Finding |
+|---|---|
+| Supply chain security | Frozen lockfile requirement is good. **Gap — SLSA:** no SBOM (Software Bill of Materials) generation and no build-provenance attestation are planned for the artifacts (container images) this pipeline produces. SLSA's core concern is exactly this: can you prove what's in a deployed artifact and how it was built. Absent from Part 11 and Part 12 entirely. |
+| Dependency policy | Reasonable — Dependabot/Renovate gated by the same CI as any PR. No finding. |
+| Branch protection | Well specified, and correctly includes `security-scan` in the required-status-checks list. **Minor gap:** no mention of "dismiss stale approvals on new commits" or a minimum-reviewer-count policy that scales past the founding team. |
+| Secret scanning | Strong — pre-commit **and** CI, correctly framed as defense-in-depth (SECURITY.md §4). No finding. |
+| Code signing | **Gap — scope too narrow.** As written, "code signing" covers only Git commit signing. It does **not** cover **container image signing/provenance** (e.g., Sigstore/cosign) for the images actually pushed to ECR and deployed — which is the artifact that matters most for supply-chain integrity of what runs in production, and is a named CIS/SLSA concern. This is a more consequential gap than the commit-signing item it's currently framed around. |
+| Environment isolation | Staging/production as separate Terraform workspaces is correct. **Gap:** IAM role isolation between environments (can a staging ECS task role ever reach a production secret) is not explicitly stated as "no" — it should be, as a design principle, not left implicit in "workspaces are separate." |
+| Container security | Non-root user is specified (good). **Gaps against CIS Docker Benchmark:** no mention of a read-only root filesystem, no mention of dropping Linux capabilities (`--cap-drop=ALL` plus explicit re-adds only if needed), and no CPU/memory resource limits on ECS task definitions — the last of these is both a security control (resource-exhaustion containment) and a cost-predictability control, and its absence is notable given Part 14 already names "uncontrolled AWS cost" as a risk without connecting it to this specific, concrete mitigation. |
+| Image provenance | Same as "Code signing" above — absent. |
+
+**Note on OWASP ASVS:** ASVS's most relevant verticals (V2 Authentication, V3 Session Management, V4 Access Control) are correctly **not yet applicable** — E1 ships no auth surface. This should be **stated explicitly** in the design (it currently isn't) so a future reader doesn't mistake silence for an oversight; the Security Gate's ASVS-relevant work begins in earnest at E2.
+
+**Security Score: 72/100**
+
+---
+
+## SECTION 5 — Performance Validation
+
+| Area | Finding |
+|---|---|
+| Build performance | Reasonable design (topological build, per-package caching). No finding beyond Section 2's build/test coupling issue. |
+| Turborepo caching | Sound for what it covers; cold/warm ambiguity already noted (Section 3). |
+| Incremental builds | **Gap:** Turborepo's task-level caching is addressed, but *intra-package* incremental TypeScript compilation (`tsc --incremental`, `.tsbuildinfo`) — a complementary, separate optimization — is not mentioned at all. |
+| Dependency graph | Correctly automatic (Turborepo derives it from `package.json`), no finding. |
+| Docker startup | **Gap:** no target or consideration for first-time `docker compose up -d` latency (image pulls for `pgvector/pgvector:pg16`, etc., on a fresh machine) — relevant given the "<15 minute onboarding" success metric depends partly on this and it isn't decomposed. |
+| Local feedback loop | The dev-mode hot-reload gap from Section 2 is the most material finding here — it directly affects day-to-day iteration speed for every engineer, every day, for the life of the project. |
+
+**Performance findings are Medium severity individually, but the hot-reload gap in particular compounds daily across the whole team for the life of the project and deserves attention before T11/T8 are implemented.**
+
+---
+
+## SECTION 6 — Operability Validation
+
+| Area | Finding |
+|---|---|
+| Logging | **Critical gap.** DEPLOYMENT.md §5 (already frozen in the baseline) states structured logging is "wired into `apps/api` and every `services/*` from **first deploy, not retrofitted**." E1 *is* the first deploy. Nothing in Part 6, Part 10, or Part 13's task acceptance criteria requires the skeleton apps to emit structured JSON logs per OBSERVABILITY.md §1 (required fields: `requestId`, `userId`, `tenantId`, `service`, etc.). T10's acceptance criteria mention only the error envelope, not logging format. |
+| Monitoring | **Critical gap**, same root cause. No Sentry, no CloudWatch dashboard, no cost/latency dashboard wiring appears anywhere in E1's scope, despite OBSERVABILITY.md naming this as a from-day-one requirement, not a later epic's job. |
+| Tracing | **Same gap.** OpenTelemetry instrumentation is named in DEPLOYMENT.md §5 as a from-first-deploy requirement; absent from E1 entirely. |
+| Metrics | Same gap — no metrics endpoint or dashboard scaffolding proposed even at hello-world scale. |
+| Health checks | Well designed (Part 8) — this is the one operability area E1 actually covers thoroughly. |
+| Developer diagnostics | **Minor gap:** T23 verifies onboarding *works*; nothing helps a developer self-diagnose *when it doesn't* (no `pnpm doctor`-style script). Low severity. |
+
+**These are the review's most significant findings.** E1 is explicitly the "first deploy" the baseline's own observability commitment refers to, and the design as written does not deliver on it — not as a reasoned deferral, but as an unaddressed gap.
+
+**Operability Score: 55/100** (dragged down specifically by the logging/tracing/metrics gap, which is otherwise a well-executed section)
+
+---
+
+## SECTION 7 — Quality Validation
+
+| Area | Finding |
+|---|---|
+| Definition of Done | **Direct internal contradiction found.** [DEFINITION_OF_DONE.md](../DEFINITION_OF_DONE.md) requires, as universal checklist items: *"Logging implemented,"* *"Metrics implemented,"* and *"Monitoring added."* Per Section 6's findings, **E1 as currently scoped cannot satisfy its own framework's Definition of Done.** This is not a nitpick — it means the design, if implemented exactly as written, would arrive at Part 20 (Epic Approval) structurally unable to check three mandatory boxes. |
+| Implementation Guide | No issue — E1 correctly maps its own structure to IMPLEMENTATION_GUIDE.md's phases in its header. |
+| Templates | EPIC_TEMPLATE.md and TECHNICAL_DESIGN_TEMPLATE.md content is present, but not 1:1 — TECHNICAL_DESIGN_TEMPLATE.md §7 ("Alternatives considered") has no explicit corresponding section in the 15-part E1 doc; alternatives are mentioned only implicitly (e.g., the unresolved distroless-vs-alpine choice in Section 3 is itself evidence this section's discipline was skipped, not just reformatted). |
+| Code Review Checklist | No issue found — nothing in E1 conflicts with it. |
+| Release Checklist | RELEASE_CHECKLIST.md's "new metrics/dashboards wired" item cannot be satisfied for E1 releases, for the same reason as the DoD finding above. |
+| Quality Gates | The Gate sign-off log (E1 doc, bottom) marks Performance Gate evidence as "CI time, onboarding time" only — should also cover container/Docker startup time (Section 5) once that's decided. |
+
+**This section's finding is the strongest single piece of evidence for a NO GO: the design is inconsistent with a document it explicitly claims to be governed by.**
+
+**Quality Score: 68/100**
+
+---
+
+## SECTION 8 — Risk Assessment (classified)
+
+All risks below — both the 8 already named in the design's Part 14 and the additional ones this review surfaced — classified by severity, with mitigation and owner.
+
+| # | Risk | Severity | Source | Mitigation | Owner |
+|---|---|---|---|---|---|
+| 1 | E1 ships without logging/tracing/metrics, contradicting DEPLOYMENT.md §5's "first deploy" commitment and DEFINITION_OF_DONE.md | **Critical** | New (Section 6/7) | Add explicit tasks (T24–T25 below) for structured logging + minimal OTel/Sentry wiring in the skeleton apps before E1 is called Done | DevOps Lead |
+| 2 | Container images are unsigned, with no SBOM/provenance — a real SLSA/supply-chain gap for every image this pipeline will ever produce | **Critical** | New (Section 4) | Add a task for image signing (cosign) + SBOM generation (Syft or equivalent) in `security-scan.yml`/`deploy-*.yml` | Security Engineer |
+| 3 | Part 5 (build graph) and Part 13 (task dependencies) contradict each other for T5/T6's actual dependencies | **High** | New (Section 1/9) | Correct one of the two before T5/T6 are implemented — recommend fixing the task table to depend on T4+T7, matching the build graph | Tech lead (author) |
+| 4 | Intra-app NestJS module-boundary rule is named (Part 4) but has no implementation task | **High** | New (Section 1/9) | Add an explicit task (T3a or new Tn) for the `madge`/dependency-cruiser rule, with the same "proof it fires on a violation" acceptance bar as T3 | Backend Architect |
+| 5 | No DR posture (cross-region backup, Terraform state backup) considered anywhere in E1 | **High** | New (Section 3) | At minimum, an explicit reasoned deferral tied to E4 (when real data exists); Terraform state bucket versioning should land in T16 regardless | DevOps Lead |
+| 6 | `test` task force-depends on `build` for Vitest packages, degrading local iteration speed | **Medium** | New (Section 2) | Split into source-level and build-dependent test tasks in `turbo.json` | Frontend Architect |
+| 7 | No hot-reload story between `packages/ui` and `apps/web`'s dev server | **Medium** | New (Section 2/5) | Specify the dev-mode watch/link strategy explicitly in T8/T11's acceptance criteria | Frontend Architect |
+| 8 | Container base image choice ("distroless or alpine") left undecided | **Medium** | New (Section 3) | Make a firm decision, recorded as an ADR addition or at minimum a stated Part 8 decision, before T15 | DevOps Lead |
+| 9 | Container hardening incomplete: no read-only root FS, no capability drop, no resource limits on ECS task defs | **Medium** | New (Section 4) | Add to T15/T16 acceptance criteria explicitly | Security Engineer |
+| 10 | No CODEOWNERS file / team-scalability mechanism | **Medium** | New (Section 1) | Add as a T2 or T22 deliverable | Principal Architect |
+| 11 | Monorepo tooling misconfigured, causing slow/flaky CI | Medium | Original (Part 14) | As originally stated — validated, still sound | DevOps Lead |
+| 12 | Dependency-boundary lint too strict/loose | Medium | Original (Part 14) | As originally stated — validated, still sound | Backend Architect |
+| 13 | Docker base image vulnerabilities/drift | Medium | Original (Part 14), overlaps #9 | Combine with #9's remediation | Security Engineer |
+| 14 | Terraform state mismanagement | Low (post-mitigation) | Original (Part 14) | As originally stated — remote state + locking is the correct, sufficient mitigation | DevOps Lead |
+| 15 | Uncontrolled AWS cost | Medium | Original (Part 14) | As originally stated, **but currently unconnected to a concrete task** — tie explicitly to T16's acceptance criteria (budget alert + resource limits, see #9) | DevOps Lead |
+| 16 | Onboarding friction | Low (post-mitigation) | Original (Part 14) | T23 is a sound, sufficient mitigation as designed | Tech lead |
+| 17 | Inconsistent Node/pnpm versions | Low (post-mitigation) | Original (Part 14) | As originally stated — sufficient | Tech lead |
+| 18 | Two test runners (ADR-014) create DX inconsistency | Low | Original (Part 14) | As originally stated — accepted, sufficient | Tech lead |
+| 19 | CI "<5 min" target doesn't distinguish cold/warm cache, making it unfalsifiable | Low | New (Section 3) | State both numbers once T17 lands | DevOps Lead |
+| 20 | Ambiguity between NestJS e2e tests and root Playwright e2e under one `test:e2e` task name | Low | New (Section 2) | Rename/split the tasks explicitly | Backend Architect |
+
+**2 Critical, 3 High, 7 Medium, 4 Low new findings**, plus 8 original Part-14 risks (validated as sound, one — #15 — needs tightening).
+
+---
+
+## SECTION 9 — Implementation Audit
+
+**Task order:** The table's numbering (T1–T23) implies rough execution order but is violated at least once: **T9 depends on T14**, which appears five rows later in the same table. A reader executing top-to-bottom would attempt T9 before T14 exists. Either renumber so every dependency precedes its dependent, or add an explicit note that the table's order is not execution order.
+
+**Dependencies:** The T5/T6 vs. Part 5 contradiction (Section 1, Risk #3) is the most significant dependency-accuracy issue found.
+
+**Missing work (tasks that should exist but don't):**
+- Intra-app NestJS boundary lint (Risk #4)
+- Structured logging + minimal tracing/metrics wiring (Risk #1) — proposed as new **T24**
+- Image signing + SBOM generation (Risk #2) — proposed as new **T25**
+- CODEOWNERS file (Risk #10)
+- Container hardening specifics folded into T15/T16 (Risk #9)
+- Explicit budget-alert acceptance criterion folded into T16 (Risk #15)
+
+**Parallelization opportunities:** T16 is correctly flagged as parallelizable with T1–T15. Not similarly called out: **T8** (`packages/ui`/Storybook/Tailwind setup) has no real dependency on `packages/config` (T4) beyond the shared root tooling (T1–T2) and could run fully parallel to T4–T7/T9 — the design doesn't identify this lane, likely leaving schedule time on the table for a team with more than one engineer available.
+
+**Hidden risks:** The T9-before-T14 ordering issue (above) is not just a documentation nit — if `packages/database`'s "prisma migrate dev succeeds" acceptance test is actually run against a Postgres container that doesn't yet have finalized health checks (T14), a flaky/non-ready database could produce an intermittently-failing acceptance test that gets misdiagnosed as a Prisma problem rather than a sequencing problem.
+
+---
+
+## SECTION 10 — GO / NO-GO Decision
+
+### Scores
+
+| Dimension | Score |
+|---|---:|
+| Architecture Score | 82/100 |
+| Engineering Score | 78/100 |
+| DevOps Score | 74/100 |
+| Security Score | 72/100 |
+| Maintainability Score | 88/100 |
+| Developer Experience Score | 80/100 |
+| **Production Readiness Score** | **70/100** |
+
+Production Readiness is the lowest composite score, driven specifically by the Section 6/7 observability gap and Section 4's supply-chain gaps — both genuinely production-relevant, not process nitpicks.
+
+### Decision: **NO GO**
+
+Two Critical and three High-severity findings are unresolved:
+
+1. **(Critical)** E1 does not wire structured logging, tracing, or metrics into the skeleton apps, directly contradicting DEPLOYMENT.md §5's explicit "first deploy, not retrofitted" commitment, and leaving E1 unable to satisfy its own governing [DEFINITION_OF_DONE.md](../DEFINITION_OF_DONE.md).
+2. **(Critical)** No image signing, SBOM, or build-provenance attestation is planned for any container image this pipeline will produce — a direct, named gap against the SLSA framework this review was asked to check against.
+3. **(High)** Part 5 and Part 13 contradict each other on `packages/types`/`validation`'s actual build dependencies.
+4. **(High)** The intra-app NestJS module-boundary rule (Part 4) has no implementation task — a boundary rule that exists only in prose, not in enforced tooling.
+5. **(High)** No disaster-recovery posture (cross-region backup, Terraform state backup) is considered anywhere in the design, silently, for a Foundation epic that sets the pattern every later epic inherits.
+
+### Mandatory remediation before re-review
+
+- Add **T24** (structured logging + minimal Sentry/OTel wiring in all E1 skeleton apps) and **T25** (image signing via cosign + SBOM generation via Syft, wired into `security-scan.yml`/`deploy-*.yml`) to Part 13, with acceptance criteria.
+- Resolve the Part 5 / Part 13 dependency contradiction (Risk #3).
+- Add an explicit task for the intra-app NestJS boundary lint (Risk #4).
+- Add an explicit, reasoned DR statement — either a minimal T16 addition (state-bucket versioning) or an explicit, dated deferral to E4 with a tracked follow-up in RISK_REGISTER.md.
+- Correct the T9/T14 ordering (Section 9) and re-verify no other dependency-order violations exist in the table.
+- Decide the container base image (distroless vs. alpine) firmly, with a one-line rationale.
+
+**All other findings (Medium/Low, Section 8) are strongly recommended but not blocking** — they should be tracked (RISK_REGISTER.md or the E1 doc's own risk table) and addressed opportunistically during T1–T23's actual implementation, not held as re-review gates.
+
+### Path to GO
+
+This is a **remediation, not a rewrite** — roughly 85% of the design (repository structure, monorepo strategy, application/package design, CI/CD shape, quality tooling, the 23-task backbone) is sound and does not need to change. Once the 5 mandatory items above are addressed in a revised Part 5/13/8/12 and a second, independent Architecture Gate reviewer confirms them, this review's recommendation is **GO**.

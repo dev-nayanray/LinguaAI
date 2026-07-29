@@ -92,6 +92,10 @@ See [CLAUDE.md](CLAUDE.md) for engineering conventions and repo rules.
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Architecture baseline history |
 | [docs/ARCHITECTURE_REVIEW.md](docs/ARCHITECTURE_REVIEW.md) | *Archived* — original review gate findings |
 
+### Engineering Execution Framework
+
+Mandatory delivery process for every Epic — see [docs/IMPLEMENTATION_GUIDE.md](docs/IMPLEMENTATION_GUIDE.md) to start. Templates: [EPIC_TEMPLATE.md](docs/EPIC_TEMPLATE.md), [FEATURE_SPEC_TEMPLATE.md](docs/FEATURE_SPEC_TEMPLATE.md), [TECHNICAL_DESIGN_TEMPLATE.md](docs/TECHNICAL_DESIGN_TEMPLATE.md), [API_SPEC_TEMPLATE.md](docs/API_SPEC_TEMPLATE.md), [DATABASE_CHANGE_TEMPLATE.md](docs/DATABASE_CHANGE_TEMPLATE.md), [UI_UX_REVIEW_TEMPLATE.md](docs/UI_UX_REVIEW_TEMPLATE.md), [TEST_PLAN_TEMPLATE.md](docs/TEST_PLAN_TEMPLATE.md), [SECURITY_REVIEW_TEMPLATE.md](docs/SECURITY_REVIEW_TEMPLATE.md). Standing checklists: [CODE_REVIEW_CHECKLIST.md](docs/CODE_REVIEW_CHECKLIST.md), [RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md), [DEFINITION_OF_DONE.md](docs/DEFINITION_OF_DONE.md).
+
 ## Setup guide
 
 > Prerequisites: Node.js 20+, pnpm 9+, Docker Desktop, Flutter SDK (for mobile work).

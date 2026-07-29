@@ -79,4 +79,4 @@ Scores reflect **documentation/design completeness**, not delivered code — thi
 
 This baseline is internally consistent as of 2026-07-29: product requirements align with architecture, architecture aligns with the database design, the database aligns with API conventions, API conventions align with the design system's error/loading/empty/success contract, the AI architecture aligns with the product's trust and accuracy requirements, security controls align with the stated compliance obligations, and the roadmap's epics align with the phased product scope. No unresolved contradiction between canonical documents is known at freeze time.
 
-**This baseline is approved for implementation to begin, starting with Epic E1 (Foundation & DevOps Bootstrap).**
+**This baseline is approved for implementation to begin, starting with Epic E1 (Foundation & DevOps Bootstrap), governed by the mandatory delivery process in [IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md) — every Epic passes its 11 quality gates before it is considered Done ([DEFINITION_OF_DONE.md](DEFINITION_OF_DONE.md)).**
