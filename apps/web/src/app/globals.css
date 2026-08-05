@@ -1,0 +1,13 @@
+@import '@linguaai/ui/styles.css';
+
+/*
+ * Tailwind v4's automatic content detection is unreliable across a
+ * pnpm-symlinked monorepo package boundary — verified empirically against
+ * a real `next build`: some of packages/ui/src/components/button.tsx's
+ * classes (e.g. bg-primary) were picked up, others in the exact same file
+ * (duration-micro, transition-colors, focus-visible:*, hover:*) silently
+ * were not, producing an unstyled/partially-styled Button at runtime with
+ * no build error. @source makes the scan path explicit rather than
+ * relying on automatic heuristics reaching into a symlinked package.
+ */
+@source '../../../../packages/ui/src';

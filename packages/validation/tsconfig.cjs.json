@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.build.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "outDir": "dist-cjs",
+    "declarationMap": false,
+    "sourceMap": false,
+    // Node10 resolution predates package.json "exports" maps entirely, so
+    // it can't resolve @linguaai/types/identity (a subpath-only export, no
+    // physical file at that path) during THIS type-check pass — Node's own
+    // require() at actual runtime resolves the compiled output's "exports"
+    // map correctly regardless of what moduleResolution tsc used to
+    // type-check it, so this "paths" override only needs to satisfy tsc,
+    // pointing it straight at the sibling package's own CJS output.
+    "paths": {
+      "@linguaai/types/identity": ["../types/dist-cjs/identity/index.d.ts"]
+    }
+  }
+}

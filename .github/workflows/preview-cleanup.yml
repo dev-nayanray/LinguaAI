@@ -1,0 +1,45 @@
+name: Preview environment idle cleanup
+
+# T24 / E1 Part 15's remediation note: "Preview-environment idle-teardown
+# policy — still recommend a 7-day default." preview.yml's `teardown`
+# job handles the normal case (PR closed), but this is the safety net for
+# when that fails to run or a PR is abandoned without ever being closed —
+# without this, a failed teardown leaks App Runner cost indefinitely.
+on:
+  schedule:
+    - cron: '0 4 * * *' # nightly, 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  cleanup:
+    name: Delete preview services older than 7 days
+    runs-on: ubuntu-latest
+    environment: preview
+    timeout-minutes: 15
+    steps:
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Find and delete stale preview services
+        run: |
+          now_epoch=$(date -u +%s)
+          cutoff_epoch=$(date -u -d '7 days ago' +%s)
+
+          aws apprunner list-services \
+            --query "ServiceSummaryList[?starts_with(ServiceName, 'linguaai-preview-pr-')].[ServiceName,ServiceArn,CreatedAt]" \
+            --output text | while read -r name arn created_at; do
+              created_epoch=$(date -u -d "$created_at" +%s)
+              age_days=$(( (now_epoch - created_epoch) / 86400 ))
+              if [ "$created_epoch" -lt "$cutoff_epoch" ]; then
+                echo "Deleting $name (age: ${age_days}d, over the 7-day limit)"
+                aws apprunner delete-service --service-arn "$arn"
+              else
+                echo "Keeping $name (age: ${age_days}d)"
+              fi
+            done

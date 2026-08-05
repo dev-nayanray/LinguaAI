@@ -2,7 +2,7 @@
 
 Status: **v1.0 — Mandatory process** · Last updated: 2026-07-29
 
-Standing checklist for lifecycle phase 17 ([IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md) §2). Every PR reviewer runs through this — it doesn't replace judgment, it makes sure judgment doesn't skip something CLAUDE.md and CODING_STANDARDS.md already decided. This is a checklist to *apply*, not a template to copy per feature.
+Standing checklist for lifecycle phase 17 ([IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md) §2). Every PR reviewer runs through this — it doesn't replace judgment, it makes sure judgment doesn't skip something CLAUDE.md and CODING_STANDARDS.md already decided. This is a checklist to _apply_, not a template to copy per feature.
 
 ## Correctness
 
@@ -17,7 +17,7 @@ Standing checklist for lifecycle phase 17 ([IMPLEMENTATION_GUIDE.md](IMPLEMENTAT
 - [ ] No module reaches into another module's internals — only public exports (ARCHITECTURE.md §2.1).
 - [ ] Shared types/validation come from `packages/types` / `packages/validation`, not redefined locally.
 - [ ] Errors are typed domain exceptions mapped to the standard error envelope (API_GUIDELINES.md §3) — never a raw string throw reaching the client.
-- [ ] No comments explaining *what* — only non-obvious *why*, per CLAUDE.md.
+- [ ] No comments explaining _what_ — only non-obvious _why_, per CLAUDE.md.
 
 ## Gates already passed (verify, don't re-litigate)
 
@@ -28,7 +28,7 @@ Standing checklist for lifecycle phase 17 ([IMPLEMENTATION_GUIDE.md](IMPLEMENTAT
 - [ ] Frontend/Accessibility Gate evidence linked (if this PR adds/changes UI)
 - [ ] AI Gate evidence linked (if this PR touches `services/ai-engine`)
 
-*A reviewer who finds a gate wasn't actually passed stops the PR — this checklist is not the place to first discover a missing Security Gate.*
+_A reviewer who finds a gate wasn't actually passed stops the PR — this checklist is not the place to first discover a missing Security Gate._
 
 ## Tests
 

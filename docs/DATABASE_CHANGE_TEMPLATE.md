@@ -16,18 +16,19 @@ Copy this file per schema change (new table, altered table, new index, new migra
 
 ## 2. Entities affected
 
-*New/changed fields, types, relationships. If this adds an entity not yet listed in DATABASE.md §2, this template's approval includes updating that document in the same PR.*
+_New/changed fields, types, relationships. If this adds an entity not yet listed in DATABASE.md §2, this template's approval includes updating that document in the same PR._
 
 | Entity | Field | Type | Nullable | Notes |
-|---|---|---|---|---|
+| ------ | ----- | ---- | -------- | ----- |
 
 ## 3. Tenant scoping & RLS
 
-*Mandatory section — MULTITENANCY.md §6 requires this for every tenant-scoped table.*
+_Mandatory section — MULTITENANCY.md §6 requires this for every tenant-scoped table._
 
 **Is this table tenant-scoped (has an `organizationId` or equivalent)?** ☐ Yes ☐ No
 
 If yes:
+
 - RLS policy included in this migration: ☐ Yes (link to migration file)
 - Application-layer filter present in the corresponding service: ☐ Yes
 - Cross-tenant-leak integration test added: ☐ Yes (link to test)
@@ -36,17 +37,17 @@ If yes:
 
 ## 4. Soft-delete / retention classification
 
-*Per DATABASE.md §6–§7 — every new entity is classified, not left implicit.*
+_Per DATABASE.md §6–§7 — every new entity is classified, not left implicit._
 
-| Category | Selection |
-|---|---|
+| Category           | Selection                                                                                    |
+| ------------------ | -------------------------------------------------------------------------------------------- |
 | Deletion mechanism | ☐ Soft delete (`deletedAt`) ☐ Hard delete/anonymize (PII) ☐ Append-only, anonymized in place |
-| Retention window | [cite DATABASE.md §7 matrix, or add a new row if this is a new data category] |
-| Encryption needed | ☐ Standard at-rest ☐ Field-level (name fields) |
+| Retention window   | [cite DATABASE.md §7 matrix, or add a new row if this is a new data category]                |
+| Encryption needed  | ☐ Standard at-rest ☐ Field-level (name fields)                                               |
 
 ## 5. Indexing
 
-*What query pattern does this serve? Composite index needed per DATABASE.md §4 hot-path conventions?*
+_What query pattern does this serve? Composite index needed per DATABASE.md §4 hot-path conventions?_
 
 ## 6. Migration plan
 

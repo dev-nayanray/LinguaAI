@@ -1,0 +1,18 @@
+-- E2-T18 fix. E2-T6's column allowlist granted app_role UPDATE on exactly
+-- (displayName, avatarUrl, locale, timezone) — Part 9C's four
+-- non-privileged User columns. It never granted "updatedAt", because the
+-- design doc's SQL (transcribed verbatim in that migration) predates any
+-- real Prisma UPDATE call being run against it: Prisma's `@updatedAt`
+-- directive (schema.prisma) unconditionally includes "updatedAt" in the SET
+-- clause of *every* generated UPDATE on this model, regardless of which
+-- fields the caller passed — so any app_role UPDATE on User, even one
+-- touching only allowlisted columns, fails with "permission denied for
+-- table User" as things stood. Confirmed empirically (E2-T18, the first
+-- task to actually exercise this path): PATCH /v1/users/me failed 500
+-- against real Postgres until this migration.
+--
+-- "updatedAt" is bookkeeping metadata, not privileged data (Part 9C's own
+-- survey table never lists it) — granting it here is a bug fix to the
+-- allowlist's implementation, not a reopening of Part 9C's actual design
+-- decision about which *data* columns are privileged.
+GRANT UPDATE ("updatedAt") ON "User" TO app_role;

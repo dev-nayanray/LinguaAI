@@ -1,0 +1,454 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  // `vector` is installed by docker-compose's Postgres init script
+  // (DATABASE.md §1/ARCHITECTURE.md — pgvector, not managed by any Prisma
+  // migration) and predates this schema.prisma even having an `extensions`
+  // block. Declaring it here (E2-T2) is what lets Prisma's migration
+  // history record its presence via an idempotent `CREATE EXTENSION IF NOT
+  // EXISTS` — without this, every future `prisma migrate dev` sees it as
+  // permanent, unresolvable drift against the live database and refuses to
+  // proceed without a destructive reset. Found and fixed empirically while
+  // implementing E2-T2 — the first migration since E1/T12's placeholder.
+  extensions = [citext, vector]
+}
+
+// ============================================================================
+// Identity bounded context (ARCHITECTURE.md §2.1)
+// docs/epics/E2-identity-access-platform.md Part 5, implemented in phases per
+// docs/epics/E2-implementation-plan.md §4/§5:
+//   E2-T2 — core entities: User, OAuthAccount, UserProfile, Session,
+//     RefreshToken, ConsentRecord, DeviceToken, PasswordResetToken.
+//   E2-T3 (this migration) — Organization, OrganizationMembership,
+//     RoleChangeRequest, AuditLog, EntitlementChangeLog, plus the
+//     User.organizationId → Organization relation (a plain column with no
+//     FK constraint from T2 onward, until this migration adds it).
+//   E2-T4 — RLS policies. E2-T5 — SECURITY DEFINER governance functions.
+//   E2-T6 — column-level privilege allowlist that finally locks direct
+//     app_role writes to every field marked "Privileged" below.
+//   E2-T7 — immutability grants (REVOKE UPDATE/DELETE) on AuditLog/
+//     EntitlementChangeLog, a separate migration from RLS.
+// Every UUID column is @db.Uuid (not Prisma's TEXT default) because Part 9's
+// RLS policies compare `current_setting(...)::uuid` against these columns —
+// a text/uuid type mismatch would fail at the Postgres level once E2-T4 adds
+// those policies.
+// ============================================================================
+
+enum Role {
+  USER
+  TEACHER
+  ADMIN
+  ENTERPRISE_ADMIN
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum OAuthProvider {
+  GOOGLE
+  APPLE
+}
+
+enum GoalType {
+  TRAVEL
+  CAREER
+  EXAM
+  GENERAL_FLUENCY
+}
+
+enum ConsentType {
+  TOS
+  PRIVACY_POLICY
+  MARKETING
+}
+
+enum DevicePlatform {
+  IOS
+  ANDROID
+  WEB
+}
+
+model User {
+  id               String     @id @default(uuid()) @db.Uuid
+  /// Case-insensitive per Part 5 — prevents User@x.com/user@x.com duplicates.
+  email            String     @unique @db.Citext
+  /// Privileged (Part 9C) — null for OAuth-only accounts, never a placeholder hash.
+  passwordHash     String?
+  displayName      String
+  avatarUrl        String?
+  /// UI language — distinct from UserProfile.targetLanguages (PRD.md §5.1).
+  locale           String
+  timezone         String
+  /// Privileged (Part 9C) — server-assigned only, never client-settable.
+  role             Role       @default(USER)
+  /// Privileged (Part 9C).
+  status           UserStatus @default(PENDING_VERIFICATION)
+  /// Privileged (Part 9C) — must be true before ADMIN/ENTERPRISE_ADMIN activation (ADR-011).
+  mfaEnrolled      Boolean    @default(false)
+  /// Privileged (Part 9C), field-level encrypted at the application layer (SECURITY.md §4).
+  mfaSecret        String?
+  /// Privileged (Part 9C).
+  organizationId   String?    @db.Uuid
+  /// Privileged (Part 9C) — bumped by the governance functions (E2-T5) on
+  /// every role/org-role change; access tokens issued before this instant
+  /// are rejected (Part 8).
+  tokensValidAfter DateTime   @default(now())
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  organization                Organization?            @relation(fields: [organizationId], references: [id])
+  oauthAccounts               OAuthAccount[]
+  profile                     UserProfile?
+  sessions                    Session[]
+  refreshTokens               RefreshToken[]
+  consentRecords              ConsentRecord[]
+  deviceTokens                DeviceToken[]
+  passwordResetTokens         PasswordResetToken[]
+  mfaChallengeTokens          MfaChallengeToken[]
+  organizationMemberships     OrganizationMembership[]
+  roleChangeRequestsTarget    RoleChangeRequest[]      @relation("RoleChangeRequestTarget")
+  roleChangeRequestsRequested RoleChangeRequest[]      @relation("RoleChangeRequestRequester")
+  roleChangeRequestsApproved  RoleChangeRequest[]      @relation("RoleChangeRequestApprover")
+  auditLogs                   AuditLog[]
+  entitlementChangeLogs       EntitlementChangeLog[]
+
+  @@index([organizationId])
+}
+
+model OAuthAccount {
+  id                String        @id @default(uuid()) @db.Uuid
+  userId            String        @db.Uuid
+  /// Facebook excluded at MVP (ADR-020).
+  provider          OAuthProvider
+  /// The provider's own subject/user ID.
+  providerAccountId String
+  linkedAt          DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The same external identity can never link to two User rows. Matched
+  /// only by (provider, providerAccountId) — never by email (Part 8, High-3).
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model UserProfile {
+  userId                     String   @id @db.Uuid
+  nativeLanguage             String
+  targetLanguages            String[]
+  goalType                   GoalType
+  dailyTimeCommitmentMinutes Int?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  /// For the account's "active sessions" view (session revocation UX).
+  deviceLabel String?
+  createdAt   DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  /// Revoking a Session cascades (at the application layer, Part 8) to
+  /// revoke every RefreshToken under it.
+  revokedAt   DateTime?
+  /// The `jti` claim of the most recently issued access token for this
+  /// session (E2-T28 remediation — see `JtiDenylistService`'s own doc
+  /// comment for why this was missing and what it closes). Only the
+  /// latest matters: a client holds exactly one active access token under
+  /// normal operation, and this is what gets denylisted at revocation time.
+  currentJti  String?   @unique
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@index([userId])
+}
+
+model RefreshToken {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @db.Uuid
+  /// The raw token is never stored — only its hash, so a DB read alone
+  /// can't mint a valid token.
+  tokenHash     String    @unique
+  sessionId     String    @db.Uuid
+  expiresAt     DateTime
+  /// Rotation chain (Part 8) — null for the first token in a session.
+  rotatedFromId String?   @unique @db.Uuid
+  revokedAt     DateTime?
+
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session     Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  rotatedFrom RefreshToken? @relation("RefreshTokenRotation", fields: [rotatedFromId], references: [id])
+  rotatedTo   RefreshToken? @relation("RefreshTokenRotation")
+
+  @@index([userId])
+  @@index([sessionId])
+}
+
+model ConsentRecord {
+  id            String      @id @default(uuid()) @db.Uuid
+  userId        String      @db.Uuid
+  /// Parental-consent type intentionally excluded — ADR-013.
+  consentType   ConsentType
+  policyVersion String
+  grantedAt     DateTime    @default(now())
+  withdrawnAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model DeviceToken {
+  id       String         @id @default(uuid()) @db.Uuid
+  userId   String         @db.Uuid
+  platform DevicePlatform
+  token    String
+  active   Boolean        @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  /// Same pattern as RefreshToken.tokenHash — the raw token is never stored.
+  tokenHash String    @unique
+  /// 1 hour from issuance (Part 6).
+  expiresAt DateTime
+  /// Single-use — set once, a second confirmation attempt is then rejected.
+  usedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// E2-T11 — Part 8 requires the OAuth CSRF `state` value to be "signed,
+/// short-lived (10 minute), single-use," but Part 5's entity list never
+/// enumerated storage for it (a Part 5 completeness gap, same class as the
+/// AuditLog.id/correlationId and RefreshToken "used" column gaps found in
+/// E2-T5/T9). No `userId` — issued before any caller identity is known,
+/// unlike PasswordResetToken/RefreshToken, whose exact single-use-hashed-
+/// token pattern this otherwise follows exactly.
+model OAuthState {
+  id            String        @id @default(uuid()) @db.Uuid
+  /// Same pattern as RefreshToken.tokenHash/PasswordResetToken.tokenHash —
+  /// the raw state value is never stored.
+  stateHash     String        @unique
+  provider      OAuthProvider
+  /// 10 minutes from issuance (Part 8).
+  expiresAt     DateTime
+  /// Single-use — set once, a replayed/reused state is then rejected.
+  usedAt        DateTime?
+  createdAt     DateTime      @default(now())
+  /// E2-T12: set only for an authenticated "link this provider to my
+  /// existing account" flow (`POST /v1/users/me/oauth-accounts`, Part 6) —
+  /// null for an ordinary login/register flow (E2-T11). Lets the one
+  /// shared callback route distinguish the two without a second callback
+  /// path per provider. No FK relation on purpose — this is a short-lived
+  /// (10 minute TTL) CSRF artifact, never queried from the User side; a
+  /// dangling value (e.g. the user is deleted mid-flow) simply fails the
+  /// linking lookup cleanly rather than needing cascade-delete integrity.
+  linkingUserId String?       @db.Uuid
+
+  @@index([expiresAt])
+}
+
+/// E2-T13 — Part 8 requires `/v1/auth/mfa/verify`/`/mfa/challenge` to join a
+/// "rate-limited + lockout class": 5 failed attempts within a 10-minute
+/// window locks that step for 15 minutes. The Redis-backed general
+/// rate-limit class itself is E2-T21's job (Redis has no client anywhere in
+/// this codebase yet, deliberately deferred in E2-T8) — this table is the
+/// narrower, MFA-specific lockout counter, which needs its own persisted,
+/// queryable history regardless of whether Redis-backed rate limiting also
+/// exists later. Same "new small ephemeral-tracking entity, Part 5
+/// completeness gap" pattern as OAuthState (E2-T11) — Part 5 never
+/// enumerated storage for this either. Append-only (no `usedAt`/update
+/// path) — old rows age out of the 10-minute lookback window naturally,
+/// not deleted.
+model MfaVerificationAttempt {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  succeeded  Boolean
+  occurredAt DateTime @default(now())
+
+  @@index([userId, occurredAt])
+}
+
+/// E2-T22 — the "partial session (post-password, pre-MFA)" artifact Part 6's
+/// endpoint table names for `POST /v1/auth/mfa/challenge` but never
+/// specifies a mechanism for. `AuthService.loginResponse` creates one of
+/// these instead of a full session when the caller is an MFA-enrolled
+/// `ADMIN`/`ENTERPRISE_ADMIN` (ADR-011's step-up requirement); `/mfa/challenge`
+/// claims it (together with a valid TOTP code) to obtain the real session.
+/// Same single-use-hashed-token shape as `PasswordResetToken`/`OAuthState`
+/// on purpose — this codebase has never used a JWT for anything short of a
+/// fully-issued access token, and a bare-JWT "partial session" would be new,
+/// undocumented architecture for a problem this exact pattern already
+/// solves. 5 minutes from issuance — a login step-up window, not a
+/// long-lived credential (shorter than OAuthState's 10-minute CSRF TTL,
+/// deliberately: this token is presented alongside a live TOTP code in the
+/// same round trip a real user completes in seconds, not a redirect-based
+/// flow with real network hops in between).
+model MfaChallengeToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  /// Same pattern as RefreshToken.tokenHash/PasswordResetToken.tokenHash — the raw token is never stored.
+  tokenHash String    @unique
+  expiresAt DateTime
+  /// Single-use — set once, a second challenge attempt with the same token is then rejected.
+  usedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ============================================================================
+// E2-T3 — org/governance entities. RLS policies (Part 9) land in E2-T4;
+// they cover User/Organization/OrganizationMembership only — RoleChangeRequest
+// has no RLS policy (it's not tenant-scoped; access is governed entirely by
+// the SECURITY DEFINER functions in E2-T5/Part 9C), and AuditLog/
+// EntitlementChangeLog get their immutability grants (REVOKE UPDATE/DELETE)
+// in E2-T7, a separate migration from RLS.
+// ============================================================================
+
+enum OrgRole {
+  MEMBER
+  ENTERPRISE_ADMIN
+}
+
+enum RoleChangeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum AuditActorType {
+  USER
+  SYSTEM
+  SERVICE
+}
+
+enum EntitlementAction {
+  GRANTED
+  REVOKED
+  CHANGED
+}
+
+/// The tenant root (MULTITENANCY.md §1). Every table carrying
+/// organizationId is RLS-protected against this table's id (Part 9, E2-T4).
+model Organization {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  /// Reserved, unenforced (MULTITENANCY.md §5) — no enforcement logic this
+  /// Epic; the field exists so a later migration doesn't have to backfill
+  /// an assumption.
+  dataRegion String?
+  seatCount  Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  users       User[]
+  memberships OrganizationMembership[]
+  auditLogs   AuditLog[]
+}
+
+model OrganizationMembership {
+  id             String  @id @default(uuid()) @db.Uuid
+  userId         String  @db.Uuid
+  organizationId String  @db.Uuid
+  /// Role *within* the org — distinct from User.role (MULTITENANCY.md §3:
+  /// RBAC and tenant scoping are independent checks).
+  orgRole        OrgRole
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+/// The two-person-approval workflow's pending state (Part 9A/9C). Rows are
+/// written only by the app (INSERT, the "initiate" step) and the
+/// approve_role_change() SECURITY DEFINER function (E2-T5), which is the
+/// only writer of status/approvedBy/resolvedAt once E2-T6's column
+/// allowlist locks direct UPDATEs on this table entirely (Part 9C).
+model RoleChangeRequest {
+  id           String           @id @default(uuid()) @db.Uuid
+  targetUserId String           @db.Uuid
+  fromRole     Role
+  toRole       Role
+  requestedBy  String           @db.Uuid
+  approvedBy   String?          @db.Uuid
+  status       RoleChangeStatus @default(PENDING)
+  /// 72 hours — an unapproved request doesn't linger indefinitely (Part 9A).
+  expiresAt    DateTime
+  createdAt    DateTime         @default(now())
+  resolvedAt   DateTime?
+
+  target    User  @relation("RoleChangeRequestTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+  requester User  @relation("RoleChangeRequestRequester", fields: [requestedBy], references: [id], onDelete: Restrict)
+  approver  User? @relation("RoleChangeRequestApprover", fields: [approvedBy], references: [id], onDelete: SetNull)
+
+  @@index([targetUserId])
+  @@index([status])
+}
+
+/// Immutable by construction (Part 9B) — INSERT/SELECT only once E2-T7's
+/// privilege grants land; UPDATE/DELETE are never granted to app_role.
+model AuditLog {
+  id            String         @id @default(uuid()) @db.Uuid
+  /// Nullable for system/bootstrap-initiated actions (Part 9A).
+  actorUserId   String?        @db.Uuid
+  actorType     AuditActorType
+  /// e.g. "user.role.changed", "organization.member.removed".
+  action        String
+  /// e.g. "User", "Organization" — the target row's table, not a Prisma relation (polymorphic).
+  targetType    String
+  targetId      String         @db.Uuid
+  /// organizationId context; null for platform-level actions.
+  tenantId      String?        @db.Uuid
+  /// Reuses packages/observability's existing per-request correlation ID
+  /// (E1) — no parallel ID scheme.
+  correlationId String         @db.Uuid
+  beforeValue   Json?
+  afterValue    Json?
+  occurredAt    DateTime       @default(now())
+
+  actor        User?         @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId])
+  @@index([tenantId])
+  @@index([targetType, targetId])
+}
+
+/// Entity defined here (Part 5/9B); write path owned by Epic E15 (Billing).
+/// Same immutability treatment as AuditLog (E2-T7).
+model EntitlementChangeLog {
+  id              String            @id @default(uuid()) @db.Uuid
+  userId          String            @db.Uuid
+  entitlementType String
+  action          EntitlementAction
+  /// e.g. "stripe_webhook", "admin_override".
+  source          String
+  occurredAt      DateTime          @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+}

@@ -13,13 +13,14 @@ Per [CLAUDE.md](../CLAUDE.md): architecture and planning precede feature develop
 ## 2. Branching & commits
 
 - Branch from `main`: `feature/<short-description>`, `fix/<short-description>`, `docs/<short-description>`.
-- Commits are scoped and descriptive; explain *why*, not just *what* (the diff already shows what changed).
-- No direct pushes to `main` — all changes land via pull request (see [DEPLOYMENT.md](DEPLOYMENT.md) §4 branch protection).
+- Commits are scoped and descriptive; explain _why_, not just _what_ (the diff already shows what changed).
+- No direct pushes to `main` — all changes land via pull request (see [DEPLOYMENT.md](DEPLOYMENT.md) §4 branch protection, and §9 below for the exact repository settings that enforce it).
 - Rebase on `main` before requesting review to keep history linear and reviewable; never force-push over a branch others are actively reviewing without a heads-up.
 
 ## 3. Pull requests
 
 A PR is ready for review when:
+
 - CI is green: lint, typecheck, unit tests, integration tests (see [TESTING.md](TESTING.md)).
 - New/changed screens implement loading, empty, error, and success states ([DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) §5).
 - New/changed API endpoints follow [API.md](API.md) conventions and update the OpenAPI-derived docs automatically (no manual doc drift).
@@ -46,6 +47,7 @@ PR description should state: what changed, why, how it was tested, and any expli
 ## 6. Working with the AI system
 
 Changes to `services/ai-engine` (prompts, agent definitions, model routing) additionally require:
+
 - A golden-set regression run (see [TESTING.md](TESTING.md) §3) attached to the PR.
 - A prompt version bump if the system prompt template changes (see [AI_SYSTEM.md](AI_SYSTEM.md) §5) — silent in-place prompt edits are not acceptable since they break traceability of quality regressions.
 
@@ -57,3 +59,34 @@ Changes to `services/ai-engine` (prompts, agent definitions, model routing) addi
 ## 8. Documentation changes
 
 Docs-only PRs (`docs/<short-description>` branches) follow the same review bar as code — an inaccurate architecture doc is worse than no doc, because it actively misleads the next contributor (including future AI agents working in this repo per [CLAUDE.md](../CLAUDE.md)).
+
+## 9. Required GitHub repository settings (T25)
+
+E1 Part 12's branch protection and code signing rows, as a literal, actionable checklist — **these are GitHub repository settings, not code**; nothing in this repo's workflow files can configure them. Apply once, by whoever has repo admin access, before treating `main` as protected:
+
+**Settings → Branches → Branch protection rules → `main`:**
+
+- ☐ Require a pull request before merging
+  - ☐ Require approvals: **1** minimum
+  - ☐ **Dismiss stale pull request approvals when new commits are pushed** (E1 Part 12's remediation addition — an approval on commit A must not silently cover a materially different commit B)
+  - ☐ Require review from Code Owners — **blocked on a real prerequisite**: [.github/CODEOWNERS](../.github/CODEOWNERS) currently references `@linguaai/*` teams that don't exist in the GitHub org yet (flagged there since T2). Create those teams first, update CODEOWNERS with real handles, _then_ enable this — turning it on before the teams exist would make every PR unreviewable, not more reviewed.
+- ☐ Require status checks to pass before merging, with these required checks (exact names as they appear after `ci.yml`/`security-scan.yml` have run at least once on a PR — GitHub only lets you select from checks that have already reported at least one result, so this list can't be fully configured until the very first PR runs both workflows):
+  - `Lint, typecheck, test, build` (`ci.yml`'s single job — covers Part 12's `lint`/`typecheck`/`build`/`test` items in one combined check)
+  - `Dependency vulnerability scan`, `Secret scan (gitleaks)`, `SAST (Semgrep)`, `License scan` (`security-scan.yml`)
+  - `Build, SBOM, and scan (<service>)` × 8 — `security-scan.yml`'s `container-scan` job is a matrix; each of the 8 apps/services reports as its own separate named check, not one combined "security-scan" entry. Require all 8 — DEPLOYMENT.md §2 treats the container supply-chain scan as blocking, not advisory, same as the source-level checks.
+  - Require branches to be up to date before merging.
+- ☐ Require signed commits (E1 Part 12 "Code signing" row — GPG or SSH commit signatures; distinct from and in addition to cosign's container image signing, T21). Every contributor needs commit signing configured locally before this is turned on, or their own pushes start failing — call this out in onboarding (T26) before enabling.
+- ☐ Do not allow bypassing the above settings (including for repo admins — a bypassable rule isn't really a rule).
+- ☐ Block force pushes.
+- ☐ Restrict deletions.
+
+**Settings → General → Pull Requests:**
+
+- ☐ Automatically delete head branches (routine hygiene — an ephemeral preview environment, T24, already tears itself down separately on the same PR-closed event).
+
+**Settings → Environments** (cross-referenced from [infrastructure/terraform/README.md](../infrastructure/terraform/README.md)'s own "GitHub Actions deployment" section, repeated here since it's the same category of setting this section otherwise covers):
+
+- `staging`, `preview`: no required reviewers.
+- `production`: **required reviewers** — this is what actually implements "production deploy requires manual approval" (T23's acceptance criterion, not something `deploy-production.yml`'s own YAML can enforce on its own).
+
+None of the above is optional or "nice to have" once real contributors start opening PRs against `main` — until it's configured, every acceptance criterion in this section (`main` rejects direct pushes, a red `ci.yml` blocks merge, an unsigned commit is rejected) is aspirational, not actually true of the repository.

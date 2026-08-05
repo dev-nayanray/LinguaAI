@@ -26,7 +26,8 @@ Request → auth middleware resolves org → Prisma middleware SETs app.current_
 ## 3. What RLS does not replace
 
 RLS protects row visibility within tenant-scoped tables. It does not replace:
-- **RBAC** (`USER | TEACHER | ADMIN | ENTERPRISE_ADMIN`) — role checks still gate *which actions* a caller may perform, independent of tenant scoping.
+
+- **RBAC** (`USER | TEACHER | ADMIN | ENTERPRISE_ADMIN`) — role checks still gate _which actions_ a caller may perform, independent of tenant scoping.
 - **Resource ownership checks** within a tenant (an `ENTERPRISE_ADMIN` for Org A can see all of Org A's members, but a `USER` within Org A still only sees their own progress) — implemented at the application layer, since RLS operates at the tenant grain, not the individual-resource grain.
 
 ## 4. Tenant provisioning

@@ -1,0 +1,15 @@
+{
+  "name": "@linguaai/e2e-tests",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test:e2e": "playwright test",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.0",
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.0"
+  }
+}

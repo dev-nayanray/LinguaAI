@@ -1,0 +1,72 @@
+{
+  "name": "@linguaai/observability",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist-cjs/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/index.d.ts",
+        "default": "./dist-cjs/index.js"
+      }
+    },
+    "./client": {
+      "import": {
+        "types": "./dist/client.d.ts",
+        "default": "./dist/client.js"
+      },
+      "require": {
+        "types": "./dist-cjs/client.d.ts",
+        "default": "./dist-cjs/client.js"
+      }
+    },
+    "./nestjs": {
+      "import": {
+        "types": "./dist/nestjs.d.ts",
+        "default": "./dist/nestjs.js"
+      },
+      "require": {
+        "types": "./dist-cjs/nestjs.d.ts",
+        "default": "./dist-cjs/nestjs.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node ../../scripts/write-cjs-package-json.mjs dist-cjs",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --coverage",
+    "clean": "rimraf dist dist-cjs *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@linguaai/config": "workspace:*",
+    "@nestjs/common": "^11.0.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.55.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.55.0",
+    "@opentelemetry/resources": "^1.28.0",
+    "@opentelemetry/sdk-metrics": "^1.28.0",
+    "@opentelemetry/sdk-trace-base": "^1.28.0",
+    "@opentelemetry/sdk-trace-node": "^1.28.0",
+    "@opentelemetry/semantic-conventions": "^1.28.0",
+    "express": "^5.0.0",
+    "pino": "^9.5.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.9.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "reflect-metadata": "^0.2.0",
+    "rimraf": "^6.0.0",
+    "rxjs": "^7.8.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.8"
+  }
+}

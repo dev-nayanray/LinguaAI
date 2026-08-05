@@ -12,13 +12,13 @@ Copy this file per new endpoint or endpoint group. Covers lifecycle phase 9 ([IM
 
 ## 1. Endpoint
 
-| | |
-|---|---|
-| Method | |
-| Path | |
-| Auth required | Yes/No — role(s): |
-| Idempotency-Key required | Yes/No (API_GUIDELINES.md §6) |
-| Rate limit class | Standard / AI-invoking / Unauthenticated (API_GUIDELINES.md §7) |
+|                          |                                                                 |
+| ------------------------ | --------------------------------------------------------------- |
+| Method                   |                                                                 |
+| Path                     |                                                                 |
+| Auth required            | Yes/No — role(s):                                               |
+| Idempotency-Key required | Yes/No (API_GUIDELINES.md §6)                                   |
+| Rate limit class         | Standard / AI-invoking / Unauthenticated (API_GUIDELINES.md §7) |
 
 ## 2. Request
 
@@ -38,27 +38,27 @@ Copy this file per new endpoint or endpoint group. Covers lifecycle phase 9 ([IM
 
 ## 4. Error responses
 
-*Every error this endpoint can return, using the registry in API_GUIDELINES.md §3. A new error code is only added if genuinely novel — check the registry first.*
+_Every error this endpoint can return, using the registry in API_GUIDELINES.md §3. A new error code is only added if genuinely novel — check the registry first._
 
 | HTTP status | `error.code` | When |
-|---|---|---|
-| | | |
+| ----------- | ------------ | ---- |
+|             |              |      |
 
 ## 5. Tenant/ownership scoping
 
-*If this endpoint touches tenant-scoped or user-owned data: what's the scoping rule, and does the underlying table have an RLS policy (MULTITENANCY.md)? A "yes" here without a corresponding DATABASE_CHANGE_TEMPLATE.md RLS section is a Security Gate failure.*
+_If this endpoint touches tenant-scoped or user-owned data: what's the scoping rule, and does the underlying table have an RLS policy (MULTITENANCY.md)? A "yes" here without a corresponding DATABASE_CHANGE_TEMPLATE.md RLS section is a Security Gate failure._
 
 ## 6. BFF/aggregation classification
 
-*Is this a standard resource endpoint or a dashboard aggregation endpoint (API_GUIDELINES.md §8)? If aggregation, name it explicitly as such.*
+_Is this a standard resource endpoint or a dashboard aggregation endpoint (API_GUIDELINES.md §8)? If aggregation, name it explicitly as such._
 
 ## 7. Versioning impact
 
-*Additive (no version bump) or breaking (new major version + deprecation plan per API_GUIDELINES.md §10)?*
+_Additive (no version bump) or breaking (new major version + deprecation plan per API_GUIDELINES.md §10)?_
 
 ## 8. WebSocket variant (if applicable)
 
-*If this is a real-time flow instead of/in addition to REST, define the message `type` values per API_GUIDELINES.md §9 and add them to the catalog if new.*
+_If this is a real-time flow instead of/in addition to REST, define the message `type` values per API_GUIDELINES.md §9 and add them to the catalog if new._
 
 ## 9. API Gate checklist
 

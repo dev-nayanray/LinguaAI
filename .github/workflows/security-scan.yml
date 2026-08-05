@@ -1,0 +1,177 @@
+name: Security scan
+
+# DEPLOYMENT.md §4 / E1 Part 10: every PR + nightly. Dependency
+# vulnerability scan, secret scan, SAST, container image scan (Trivy),
+# license scan, SBOM generation (Syft) — the "Security Gate (automatable
+# subset)". Container signing/provenance (ADR-017) is wired into
+# deploy-staging.yml/deploy-production.yml instead (T21), not here.
+#
+# Every `uses:` below is pinned to a full commit SHA, not a mutable tag
+# (T20 semgrep finding, yaml.github-actions.security.github-actions-
+# mutable-action-tag) — floating tags can be silently repointed by the
+# action owner, a real supply-chain vector semgrep's own finding cites
+# precedent for. The trailing `# vN` comment is a human-readable label
+# only; the SHA is what actually pins the content.
+on:
+  pull_request:
+  schedule:
+    - cron: '0 3 * * *' # nightly, 03:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: security-scan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DATABASE_URL: postgresql://linguaai:linguaai_dev_password@localhost:5432/linguaai
+  REDIS_URL: redis://localhost:6379
+
+jobs:
+  dependency-audit:
+    name: Dependency vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `pnpm audit` alone has no per-advisory allowlist. Every
+      # Critical/High finding is always printed for visibility;
+      # scripts/check-dependency-audit.mjs only fails the job on one
+      # that isn't in .github/security/dependency-audit-allowlist.json —
+      # mirrors E1 Part 10's own container-scan exception principle
+      # ("a permanently-unfixable transitive dependency must not make
+      # the pipeline permanently red") applied to the dependency graph.
+      - name: Audit production dependencies (Critical/High, allowlist-aware)
+        run: node scripts/check-dependency-audit.mjs
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # full history — gitleaks scans commits, not just the working tree
+
+      # Direct image invocation (not a third-party Action) — SECURITY.md
+      # §4: "pre-commit-equivalent secret scan run again in CI", the same
+      # tool/command shape verified locally during T20.
+      - name: Run gitleaks
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/repo" \
+            zricethezav/gitleaks:latest detect --source=/repo -v --exit-code=1
+
+  sast-scan:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run Semgrep
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" \
+            returntocorp/semgrep:latest semgrep scan \
+              --config=p/owasp-top-ten --config=p/security-audit --error \
+              --exclude=node_modules --exclude=.next --exclude=dist --exclude=dist-cjs --exclude=coverage
+
+  license-scan:
+    name: License scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `license-checker` (and its `-rseidelsohn` fork) don't correctly
+      # walk this pnpm workspace's node_modules/.pnpm structure —
+      # verified empirically during T20 (both found ~42 of ~215
+      # production packages). `pnpm licenses list` is pnpm's own,
+      # correctly workspace-aware equivalent.
+      - name: Check for GPL/AGPL production dependencies
+        run: node scripts/check-license-compliance.mjs
+
+  container-scan:
+    name: Build, SBOM, and scan (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - { name: web, dockerfile: infrastructure/docker/web/Dockerfile }
+          - { name: admin, dockerfile: infrastructure/docker/admin/Dockerfile }
+          - { name: api, dockerfile: infrastructure/docker/api/Dockerfile }
+          - { name: ai-engine, dockerfile: infrastructure/docker/ai-engine/Dockerfile }
+          - { name: speech-service, dockerfile: infrastructure/docker/speech-service/Dockerfile }
+          - { name: recommendation-engine, dockerfile: infrastructure/docker/recommendation-engine/Dockerfile }
+          - { name: notification-service, dockerfile: infrastructure/docker/notification-service/Dockerfile }
+          - { name: analytics-service, dockerfile: infrastructure/docker/analytics-service/Dockerfile }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          tags: linguaai-${{ matrix.image.name }}:scan
+          load: true
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
+
+      # SBOM — Syft, SPDX format, attached as a build artifact (E1 Part
+      # 10 container supply-chain pipeline, ADR-017). Failure here stops
+      # the pipeline (E1 Part 10's stated failure condition).
+      - name: Generate SBOM (Syft)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/syft:latest linguaai-${{ matrix.image.name }}:scan -o spdx-json \
+            > sbom-${{ matrix.image.name }}.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-${{ matrix.image.name }}
+          path: sbom-${{ matrix.image.name }}.spdx.json
+          retention-days: 90
+
+      # Trivy — blocking on Critical/High CVEs with an available fix (E1
+      # Part 10's stated failure condition). --ignore-unfixed means a CVE
+      # with no upstream fix at all never blocks; .trivyignore carries
+      # the small set of already-documented, already-justified exceptions
+      # where a fix exists but can't currently be adopted (see the file
+      # itself, and .github/security/dependency-audit-allowlist.json for
+      # the same two exceptions at the dependency-audit layer).
+      - name: Scan image (Trivy)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${{ github.workspace }}/.trivyignore:/.trivyignore" \
+            aquasec/trivy:latest image --severity CRITICAL,HIGH --exit-code 1 \
+            --ignore-unfixed --ignorefile /.trivyignore linguaai-${{ matrix.image.name }}:scan

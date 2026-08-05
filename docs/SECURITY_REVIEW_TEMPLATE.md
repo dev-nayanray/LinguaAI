@@ -12,7 +12,7 @@ Copy this file per feature that touches authentication, authorization, PII, tena
 
 ## 1. Does this feature require a security review?
 
-*A feature touching any of the below requires this template filled in full. If none apply, state so and skip to §9 with a one-line justification — don't leave the template blank.*
+_A feature touching any of the below requires this template filled in full. If none apply, state so and skip to §9 with a one-line justification — don't leave the template blank._
 
 - ☐ New authentication/authorization surface
 - ☐ New or changed data access to PII or tenant-scoped data
@@ -23,7 +23,7 @@ Copy this file per feature that touches authentication, authorization, PII, tena
 
 ## 2. Threat delta
 
-*What new attack surface does this introduce, relative to SECURITY.md §1's threat model? Not "list all possible attacks" — specifically what's new here.*
+_What new attack surface does this introduce, relative to SECURITY.md §1's threat model? Not "list all possible attacks" — specifically what's new here._
 
 ## 3. AuthN/Z
 
@@ -33,13 +33,13 @@ Copy this file per feature that touches authentication, authorization, PII, tena
 
 ## 4. Data classification
 
-| Data touched | Classification | Encryption | Retention (DATABASE.md §7) |
-|---|---|---|---|
-| | PII / Sensitive-PII / Internal / Public | | |
+| Data touched | Classification                          | Encryption | Retention (DATABASE.md §7) |
+| ------------ | --------------------------------------- | ---------- | -------------------------- |
+|              | PII / Sensitive-PII / Internal / Public |            |                            |
 
 ## 5. Tenant isolation (if applicable)
 
-*Cross-reference DATABASE_CHANGE_TEMPLATE.md §3 — this section confirms the security implication is understood, not just the mechanical RLS checklist.*
+_Cross-reference DATABASE_CHANGE_TEMPLATE.md §3 — this section confirms the security implication is understood, not just the mechanical RLS checklist._
 
 **Could this feature leak data across `Organization` boundaries if a single check failed?** ☐ Yes → explain the defense-in-depth layers (MULTITENANCY.md §2) ☐ No
 
@@ -52,11 +52,11 @@ Copy this file per feature that touches authentication, authorization, PII, tena
 
 ## 7. Third-party/subprocessor impact
 
-*New subprocessor touching user data requires a Data Processing Agreement (SECURITY.md §7) before this ships — not after.*
+_New subprocessor touching user data requires a Data Processing Agreement (SECURITY.md §7) before this ships — not after._
 
 ## 8. Compliance impact
 
-*Does this change anything in the SECURITY.md §7.1 compliance mapping (GDPR/CCPA/COPPA)? If it touches minors' data in any way, stop — Family plan is descoped from MVP (ADR-013) and this likely needs product/legal escalation, not just a security review.*
+_Does this change anything in the SECURITY.md §7.1 compliance mapping (GDPR/CCPA/COPPA)? If it touches minors' data in any way, stop — Family plan is descoped from MVP (ADR-013) and this likely needs product/legal escalation, not just a security review._
 
 ## 9. Security Gate checklist
 

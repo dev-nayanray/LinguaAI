@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Override the base's "Bundler" resolution: this package is compiled by
+    // plain tsc and consumed via Node's real module resolution (workspace:*
+    // → node_modules), not bundled by Next.js/webpack like the apps are.
+    // NodeNext requires explicit .js extensions on relative imports in ESM
+    // source — every relative import in src/ reflects that deliberately.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
+  },
+  // Deliberately includes *.test.ts — this is the config `typecheck` runs
+  // against, and Vitest's esbuild transform strips types without validating
+  // them, so this is the ONLY thing that actually typechecks test files.
+  // tsconfig.build.json (build output) excludes them separately.
+  "include": ["src/**/*.ts"]
+}

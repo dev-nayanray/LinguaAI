@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+dist-cjs/
+build/
+.next/
+out/
+coverage/
+storybook-static/
+
+# Turborepo
+.turbo/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# ESLint
+.eslintcache
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Prisma
+packages/database/generated/
+
+# Terraform
+# .terraform.lock.hcl is deliberately NOT ignored — HashiCorp's own
+# guidance (and every `terraform init` run in this repo) is to commit it
+# for reproducible provider version selection across machines/CI.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Testing
+*.tsbuildinfo
+playwright-report/
+test-results/
+blob-report/
+
+*storybook.log

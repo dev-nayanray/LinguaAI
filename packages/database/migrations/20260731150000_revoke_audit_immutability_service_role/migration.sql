@@ -1,0 +1,16 @@
+-- E2-T25: T7's own migration (20260730121045_add_audit_immutability_grants)
+-- only revoked UPDATE/DELETE on "AuditLog"/"EntitlementChangeLog" from
+-- app_role — app_service_role (BYPASSRLS, granted UPDATE/DELETE on every
+-- table via its own blanket T5 grant) was never touched, and is not dead
+-- capability: bootstrap-admin.ts connects as app_service_role specifically
+-- to INSERT its own AuditLog rows (no app.current_user_id exists yet to
+-- authorize the request through app_role's usual RLS-gated path). Part 9B's
+-- own stated reasoning for immutability — "an application bug or a
+-- compromised app_role credential still cannot alter or erase an audit
+-- record" — applies identically to a compromised app_service_role
+-- credential, which was left able to UPDATE/DELETE both tables this whole
+-- time. INSERT/SELECT stay granted (app_service_role's own legitimate
+-- write path); every other table app_service_role touches is unaffected —
+-- this narrows privileges on these two tables specifically, the same as
+-- T7 already did for app_role.
+REVOKE UPDATE, DELETE ON "AuditLog", "EntitlementChangeLog" FROM app_service_role;

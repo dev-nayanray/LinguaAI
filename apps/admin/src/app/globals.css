@@ -1,0 +1,4 @@
+@import '@linguaai/ui/styles.css';
+
+/* See apps/web/src/app/globals.css for the full rationale — same fix. */
+@source '../../../../packages/ui/src';

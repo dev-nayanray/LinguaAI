@@ -1,6 +1,6 @@
 # LinguaAI — Event Architecture
 
-Status: **v1.1 — Consolidated baseline** · Last updated: 2026-07-29
+Status: **v1.1 — Consolidated baseline** · Last updated: 2026-08-01
 
 Resolves the Architecture Review finding that point-to-point queue calls between modules (Gamification, Analytics, and Notifications all separately reacting to the same underlying occurrences) create hidden N:M coupling as consumers multiply (ADR-010). This document is the canonical domain-event catalog and event-transport contract for LinguaAI.
 
@@ -31,24 +31,37 @@ Every event uses this fixed shape:
 
 ## 3. Event catalog (MVP)
 
-| Event | Producer | Key consumers | Payload summary |
-|---|---|---|---|
-| `identity.user.registered` | `apps/api` (Identity module) | `notification-service`, `analytics-service` | userId, signupSource |
-| `identity.consent.recorded` | `apps/api` | `analytics-service` | consentType, policyVersion |
-| `assessment.attempt.completed` | `apps/api` (Assessment module) | `recommendation-engine`, `analytics-service` | userId, skillScores, cefrLevel |
-| `learning.lesson.completed` | `apps/api` (Course module) | Gamification, `recommendation-engine`, `analytics-service` | userId, lessonId, score |
-| `learning.exercise.answered` | `apps/api` | `recommendation-engine`, `analytics-service` | userId, exerciseId, correct |
-| `speech.session.ended` | `services/speech-service` | Gamification, `ai-engine` (memory write), `analytics-service` | userId, durationSec, fluencyScore |
-| `gamification.xp.awarded` | Gamification module | `notification-service` (milestone push), `analytics-service` | userId, amount, reason |
-| `gamification.streak.updated` | Gamification module | `notification-service`, `analytics-service` | userId, streakLength, atRisk |
-| `gamification.badge.awarded` | Gamification module | `notification-service`, `analytics-service` | userId, badgeId |
-| `billing.subscription.changed` | `apps/api` (Billing module, from Stripe webhook) | `analytics-service`, `notification-service` (receipt) | userId, plan, status |
-| `billing.entitlement.changed` | `apps/api` | (cache invalidation — internal to Billing module) | userId, entitlementKey, newValue |
-| `ai.memory.updated` | `services/ai-engine` | `analytics-service` | userId, memoryEntryId, kind |
-| `content.published` | `apps/api` (Course module, admin action) | Cache invalidation (ARCHITECTURE.md §7), `analytics-service` | contentId, contentType |
-| `community.content.reported` | `apps/api` (Community module) | Admin moderation queue, `analytics-service` | reportId, targetType, targetId |
-| `notification.preference.changed` | `apps/api` | `notification-service` | userId, channel, enabled |
-| `account.deletion.requested` | `apps/api` (Identity module) | All services owning user data (cascade/anonymize per DATABASE.md §10) | userId, requestedAt |
+| Event                                      | Producer                                         | Key consumers                                                         | Payload summary                                                                                  |
+| ------------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `identity.user.registered`                 | `apps/api` (Identity module)                     | `notification-service`, `analytics-service`                           | userId, signupSource                                                                             |
+| `identity.consent.recorded`                | `apps/api`                                       | `analytics-service`                                                   | consentType, policyVersion                                                                       |
+| `assessment.attempt.completed`             | `apps/api` (Assessment module)                   | `recommendation-engine`, `analytics-service`                          | userId, skillScores, cefrLevel                                                                   |
+| `learning.lesson.completed`                | `apps/api` (Course module)                       | Gamification, `recommendation-engine`, `analytics-service`            | userId, lessonId, score                                                                          |
+| `learning.exercise.answered`               | `apps/api`                                       | `recommendation-engine`, `analytics-service`                          | userId, exerciseId, correct                                                                      |
+| `speech.session.ended`                     | `services/speech-service`                        | Gamification, `ai-engine` (memory write), `analytics-service`         | userId, durationSec, fluencyScore                                                                |
+| `gamification.xp.awarded`                  | Gamification module                              | `notification-service` (milestone push), `analytics-service`          | userId, amount, reason                                                                           |
+| `gamification.streak.updated`              | Gamification module                              | `notification-service`, `analytics-service`                           | userId, streakLength, atRisk                                                                     |
+| `gamification.badge.awarded`               | Gamification module                              | `notification-service`, `analytics-service`                           | userId, badgeId                                                                                  |
+| `billing.subscription.changed`             | `apps/api` (Billing module, from Stripe webhook) | `analytics-service`, `notification-service` (receipt)                 | userId, plan, status                                                                             |
+| `billing.entitlement.changed`              | `apps/api`                                       | (cache invalidation — internal to Billing module)                     | userId, entitlementKey, newValue                                                                 |
+| `ai.memory.updated`                        | `services/ai-engine`                             | `analytics-service`                                                   | userId, memoryEntryId, kind                                                                      |
+| `content.published`                        | `apps/api` (Course module, admin action)         | Cache invalidation (ARCHITECTURE.md §7), `analytics-service`          | contentId, contentType                                                                           |
+| `community.content.reported`               | `apps/api` (Community module)                    | Admin moderation queue, `analytics-service`                           | reportId, targetType, targetId                                                                   |
+| `notification.preference.changed`          | `apps/api`                                       | `notification-service`                                                | userId, channel, enabled                                                                         |
+| `account.deletion.requested`               | `apps/api` (Identity module)                     | All services owning user data (cascade/anonymize per DATABASE.md §10) | userId, requestedAt                                                                              |
+| `identity.session.created`                 | `apps/api` (Auth module)                         | `analytics-service`                                                   | userId, ip, userAgent, sessionId                                                                 |
+| `identity.session.revoked`                 | `apps/api` (Auth module)                         | `analytics-service`, `notification-service` (security alert)          | userId, sessionId, reason                                                                        |
+| `identity.login.failed`                    | `apps/api` (Auth module)                         | `analytics-service`                                                   | keyed-HMAC email hash (never raw email, never a bare hash), ip, reason                           |
+| `identity.password.reset_requested`        | `apps/api` (Auth module)                         | `notification-service`                                                | userId                                                                                           |
+| `identity.mfa.enrolled`                    | `apps/api` (Auth module)                         | `analytics-service`                                                   | userId                                                                                           |
+| `identity.oauth.linked`                    | `apps/api` (Auth module)                         | `analytics-service`                                                   | userId, provider                                                                                 |
+| `identity.role.change_requested`           | `apps/api` (Users module)                        | `analytics-service`                                                   | targetUserId, toRole, requiresApproval                                                           |
+| `identity.role.change_approved`            | `apps/api` (Users module)                        | `notification-service`, `analytics-service`                           | targetUserId, fromRole, toRole, approvedBy                                                       |
+| `identity.role.changed`                    | `apps/api` (Users/Organizations module)          | `notification-service`, `analytics-service`                           | targetUserId, fromRole, toRole, changedBy (`'system-bootstrap'` for the bootstrap/recovery path) |
+| `identity.role.emergency_recovery`         | `packages/database` bootstrap-admin CLI          | `notification-service`, `analytics-service`, security on-call         | targetUserId, triggeredBy (`'system-bootstrap'`, an infra-level identity, not a `User`)          |
+| `identity.organization.membership_changed` | `apps/api` (Organizations module)                | `notification-service`, `analytics-service`                           | organizationId, userId, action (`added`/`removed`/`role_changed`)                                |
+
+`identity.login.failed`'s email hash is an **HMAC keyed with a server-held secret** (rotatable, held in the same secrets-management path as other application secrets), not a bare hash — an unkeyed hash of a bounded, guessable input space like an email address is only marginally better than storing it raw.
 
 New events are added to this table in the same PR that introduces the producer — an undocumented event is treated as a review-blocking omission (CONTRIBUTING.md).
 
@@ -62,6 +75,6 @@ Every consumer stores processed `eventId`s (or relies on a natural idempotency k
 - Dead-lettered events page on-call if the DLQ depth crosses a threshold (OBSERVABILITY.md alerting policy) — a silently growing DLQ is a common way for "it reacts to events" systems to quietly stop reacting.
 - A producer publishing an event is never blocked or failed by a consumer being down — publication and consumption are fully decoupled by the queue.
 
-## 6. What is *not* an event
+## 6. What is _not_ an event
 
-Synchronous, request-scoped reads (e.g., "does this user have an active subscription") are direct service calls, not events — events model things that *happened*, not things you *ask*. Real-time, low-latency flows (speech streaming, live AI chat tokens) use the WebSocket channel (API_GUIDELINES.md §9) directly, not the event bus, which is not designed for sub-second delivery guarantees.
+Synchronous, request-scoped reads (e.g., "does this user have an active subscription") are direct service calls, not events — events model things that _happened_, not things you _ask_. Real-time, low-latency flows (speech streaming, live AI chat tokens) use the WebSocket channel (API_GUIDELINES.md §9) directly, not the event bus, which is not designed for sub-second delivery guarantees.

@@ -1,0 +1,224 @@
+name: Deploy to production
+
+# DEPLOYMENT.md §4 / E1 Part 10: manual approval gate after staging
+# verification → build & push (rebuilt from the exact staging-tested Git
+# SHA, see the note on `image_tag` below) → container supply-chain
+# pipeline (ADR-017) → Terraform plan/apply (production workspace) →
+# rolling ECS deploy (automatic rollback on failed health checks —
+# infrastructure/terraform/modules/compute's deployment_circuit_breaker,
+# T23) → smoke tests.
+#
+# The manual-approval requirement itself is enforced by GitHub's native
+# Environments feature: the "production" environment must have a
+# required-reviewers protection rule configured in this repo's Settings >
+# Environments (not something a workflow YAML file can set on its own —
+# same category as T25's branch-protection settings). Every job below
+# that references `environment: production` pauses for that approval
+# before it runs; modules/github-oidc's deploy role trust policy also
+# scopes AWS credentials to the environment-scoped OIDC claim GitHub only
+# issues after that same approval, so the gate holds at the AWS
+# credential level too, not just the workflow-UI level.
+#
+# services/ai-engine's canary-rollout requirement (DEPLOYMENT.md §4: "a
+# prompt/model change has product-quality blast radius a standard health
+# check can't detect") is deliberately NOT implemented here — E1's
+# ai-engine skeleton has no real prompt/model logic yet for a canary to
+# meaningfully protect (AI_GOVERNANCE.md §1's golden-set signals don't
+# exist until real agent behavior does). Tracked as a gap to close once
+# ai-engine has real content, not silently dropped.
+#
+# Every `uses:` below is pinned to a full commit SHA — T20 semgrep
+# finding applied consistently.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Git SHA already built, signed, and smoke-tested in staging (deploy-staging.yml) — production rebuilds from this exact commit rather than trusting a mutable reference.'
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TF_VAR_image_tag: ${{ inputs.image_tag }}
+  TF_VAR_domain_name: ''
+  TF_VAR_route53_zone_id: ''
+  TF_VAR_sentry_dsn_secret_arn: ${{ vars.PRODUCTION_SENTRY_DSN_SECRET_ARN }}
+  TF_VAR_budget_alert_emails: ${{ vars.BUDGET_ALERT_EMAILS }}
+
+jobs:
+  ensure-ecr-repos:
+    name: Ensure ECR repositories exist
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform init
+
+      - name: Terraform apply (ECR repositories only)
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform apply -auto-approve -target=module.compute.aws_ecr_repository.this
+
+  build-sign-verify:
+    name: Build, sign, verify (${{ matrix.service.name }})
+    needs: ensure-ecr-repos
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      contents: read
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - { name: web, dockerfile: infrastructure/docker/web/Dockerfile }
+          - { name: admin, dockerfile: infrastructure/docker/admin/Dockerfile }
+          - { name: api, dockerfile: infrastructure/docker/api/Dockerfile }
+          - { name: ai-engine, dockerfile: infrastructure/docker/ai-engine/Dockerfile }
+          - { name: speech-service, dockerfile: infrastructure/docker/speech-service/Dockerfile }
+          - { name: recommendation-engine, dockerfile: infrastructure/docker/recommendation-engine/Dockerfile }
+          - { name: notification-service, dockerfile: infrastructure/docker/notification-service/Dockerfile }
+          - { name: analytics-service, dockerfile: infrastructure/docker/analytics-service/Dockerfile }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.image_tag }}
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: ${{ steps.ecr-login.outputs.registry }}/linguaai-production-${{ matrix.service.name }}:${{ inputs.image_tag }}
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+
+      - name: Sign and attest image
+        uses: ./.github/actions/container-sign
+        with:
+          image-name: ${{ steps.ecr-login.outputs.registry }}/linguaai-production-${{ matrix.service.name }}
+          image-digest: ${{ steps.build.outputs.digest }}
+
+      - name: Verify image
+        uses: ./.github/actions/container-verify
+        with:
+          image-name: ${{ steps.ecr-login.outputs.registry }}/linguaai-production-${{ matrix.service.name }}
+          image-digest: ${{ steps.build.outputs.digest }}
+          signer-workflow: .github/workflows/deploy-production.yml
+
+  deploy:
+    name: Terraform apply (production)
+    needs: build-sign-verify
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform init
+
+      - name: Terraform plan
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform apply -auto-approve tfplan
+
+      - name: Export deploy outputs
+        id: outputs
+        working-directory: infrastructure/terraform/environments/production
+        run: |
+          echo "alb_dns_name=$(terraform output -raw alb_dns_name)" >> "$GITHUB_OUTPUT"
+          echo "cloudfront_domain_name=$(terraform output -raw cloudfront_domain_name)" >> "$GITHUB_OUTPUT"
+    outputs:
+      alb_dns_name: ${{ steps.outputs.outputs.alb_dns_name }}
+      cloudfront_domain_name: ${{ steps.outputs.outputs.cloudfront_domain_name }}
+
+  smoke-test:
+    name: Smoke test
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Hit ALB health endpoints
+        env:
+          ALB_DNS_NAME: ${{ needs.deploy.outputs.alb_dns_name }}
+        run: |
+          services="api ai-engine speech-service recommendation-engine notification-service analytics-service"
+          for service in $services; do
+            echo "checking $service..."
+            for i in $(seq 1 30); do
+              status=$(curl -s -o /dev/null -w "%{http_code}" "http://$ALB_DNS_NAME/$service/health" || echo "000")
+              if [ "$status" = "200" ]; then
+                echo "  ok"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "  TIMEOUT: $service never returned 200 (last status: $status)"
+                exit 1
+              fi
+              sleep 10
+            done
+          done
+
+      - name: Hit CloudFront root page
+        env:
+          CLOUDFRONT_DOMAIN_NAME: ${{ needs.deploy.outputs.cloudfront_domain_name }}
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" "https://$CLOUDFRONT_DOMAIN_NAME/")
+          if [ "$status" != "200" ]; then
+            echo "CloudFront root page returned $status, expected 200"
+            exit 1
+          fi

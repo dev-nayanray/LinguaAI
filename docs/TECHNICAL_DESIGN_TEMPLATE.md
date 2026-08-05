@@ -13,43 +13,43 @@ Copy this file per feature (or per Epic, for small Epics) requiring a real desig
 
 ## 1. Design necessity
 
-*Why does this need a design doc rather than reusing an existing pattern? If it's a novel pattern, what makes it novel?*
+_Why does this need a design doc rather than reusing an existing pattern? If it's a novel pattern, what makes it novel?_
 
 ## 2. Bounded context & ownership
 
-*Which bounded context (ARCHITECTURE.md §2.1) does this belong to? Which app/service hosts it? If it's ambiguous between `recommendation-engine` and `ai-engine`, apply the rule in ARCHITECTURE.md §2.1 explicitly and state the conclusion.*
+_Which bounded context (ARCHITECTURE.md §2.1) does this belong to? Which app/service hosts it? If it's ambiguous between `recommendation-engine` and `ai-engine`, apply the rule in ARCHITECTURE.md §2.1 explicitly and state the conclusion._
 
 ## 3. Component design
 
-*Diagram or bullet list: what new modules/classes/components are introduced, and how do they relate to existing ones? Reference CODING_STANDARDS.md layering (controller → service → repository) explicitly if backend.*
+_Diagram or bullet list: what new modules/classes/components are introduced, and how do they relate to existing ones? Reference CODING_STANDARDS.md layering (controller → service → repository) explicitly if backend._
 
 ## 4. Data flow
 
-*Sequence of what talks to what. If this involves a domain event, cite the event name from EVENT_ARCHITECTURE.md §3 (or add a new row to that catalog if none fits — required, not optional).*
+_Sequence of what talks to what. If this involves a domain event, cite the event name from EVENT_ARCHITECTURE.md §3 (or add a new row to that catalog if none fits — required, not optional)._
 
 ## 5. Dependencies
 
-| Depends on | Type | Status |
-|---|---|---|
-| | Epic / Package / External API / Migration | |
+| Depends on | Type                                      | Status |
+| ---------- | ----------------------------------------- | ------ |
+|            | Epic / Package / External API / Migration |        |
 
 ## 6. Failure modes
 
-*What happens when each dependency in §5 is unavailable? Cross-reference ARCHITECTURE.md §7.1's graceful-degradation table if this is a known dependency; define new behavior if not.*
+_What happens when each dependency in §5 is unavailable? Cross-reference ARCHITECTURE.md §7.1's graceful-degradation table if this is a known dependency; define new behavior if not._
 
 | Failure | Behavior |
-|---|---|
+| ------- | -------- |
 
 ## 7. Alternatives considered
 
-*At least one alternative approach, and why it was rejected. A design with no considered alternative usually means the alternatives weren't actually thought through.*
+_At least one alternative approach, and why it was rejected. A design with no considered alternative usually means the alternatives weren't actually thought through._
 
 | Alternative | Why rejected |
-|---|---|
+| ----------- | ------------ |
 
 ## 8. ADR impact
 
-*Does this design require a new entry in [DECISIONS.md](DECISIONS.md), or does it operate entirely within existing accepted ADRs? If new, draft the ADR alongside this design, don't defer it.*
+_Does this design require a new entry in [DECISIONS.md](DECISIONS.md), or does it operate entirely within existing accepted ADRs? If new, draft the ADR alongside this design, don't defer it._
 
 **New ADR required:** ☐ Yes → [link] · ☐ No, operates within: [ADR-XXX, ADR-YYY]
 

@@ -1,0 +1,28 @@
+# Container-scan exceptions for security-scan.yml (T20) / T17's Docker
+# image hardening. E1 Part 10's own failure-condition language sets the
+# precedent this file follows: "CVEs with no fix yet are logged/tracked
+# per SECURITY.md §6's patch SLA, not blocking — a permanently-unfixable
+# transitive dependency must not make the pipeline permanently red."
+# Every entry here must have a concrete reason a fix can't currently be
+# adopted (see .github/security/dependency-audit-allowlist.json for the
+# same two exceptions, tracked at the dependency-audit layer too) — never
+# a bare suppression, and never used to silence a genuinely new finding.
+
+# @opentelemetry/propagator-jaeger — Denial of Service via malformed HTTP
+# header decoding. Transitive dependency of @opentelemetry/sdk-trace-node
+# (via packages/observability). This codebase only ever registers the
+# W3C tracecontext+baggage propagator (packages/observability/src/
+# middleware.ts) — the vulnerable code path is never invoked. A real fix
+# requires an OpenTelemetry SDK 1.x -> 2.x major-version migration across
+# every app/service, out of scope here and risks regressing already-
+# verified observability wiring (T11/T16).
+CVE-2026-59892
+
+# sharp — inherited libvips vulnerabilities. Next.js 16.2.12 pins sharp
+# to exactly ^0.34.5; the fix (0.35.0) falls outside that range. Forcing
+# an override risks breaking Next's native image-optimization binary,
+# untested. Tracked pending a future Next.js upgrade.
+CVE-2026-33327
+CVE-2026-33328
+CVE-2026-35590
+CVE-2026-35591

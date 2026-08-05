@@ -2,7 +2,7 @@
 
 Status: **v1.1 — Consolidated baseline** · Owner: AI Engineering · Last updated: 2026-07-29
 
-Supersedes Draft v1.0. This document is the AI platform's *architecture*. Its *lifecycle governance* (model/prompt promotion, evaluation gates, RAG knowledge-base curation, agent handoff protocol detail, cost-breaker governance, safety policy) lives in **[AI_GOVERNANCE.md](AI_GOVERNANCE.md)** and is referenced rather than duplicated below. Latency/performance numbers are owned canonically by **[PERFORMANCE.md](PERFORMANCE.md)**. See [BASELINE.md](BASELINE.md) for the current authoritative summary and [DECISIONS.md](DECISIONS.md) for ADR-006, 007, 008, 012.
+Supersedes Draft v1.0. This document is the AI platform's _architecture_. Its _lifecycle governance_ (model/prompt promotion, evaluation gates, RAG knowledge-base curation, agent handoff protocol detail, cost-breaker governance, safety policy) lives in **[AI_GOVERNANCE.md](AI_GOVERNANCE.md)** and is referenced rather than duplicated below. Latency/performance numbers are owned canonically by **[PERFORMANCE.md](PERFORMANCE.md)**. See [BASELINE.md](BASELINE.md) for the current authoritative summary and [DECISIONS.md](DECISIONS.md) for ADR-006, 007, 008, 012.
 
 ## 1. Principles
 
@@ -38,15 +38,15 @@ All providers are integrated behind a single internal `ModelProvider` interface 
 
 One **Orchestrator** agent owns the user-facing voice and full session state for a given `AIAgentSession`. Specialist personas — Grammar Coach, Pronunciation Coach, Vocabulary Coach, Writing Coach, Exam Coach — are **typed tools** the Orchestrator invokes when a defined trigger condition fires (e.g., a recurring grammar-error pattern crossing a confidence threshold during a Conversation Partner session), returning a structured, schema-validated critique object that the Orchestrator weaves into its own response.
 
-| Agent | Role | Key tools/context |
-|---|---|---|
-| Personal Language Teacher | Default Orchestrator for general sessions; explains the "why" behind the plan | `LearningPlan`, `ProficiencyLevel`, memory |
-| Conversation Partner | Orchestrator for real-time spoken/written dialogue practice, scenario role-play | Speech-service streaming, memory, fluency scoring; invokes Grammar/Pronunciation Coach as tools on trigger |
-| Grammar Coach | Specialist tool: explains and corrects grammar errors in context | RAG-grounded (§4) rule lookup + LLM explanation; writes to `AIMemoryEntry` on recurring mistakes |
-| Pronunciation Coach | Specialist tool: phoneme-level feedback | Speech-service phoneme scoring output as tool input |
-| Vocabulary Coach | Specialist tool / Orchestrator for dedicated vocabulary sessions | `UserVocabulary` read/write, generates example sentences |
-| Writing Coach | Orchestrator for writing-review sessions | RAG-grounded rubric scoring, structured critique output |
-| Exam Coach | Orchestrator for exam-prep sessions | RAG-grounded `ExamProgram` rubric data (§4), mock test scoring |
+| Agent                     | Role                                                                            | Key tools/context                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Personal Language Teacher | Default Orchestrator for general sessions; explains the "why" behind the plan   | `LearningPlan`, `ProficiencyLevel`, memory                                                                 |
+| Conversation Partner      | Orchestrator for real-time spoken/written dialogue practice, scenario role-play | Speech-service streaming, memory, fluency scoring; invokes Grammar/Pronunciation Coach as tools on trigger |
+| Grammar Coach             | Specialist tool: explains and corrects grammar errors in context                | RAG-grounded (§4) rule lookup + LLM explanation; writes to `AIMemoryEntry` on recurring mistakes           |
+| Pronunciation Coach       | Specialist tool: phoneme-level feedback                                         | Speech-service phoneme scoring output as tool input                                                        |
+| Vocabulary Coach          | Specialist tool / Orchestrator for dedicated vocabulary sessions                | `UserVocabulary` read/write, generates example sentences                                                   |
+| Writing Coach             | Orchestrator for writing-review sessions                                        | RAG-grounded rubric scoring, structured critique output                                                    |
+| Exam Coach                | Orchestrator for exam-prep sessions                                             | RAG-grounded `ExamProgram` rubric data (§4), mock test scoring                                             |
 
 This preserves one consistent voice and full memory continuity per session, bounds cost (a specialist is invoked only on a real trigger, not by default every turn), and produces a testable, structural contract (TESTING.md §3). Full governance detail — including the exact trigger-condition catalog and tool-registry versioning — lives in [AI_GOVERNANCE.md](AI_GOVERNANCE.md) §2, §6.
 

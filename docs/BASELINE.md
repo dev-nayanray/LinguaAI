@@ -26,13 +26,13 @@ Data lives in a single PostgreSQL instance (Aurora in production) with `pgvector
 
 ## 3. Technology stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | Next.js 16+, TypeScript, Tailwind CSS, Shadcn UI, React Query, Zustand |
-| Backend | NestJS, TypeScript, Prisma ORM, PostgreSQL (+pgvector), Redis, BullMQ |
-| Mobile | Flutter (iOS & Android) |
-| AI | Provider-agnostic gateway (Anthropic/OpenAI behind one interface), RAG retrieval, STT/TTS, single-Orchestrator agent architecture |
-| Infrastructure | AWS (ECS Fargate, Aurora, ElastiCache, S3, CloudFront), Terraform, GitHub Actions |
+| Layer          | Technology                                                                                                                        |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend       | Next.js 16+, TypeScript, Tailwind CSS, Shadcn UI, React Query, Zustand                                                            |
+| Backend        | NestJS, TypeScript, Prisma ORM, PostgreSQL (+pgvector), Redis, BullMQ                                                             |
+| Mobile         | Flutter (iOS & Android)                                                                                                           |
+| AI             | Provider-agnostic gateway (Anthropic/OpenAI behind one interface), RAG retrieval, STT/TTS, single-Orchestrator agent architecture |
+| Infrastructure | AWS (ECS Fargate, Aurora, ElastiCache, S3, CloudFront), Terraform, GitHub Actions                                                 |
 
 Full rationale for each choice: ARCHITECTURE.md, DECISIONS.md.
 
@@ -42,7 +42,7 @@ Free/Premium subscription tiers; 10 target learning languages with English as th
 
 ## 5. AI architecture summary
 
-All model calls route through a single AI gateway (`services/ai-engine`, ADR-006). One Orchestrator agent per session invokes specialist agents as typed tools on defined triggers (ADR-007). Any factual or scoring claim is grounded against a curated, versioned knowledge base via RAG (ADR-008) — never left to parametric model knowledge alone. Cost is bounded by per-user entitlements *and* a platform-level circuit breaker (ADR-012). Full lifecycle governance (evaluation gates, knowledge-base curation, safety policy, fallback chain) is in [AI_GOVERNANCE.md](AI_GOVERNANCE.md); latency budgets are canonically owned by [PERFORMANCE.md](PERFORMANCE.md) §2.
+All model calls route through a single AI gateway (`services/ai-engine`, ADR-006). One Orchestrator agent per session invokes specialist agents as typed tools on defined triggers (ADR-007). Any factual or scoring claim is grounded against a curated, versioned knowledge base via RAG (ADR-008) — never left to parametric model knowledge alone. Cost is bounded by per-user entitlements _and_ a platform-level circuit breaker (ADR-012). Full lifecycle governance (evaluation gates, knowledge-base curation, safety policy, fallback chain) is in [AI_GOVERNANCE.md](AI_GOVERNANCE.md); latency budgets are canonically owned by [PERFORMANCE.md](PERFORMANCE.md) §2.
 
 ## 6. Security summary
 
@@ -62,14 +62,14 @@ Public developer API (module 27), AI Avatar Teacher (module 17), white-labeling,
 
 ## 10. Implementation readiness score
 
-| Dimension | Score (v1.0 Review) | Score (v1.1 Baseline) | Basis for change |
-|---|---:|---:|---|
-| Overall architecture | 72/100 | **88/100** | Domain-event catalog, bounded-context map, RLS, and BFF pattern are now specified, not gaps |
-| Product readiness | 65/100 | **85/100** | Outcome analytics, billing off-ramps, localization/accessibility/offline strategy, and edge cases are now specified |
-| Engineering readiness | 75/100 | **90/100** | Coding standards, API guidelines, and event architecture now codified; module-boundary tooling remains a delivery item (E1), not a documentation gap |
-| AI readiness | 60/100 | **85/100** | RAG grounding, agent handoff protocol, evaluation framework, and cost circuit breaker are now specified — remaining gap is execution (linguist knowledge-base curation, ADR-008) rather than design |
-| UX readiness | 70/100 | **88/100** | Foundational tokens, motion principles, and previously-missing components are now specified |
-| Security readiness | 62/100 | **87/100** | RLS, mandatory MFA, output sanitization, and compliance mapping are now specified — penetration testing remains a pre-GA execution item, not a design gap |
+| Dimension             | Score (v1.0 Review) | Score (v1.1 Baseline) | Basis for change                                                                                                                                                                                    |
+| --------------------- | ------------------: | --------------------: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Overall architecture  |              72/100 |            **88/100** | Domain-event catalog, bounded-context map, RLS, and BFF pattern are now specified, not gaps                                                                                                         |
+| Product readiness     |              65/100 |            **85/100** | Outcome analytics, billing off-ramps, localization/accessibility/offline strategy, and edge cases are now specified                                                                                 |
+| Engineering readiness |              75/100 |            **90/100** | Coding standards, API guidelines, and event architecture now codified; module-boundary tooling remains a delivery item (E1), not a documentation gap                                                |
+| AI readiness          |              60/100 |            **85/100** | RAG grounding, agent handoff protocol, evaluation framework, and cost circuit breaker are now specified — remaining gap is execution (linguist knowledge-base curation, ADR-008) rather than design |
+| UX readiness          |              70/100 |            **88/100** | Foundational tokens, motion principles, and previously-missing components are now specified                                                                                                         |
+| Security readiness    |              62/100 |            **87/100** | RLS, mandatory MFA, output sanitization, and compliance mapping are now specified — penetration testing remains a pre-GA execution item, not a design gap                                           |
 
 Scores reflect **documentation/design completeness**, not delivered code — this baseline describes what will be built, correctly and consistently, not a claim that it has been built. The remaining gap to 100 in each dimension is closed by execution against Epics E1–E23 (ROADMAP.md), not further design work.
 

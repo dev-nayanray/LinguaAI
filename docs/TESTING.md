@@ -8,12 +8,12 @@ Testing is a release gate, not an afterthought. No module from PRD.md §6 is con
 
 ## 1. Test pyramid
 
-| Layer | Scope | Tooling | Lives in |
-|---|---|---|---|
-| Unit | Pure functions, utilities, individual services/components in isolation | Jest/Vitest (TS), `flutter test` (mobile) | Beside source, `*.spec.ts` / `*_test.dart` |
-| Integration | NestJS modules against a real (test-container) Postgres/Redis, Prisma queries, API contract validation | Jest + Testcontainers | `tests/integration` |
-| End-to-end | Full user journeys through the actual UI against a running stack | Playwright (web/admin), integration_test (Flutter) | `tests/e2e` |
-| Contract | Frontend/backend payload shape matches `packages/validation`/`packages/types` | Type-level + runtime Zod parsing in CI | Co-located with schemas |
+| Layer       | Scope                                                                                                  | Tooling                                            | Lives in                                   |
+| ----------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------ |
+| Unit        | Pure functions, utilities, individual services/components in isolation                                 | Jest/Vitest (TS), `flutter test` (mobile)          | Beside source, `*.spec.ts` / `*_test.dart` |
+| Integration | NestJS modules against a real (test-container) Postgres/Redis, Prisma queries, API contract validation | Jest + Testcontainers                              | `tests/integration`                        |
+| End-to-end  | Full user journeys through the actual UI against a running stack                                       | Playwright (web/admin), integration_test (Flutter) | `tests/e2e`                                |
+| Contract    | Frontend/backend payload shape matches `packages/validation`/`packages/types`                          | Type-level + runtime Zod parsing in CI             | Co-located with schemas                    |
 
 Guiding ratio: many fast unit tests, a focused set of integration tests per module covering real database/queue behavior, and e2e tests limited to the critical user journeys in PRD.md §5 (onboarding/assessment, daily learning loop, speaking practice, subscription upgrade, exam prep) plus key regression-prone flows — e2e suites are kept intentionally small and fast, not a rewrite of the integration suite in browser form.
 
@@ -26,8 +26,9 @@ Guiding ratio: many fast unit tests, a focused set of integration tests per modu
 ## 3. AI system testing (governance detail: AI_GOVERNANCE.md §3)
 
 AI behavior cannot be tested purely with deterministic assertions, so it uses a distinct strategy — four suites, all blocking gates on `services/ai-engine` changes:
+
 - **Golden-set regression evaluation**: a curated, versioned set of representative learner inputs per agent (Conversation Partner, Grammar Coach, etc.) with expected-quality rubrics (tone/structure/helpfulness).
-- **Factual-accuracy evaluation** *(added)*: grammar-rule and exam-rubric correctness checked against the curated RAG knowledge base (AI_SYSTEM.md §4) — the suite that specifically closes the hallucination-risk finding from the Architecture Review; a regression here is treated with the same severity as a functional test failure, not a "quality nice-to-have."
+- **Factual-accuracy evaluation** _(added)_: grammar-rule and exam-rubric correctness checked against the curated RAG knowledge base (AI_SYSTEM.md §4) — the suite that specifically closes the hallucination-risk finding from the Architecture Review; a regression here is treated with the same severity as a functional test failure, not a "quality nice-to-have."
 - **Structural/contract tests**: verify agent responses conform to expected structure (e.g., a Writing Coach response always includes a score and an explanation; a specialist-agent tool call always returns a schema-validated critique object per the Orchestrator handoff protocol — AI_GOVERNANCE.md §2) independent of exact wording — these are deterministic and run in standard CI.
 - **Latency tests**: automated checks against the PERFORMANCE.md §2 latency budget for the speaking-practice pipeline, run in staging against real provider integrations (not mocked) on a scheduled basis, since provider performance drifts independently of our code changes.
 - **Safety/red-team tests**: a maintained set of prompt-injection and abuse-pattern test cases run against the Safety Layer (AI_GOVERNANCE.md §6) as a release gate, not a one-time audit.
@@ -42,8 +43,8 @@ AI behavior cannot be tested purely with deterministic assertions, so it uses a 
 
 - SAST, dependency, and container image vulnerability scanning run in CI on every PR (DEPLOYMENT.md §4 `security-scan.yml`).
 - Authorization tests explicitly verify that role/ownership boundaries hold (e.g., a test asserting `USER` A cannot read `USER` B's progress, an `ENTERPRISE_ADMIN` cannot cross into another organization) — these are treated as security tests, not generic functional tests.
-- **Cross-tenant leak tests are a required test class per tenant-scoped table** *(added)*: every table added with an RLS policy (MULTITENANCY.md §6) ships with an accompanying integration test asserting one organization cannot read/write another's rows — CI treats a missing test here the same as a missing migration.
-- **MFA enforcement tests** *(added)*: verify an `ADMIN`/`ENTERPRISE_ADMIN` account cannot be activated or remain active without MFA enrollment (ADR-011).
+- **Cross-tenant leak tests are a required test class per tenant-scoped table** _(added)_: every table added with an RLS policy (MULTITENANCY.md §6) ships with an accompanying integration test asserting one organization cannot read/write another's rows — CI treats a missing test here the same as a missing migration.
+- **MFA enforcement tests** _(added)_: verify an `ADMIN`/`ENTERPRISE_ADMIN` account cannot be activated or remain active without MFA enrollment (ADR-011).
 - Scheduled (not just pre-launch) dependency and penetration testing per SECURITY.md §6.
 
 ## 6. Performance testing

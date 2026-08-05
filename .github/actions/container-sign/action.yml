@@ -1,0 +1,67 @@
+name: Container sign & attest
+description: Signs a container image keylessly (cosign) and generates a SLSA build provenance attestation (ADR-017).
+
+# T21 / ADR-017: called by deploy-staging.yml and deploy-production.yml
+# (T23) right after an image is built and pushed to its registry — both
+# workflows share this one implementation rather than duplicating the
+# same cosign/attest-build-provenance steps twice (T21's task row:
+# "Signing/provenance steps in both deploy workflows").
+#
+# A composite action, not a reusable (`workflow_call`) workflow — T21's
+# original design used the latter, but building T23 surfaced a real
+# constraint: `workflow_call` workflows only run as independent jobs,
+# never as steps inside an existing job. That makes them a poor fit for
+# a per-image matrix job that needs to build, sign, and verify the same
+# image in sequence with direct access to its own digest — passing a
+# digest computed in one matrix job into a separate downstream matrix job
+# requires awkward output-aggregation. A composite action runs as steps
+# within the calling job, so it composes naturally here.
+#
+# Caller responsibilities: authenticate to the image's registry (e.g.
+# `aws-actions/amazon-ecr-login`) before using this action, and declare
+# `permissions: id-token: write` and `attestations: write` on the calling
+# job — composite actions don't have their own `permissions:` block, they
+# inherit the caller's.
+#
+# Every `uses:` below is pinned to a full commit SHA, not a mutable tag —
+# same T20 semgrep finding (yaml.github-actions.security.github-actions-
+# mutable-action-tag) applied consistently here.
+inputs:
+  image-name:
+    description: 'Fully-qualified image name, without a tag or digest, e.g. "111111111111.dkr.ecr.us-east-1.amazonaws.com/linguaai-api".'
+    required: true
+  image-digest:
+    description: 'Image digest in "sha256:<hex>" form. Never a mutable tag — signing/attesting must bind to the exact content built, cosign''s own documented recommendation (verified empirically during T21: cosign warns explicitly when given a tag instead of a digest).'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+    # Keyless signing (ADR-017): cosign auto-detects the ambient GitHub
+    # Actions OIDC token from the caller's `id-token: write` permission —
+    # no long-lived signing key to manage or leak. --yes skips the
+    # interactive confirmation prompt (non-interactive CI context).
+    # Verified locally during T21 using cosign's key-based mode as a
+    # stand-in (the real GH Actions OIDC flow only exists inside an
+    # actual Actions runner): a correctly-signed image passes `cosign
+    # verify`; an unsigned image or one signed with an untrusted
+    # key/identity is rejected.
+    - name: Sign image (cosign, keyless)
+      shell: bash
+      env:
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_DIGEST: ${{ inputs.image-digest }}
+      run: cosign sign --yes "$IMAGE_NAME@$IMAGE_DIGEST"
+
+    # SLSA-aligned build provenance attestation (ADR-017) — GitHub's own
+    # attestation API, checked at deploy time via `gh attestation verify`
+    # (.github/actions/container-verify).
+    - name: Generate build provenance attestation
+      uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+      with:
+        subject-name: ${{ inputs.image-name }}
+        subject-digest: ${{ inputs.image-digest }}
+        push-to-registry: true

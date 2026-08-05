@@ -1,0 +1,15 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "services/*"
+  - "tests/*"
+
+# Supply-chain hardening against malicious/typosquatted package publishing
+# (T20 semgrep finding). These keys require pnpm >= 10.16/10.21/10.26 —
+# this repo pins pnpm 9.12.0 (package.json packageManager) — but pnpm
+# tolerates unrecognized workspace config with a warning, not an error
+# (verified empirically), so this takes effect automatically once the
+# team upgrades pnpm, rather than being a fix deferred to that day.
+blockExoticSubdeps: true
+minimumReleaseAge: 10080
+trustPolicy: no-downgrade

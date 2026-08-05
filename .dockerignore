@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+**/dist
+**/dist-cjs
+**/.next
+**/coverage
+**/.turbo
+**/storybook-static
+.git
+*.tsbuildinfo
+.env
+.env.local

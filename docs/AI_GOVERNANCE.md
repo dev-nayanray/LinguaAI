@@ -2,7 +2,7 @@
 
 Status: **v1.1 — Consolidated baseline** · Last updated: 2026-07-29
 
-[AI_SYSTEM.md](AI_SYSTEM.md) describes the AI platform's *architecture*. This document governs its *lifecycle*: how a model, prompt, or knowledge-base change is proposed, evaluated, and safely shipped, and who is accountable for correctness and safety. It directly resolves Architecture Review blockers #1 (RAG grounding), #3 (agent handoff protocol), and #4 (AI cost circuit breaker), and implements ADR-007, ADR-008, ADR-012.
+[AI_SYSTEM.md](AI_SYSTEM.md) describes the AI platform's _architecture_. This document governs its _lifecycle_: how a model, prompt, or knowledge-base change is proposed, evaluated, and safely shipped, and who is accountable for correctness and safety. It directly resolves Architecture Review blockers #1 (RAG grounding), #3 (agent handoff protocol), and #4 (AI cost circuit breaker), and implements ADR-007, ADR-008, ADR-012.
 
 ## 1. Model & prompt lifecycle
 
@@ -10,14 +10,14 @@ Status: **v1.1 — Consolidated baseline** · Last updated: 2026-07-29
 Propose → Offline evaluation (golden set) → Staging canary → Production rollout → Monitoring → Deprecation
 ```
 
-| Stage | Gate |
-|---|---|
-| Propose | Change is described (what/why) and attached to a PR touching `services/ai-engine` prompt templates or model routing config |
-| Offline evaluation | Golden-set regression (tone/structure/factual-accuracy — §3) must pass; a regression is a blocking failure, not a warning |
-| Staging canary | Deployed to staging behind the same promotion pipeline as code (DEPLOYMENT.md §4) — a prompt change is a production behavior change and never ships out-of-band of the normal release process |
+| Stage              | Gate                                                                                                                                                                                                                                    |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Propose            | Change is described (what/why) and attached to a PR touching `services/ai-engine` prompt templates or model routing config                                                                                                              |
+| Offline evaluation | Golden-set regression (tone/structure/factual-accuracy — §3) must pass; a regression is a blocking failure, not a warning                                                                                                               |
+| Staging canary     | Deployed to staging behind the same promotion pipeline as code (DEPLOYMENT.md §4) — a prompt change is a production behavior change and never ships out-of-band of the normal release process                                           |
 | Production rollout | Canary rollout to a small traffic percentage first, specifically for `ai-engine` (DEPLOYMENT.md §4), with automated rollback if golden-set-equivalent production signals (safety-filter trigger rate, user-reported-issue rate) regress |
-| Monitoring | Cost, latency, and quality dashboards (OBSERVABILITY.md) watched for the first 48h at minimum |
-| Deprecation | Superseded prompt/model versions are retained (not deleted) for a minimum window to support incident investigation and rollback |
+| Monitoring         | Cost, latency, and quality dashboards (OBSERVABILITY.md) watched for the first 48h at minimum                                                                                                                                           |
+| Deprecation        | Superseded prompt/model versions are retained (not deleted) for a minimum window to support incident investigation and rollback                                                                                                         |
 
 Every prompt template and every `AIUsageLog`/`AIMessage` record carries an explicit **prompt version** and **model identifier** (DATABASE.md) — this is what makes a quality regression traceable to a specific change rather than a mystery.
 
@@ -26,7 +26,7 @@ Every prompt template and every `AIUsageLog`/`AIMessage` record carries an expli
 One **Orchestrator** agent owns the user-facing voice and full session state for any given `AIAgentSession`. Specialist personas (Grammar Coach, Pronunciation Coach, Vocabulary Coach, Writing Coach, Exam Coach) are **not** independent chat participants — they are typed tools the Orchestrator invokes when a defined trigger condition fires (e.g., a grammar-error pattern crosses a confidence threshold within a Conversation Partner session).
 
 - A specialist tool call **always returns a structured, schema-validated critique object** (never freeform prose) — this is what makes specialist behavior testable via structural contract tests (TESTING.md §3), independent of exact wording.
-- The Orchestrator decides *whether and how* to surface a specialist's critique in its own response — it is never a silent hand-off that changes "who's talking" from the user's perspective.
+- The Orchestrator decides _whether and how_ to surface a specialist's critique in its own response — it is never a silent hand-off that changes "who's talking" from the user's perspective.
 - This bounds cost: a specialist is invoked only on a real trigger, not by default on every conversational turn.
 - The Personal Language Teacher persona (AI_SYSTEM.md §3) is the default Orchestrator for general sessions; Conversation Partner, Exam Coach, etc. can also act as the Orchestrator for their own session type, always with the same tool-calling relationship to the remaining specialists.
 
@@ -34,12 +34,12 @@ One **Orchestrator** agent owns the user-facing voice and full session state for
 
 Four evaluation suites gate every prompt/model/knowledge-base change (extends TESTING.md §3):
 
-| Suite | Checks | Blocking? |
-|---|---|---|
-| Golden-set regression | Representative learner inputs per agent, rubric-scored for tone/structure/helpfulness | Yes |
-| **Factual-accuracy set** | Grammar-rule and exam-rubric correctness against the curated knowledge base (§4) — the suite specifically added to close the hallucination-risk finding | Yes |
-| Red-team/safety set | Prompt-injection and abuse-pattern cases against the Safety Layer (§6, SECURITY.md §5) | Yes |
-| Cost/latency regression | Flags material token-usage or latency increases without a documented quality justification | Yes, with documented-exception override |
+| Suite                    | Checks                                                                                                                                                  | Blocking?                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Golden-set regression    | Representative learner inputs per agent, rubric-scored for tone/structure/helpfulness                                                                   | Yes                                     |
+| **Factual-accuracy set** | Grammar-rule and exam-rubric correctness against the curated knowledge base (§4) — the suite specifically added to close the hallucination-risk finding | Yes                                     |
+| Red-team/safety set      | Prompt-injection and abuse-pattern cases against the Safety Layer (§6, SECURITY.md §5)                                                                  | Yes                                     |
+| Cost/latency regression  | Flags material token-usage or latency increases without a documented quality justification                                                              | Yes, with documented-exception override |
 
 Suites run automatically in CI for `services/ai-engine` PRs and on a schedule against production traffic samples (drift can occur without any code change, e.g., provider-side model updates).
 
@@ -70,18 +70,18 @@ A curated, versioned knowledge base is retrieved and injected as grounding conte
 
 ## 7. Fallback strategy
 
-| Failure | Fallback |
-|---|---|
-| Primary LLM provider errors/times out | `ai-engine` Router fails over to a configured secondary provider/model for the same request class (AI_SYSTEM.md §2), logged for reliability monitoring |
-| STT/TTS provider failure | Speaking session degrades to text-only conversation rather than failing the session entirely (PRD.md Journey C) |
+| Failure                                               | Fallback                                                                                                                                                                                                               |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Primary LLM provider errors/times out                 | `ai-engine` Router fails over to a configured secondary provider/model for the same request class (AI_SYSTEM.md §2), logged for reliability monitoring                                                                 |
+| STT/TTS provider failure                              | Speaking session degrades to text-only conversation rather than failing the session entirely (PRD.md Journey C)                                                                                                        |
 | All LLM providers unavailable for a non-critical path | Cached/canned response where semantically valid (e.g., a static "please try again" for conversational endpoints); critical paths (assessment scoring) fail closed with an honest error rather than a fabricated result |
-| Vector DB (pgvector) degraded | Agents proceed without memory/RAG context rather than failing the session, with a lower-confidence flag on any factual claims made without grounding |
+| Vector DB (pgvector) degraded                         | Agents proceed without memory/RAG context rather than failing the session, with a lower-confidence flag on any factual claims made without grounding                                                                   |
 
 ## 8. Accountability
 
-| Concern | Owner |
-|---|---|
-| Prompt template correctness & tone | AI/Product Engineering |
+| Concern                                                           | Owner                                                                           |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Prompt template correctness & tone                                | AI/Product Engineering                                                          |
 | Factual/pedagogical accuracy of knowledge base and system prompts | Linguist/pedagogy review function (named role, not diffused across engineering) |
-| Safety filter effectiveness | Security + AI Engineering, jointly |
-| Cost governance thresholds | AI Engineering + Finance/DevOps, reviewed monthly |
+| Safety filter effectiveness                                       | Security + AI Engineering, jointly                                              |
+| Cost governance thresholds                                        | AI Engineering + Finance/DevOps, reviewed monthly                               |

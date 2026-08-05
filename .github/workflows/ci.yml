@@ -1,0 +1,91 @@
+name: CI
+
+# DEPLOYMENT.md §4: runs on every PR. Also on push to main (the merge
+# commit differs from what the PR branch tested, per CONTRIBUTING.md's
+# "no direct pushes to main" — squash/merge commits deserve their own
+# run) and workflow_dispatch for manual re-runs.
+#
+# Every `uses:` below is pinned to a full commit SHA, not a mutable tag
+# (T20 semgrep finding, yaml.github-actions.security.github-actions-
+# mutable-action-tag) — floating tags can be silently repointed by the
+# action owner, a real supply-chain vector semgrep's own finding cites
+# precedent for. The trailing `# vN` comment is a human-readable label
+# only; the SHA is what actually pins the content.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Non-sensitive local-dev placeholders, matching .env.example.
+  # packages/database's `prisma generate` (part of the `build` pipeline's
+  # db:generate dependency, turbo.json) needs a syntactically valid
+  # DATABASE_URL to validate the schema — it never opens a live
+  # connection, so no Postgres service container is needed here.
+  # REDIS_URL is set for the same reason, should any package start
+  # validating packages/config's schema during build/test.
+  DATABASE_URL: postgresql://linguaai:linguaai_dev_password@localhost:5432/linguaai
+  REDIS_URL: redis://localhost:6379
+
+jobs:
+  ci:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # E1 Part 5: local + CI-native caching only for E1 (remote caching
+      # deliberately deferred, tracked as a future decision once real
+      # usage data justifies it). This persists Turborepo's own
+      # content-addressable cache directory between runs — turbo still
+      # does its own per-task input hashing once restored, so this key
+      # only needs to be "close enough" to a recent run, not exact.
+      - name: Restore Turborepo cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      # Not in DEPLOYMENT.md §4's listed steps, but TESTING.md §8 treats
+      # CI checks as required and non-bypassable — the pre-commit
+      # lint-staged hook already runs Prettier, but a hook can be
+      # skipped locally (--no-verify), so this is the same
+      # defense-in-depth pattern SECURITY.md uses for secret scanning
+      # (pre-commit hook + repeated in CI).
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build

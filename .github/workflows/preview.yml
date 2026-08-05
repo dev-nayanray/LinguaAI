@@ -1,0 +1,227 @@
+name: Preview environment
+
+# T24 / DEPLOYMENT.md §1 / E1 Part 10: every PR gets an ephemeral preview
+# of apps/web and apps/admin — the two apps reviewers actually look at
+# (IMPLEMENTATION_GUIDE.md §3 Frontend Gate). Scoped to just these two,
+# deliberately: standing up the full backend topology (VPC/RDS/ECS) per
+# open PR would be slow and expensive for what E1 Part 10 itself calls a
+# non-blocking "convenience gate" — see infrastructure/terraform/modules/
+# preview's own comment for the full reasoning. Non-blocking: this
+# workflow's failure never blocks a merge (DEPLOYMENT.md §4's own
+# "None blocking" framing for this workflow).
+#
+# Uses AWS App Runner (see modules/preview), reusing the staging
+# environment's own ECR repositories (linguaai-staging-web/admin) with a
+# PR-head-SHA tag — no new ECR repos needed, since each commit already
+# gets a unique, immutable tag.
+#
+# Every `uses:` below is pinned to a full commit SHA — T20 semgrep
+# finding applied consistently.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy:
+    name: Deploy preview (${{ matrix.service.name }})
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    environment: preview
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    strategy:
+      matrix:
+        service:
+          - { name: web, dockerfile: infrastructure/docker/web/Dockerfile, port: '3000' }
+          - { name: admin, dockerfile: infrastructure/docker/admin/Dockerfile, port: '3001' }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # Reuses staging's own ECR repos (already created by
+      # modules/compute) — a PR preview build is tagged distinctly by
+      # commit SHA, never collides with a real staging deploy's tags.
+      - name: Build and push image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: ${{ steps.ecr-login.outputs.registry }}/linguaai-staging-${{ matrix.service.name }}:pr-${{ github.event.pull_request.head.sha }}
+          cache-from: type=gha,scope=preview-${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=preview-${{ matrix.service.name }}
+
+      # No T21 sign/verify step here deliberately — this is a
+      # non-blocking convenience preview of unmerged code, never
+      # deployed to staging/production, and never referenced by
+      # deploy-staging.yml/deploy-production.yml's own pipelines.
+      - name: Create or update App Runner service
+        id: apprunner
+        env:
+          SERVICE_NAME: linguaai-preview-pr-${{ github.event.pull_request.number }}-${{ matrix.service.name }}
+          IMAGE_IDENTIFIER: ${{ steps.ecr-login.outputs.registry }}/linguaai-staging-${{ matrix.service.name }}:pr-${{ github.event.pull_request.head.sha }}
+          ACCESS_ROLE_ARN: ${{ vars.APPRUNNER_ECR_ACCESS_ROLE_ARN }}
+          PORT: ${{ matrix.service.port }}
+        run: |
+          existing_arn=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='$SERVICE_NAME'].ServiceArn | [0]" \
+            --output text)
+
+          source_configuration=$(cat <<JSON
+          {
+            "ImageRepository": {
+              "ImageIdentifier": "$IMAGE_IDENTIFIER",
+              "ImageRepositoryType": "ECR",
+              "ImageConfiguration": {
+                "Port": "$PORT",
+                "RuntimeEnvironmentVariables": {
+                  "HOSTNAME": "0.0.0.0",
+                  "NODE_ENV": "production"
+                }
+              }
+            },
+            "AuthenticationConfiguration": { "AccessRoleArn": "$ACCESS_ROLE_ARN" },
+            "AutoDeploymentsEnabled": false
+          }
+          JSON
+          )
+
+          if [ "$existing_arn" = "None" ] || [ -z "$existing_arn" ]; then
+            echo "Creating new App Runner service: $SERVICE_NAME"
+            service_arn=$(aws apprunner create-service \
+              --service-name "$SERVICE_NAME" \
+              --source-configuration "$source_configuration" \
+              --instance-configuration '{"Cpu": "0.25 vCPU", "Memory": "0.5 GB"}' \
+              --query "Service.ServiceArn" --output text)
+          else
+            echo "Updating existing App Runner service: $SERVICE_NAME"
+            service_arn="$existing_arn"
+            aws apprunner update-service \
+              --service-arn "$service_arn" \
+              --source-configuration "$source_configuration" >/dev/null
+          fi
+
+          echo "service_arn=$service_arn" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for service to become running
+        env:
+          SERVICE_ARN: ${{ steps.apprunner.outputs.service_arn }}
+        run: |
+          for i in $(seq 1 60); do
+            status=$(aws apprunner describe-service --service-arn "$SERVICE_ARN" --query "Service.Status" --output text)
+            echo "status: $status"
+            if [ "$status" = "RUNNING" ]; then
+              break
+            fi
+            if [ "$status" = "CREATE_FAILED" ] || [ "$status" = "UPDATE_FAILED" ]; then
+              echo "App Runner service reported $status"
+              exit 1
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "TIMEOUT waiting for $SERVICE_ARN to become RUNNING (last status: $status)"
+              exit 1
+            fi
+            sleep 10
+          done
+
+      # Logged here for this job's own visibility; the `comment` job
+      # below re-derives both services' URLs independently rather than
+      # depending on this output — matrix job outputs don't reliably
+      # aggregate across instances back to a downstream job.
+      - name: Log service URL
+        env:
+          SERVICE_ARN: ${{ steps.apprunner.outputs.service_arn }}
+        run: aws apprunner describe-service --service-arn "$SERVICE_ARN" --query "Service.ServiceUrl" --output text
+
+  comment:
+    name: Comment preview URLs on PR
+    if: github.event.action != 'closed'
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      # Re-derive both URLs directly (matrix outputs from the `deploy`
+      # job don't reliably aggregate across matrix instances) rather than
+      # depend on the previous job's outputs.
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Look up both service URLs and comment
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          web_url=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='linguaai-preview-pr-$PR_NUMBER-web'].ServiceUrl | [0]" --output text)
+          admin_url=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='linguaai-preview-pr-$PR_NUMBER-admin'].ServiceUrl | [0]" --output text)
+
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --edit-last --create-if-none --body "$(cat <<COMMENT
+          ### Preview environment
+
+          | App | URL |
+          | --- | --- |
+          | web | https://$web_url |
+          | admin | https://$admin_url |
+
+          Updated automatically on every push to this PR. Torn down when the PR closes.
+          COMMENT
+          )"
+
+  teardown:
+    name: Tear down preview (${{ matrix.service.name }})
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    environment: preview
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      matrix:
+        service:
+          - { name: web }
+          - { name: admin }
+    steps:
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete App Runner service (idempotent — no-op if already gone)
+        env:
+          SERVICE_NAME: linguaai-preview-pr-${{ github.event.pull_request.number }}-${{ matrix.service.name }}
+        run: |
+          service_arn=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='$SERVICE_NAME'].ServiceArn | [0]" --output text)
+          if [ "$service_arn" = "None" ] || [ -z "$service_arn" ]; then
+            echo "No service named $SERVICE_NAME found — already torn down."
+            exit 0
+          fi
+          aws apprunner delete-service --service-arn "$service_arn"

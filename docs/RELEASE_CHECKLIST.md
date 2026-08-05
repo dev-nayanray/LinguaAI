@@ -2,7 +2,7 @@
 
 Status: **v1.0 — Mandatory process** · Last updated: 2026-07-29
 
-Standing checklist for lifecycle phase 19 ([IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md) §2) and the **Deployment Gate**. Run before any feature/Epic goes to production, referencing [DEPLOYMENT.md](DEPLOYMENT.md). This is a checklist to *apply* per release, not a per-feature template.
+Standing checklist for lifecycle phase 19 ([IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md) §2) and the **Deployment Gate**. Run before any feature/Epic goes to production, referencing [DEPLOYMENT.md](DEPLOYMENT.md). This is a checklist to _apply_ per release, not a per-feature template.
 
 ## Pre-deploy
 
@@ -29,7 +29,7 @@ Standing checklist for lifecycle phase 19 ([IMPLEMENTATION_GUIDE.md](IMPLEMENTAT
 ## Rollback
 
 - [ ] Rollback is "redeploy the prior task definition revision," confirmed to actually work for this change (DEPLOYMENT.md §4) — not assumed.
-- [ ] If the migration is not trivially reversible, the rollback plan for the *migration* specifically is documented (DATABASE_CHANGE_TEMPLATE.md §6), separate from the app rollback.
+- [ ] If the migration is not trivially reversible, the rollback plan for the _migration_ specifically is documented (DATABASE_CHANGE_TEMPLATE.md §6), separate from the app rollback.
 
 ## Compliance & risk
 

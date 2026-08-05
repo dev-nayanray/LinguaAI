@@ -2,7 +2,7 @@
 
 Status: **v1.1 — Consolidated baseline** · Owner: Principal Architect · Last updated: 2026-07-29
 
-Supersedes Draft v1.0. This document states platform-level API *policy*. For the exhaustive implementation reference (error code registry, pagination detail, idempotency, BFF conventions, WebSocket message catalog) engineers use while building an endpoint, see **[API_GUIDELINES.md](API_GUIDELINES.md)** — that detail is intentionally not duplicated here.
+Supersedes Draft v1.0. This document states platform-level API _policy_. For the exhaustive implementation reference (error code registry, pagination detail, idempotency, BFF conventions, WebSocket message catalog) engineers use while building an endpoint, see **[API_GUIDELINES.md](API_GUIDELINES.md)** — that detail is intentionally not duplicated here.
 
 ## 1. Style & transport
 

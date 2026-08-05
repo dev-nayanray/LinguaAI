@@ -1,12 +1,13 @@
 # LinguaAI — Security, Privacy & Compliance
 
-Status: **v1.2 — Consolidated baseline** · Owner: Security Architect · Last updated: 2026-07-29 (updated during the Epic E1 remediation)
+Status: **v1.2 — Consolidated baseline** · Owner: Security Architect · Last updated: 2026-08-01 (§2 OAuth provider list and session-revocation note updated during Epic E2 closure)
 
 Supersedes Draft v1.0. See [BASELINE.md](BASELINE.md) for the current authoritative summary. Deep-dive companions: [MULTITENANCY.md](MULTITENANCY.md) (tenant isolation detail), [AI_GOVERNANCE.md](AI_GOVERNANCE.md) (AI safety governance), [RISK_REGISTER.md](RISK_REGISTER.md) (risk tracking). Security is a launch requirement, not a post-launch hardening pass. This document is binding on every module in PRD.md §6.
 
 ## 0. Zero Trust principles (added)
 
 The Architecture Review's findings (app-layer-only tenant filtering, no mandatory admin MFA) share a common root cause worth stating explicitly as a governing principle: **no request is trusted by virtue of network location or prior authentication alone**.
+
 - Being inside the VPC does not exempt a service-to-service call from authentication (ARCHITECTURE.md's signed internal tokens apply even between two `apps/api`-adjacent services).
 - Being authenticated does not exempt a request from authorization and tenant-scoping checks on every single query (§3, MULTITENANCY.md) — there is no "trusted internal admin path" that skips RLS.
 - Every layer verifies independently; a failure in one layer (e.g., a missed application-layer filter) must not be sufficient on its own to cause a breach (defense in depth, MULTITENANCY.md §2).
@@ -14,6 +15,7 @@ The Architecture Review's findings (app-layer-only tenant filtering, no mandator
 ## 1. Threat model summary
 
 LinguaAI handles: authentication credentials, voice recordings, personal writing/conversation content (potentially sensitive personal disclosures made to an AI conversation partner), payment data (via Stripe, not stored directly), and enterprise employee data (Enterprise LMS). Minors' data (Family plan) is explicitly out of scope until ADR-013's parental-consent flow is built — see §7. The primary risks this drives:
+
 - Account takeover (credential stuffing, session hijacking).
 - Exposure of sensitive personal content shared with the AI (conversation logs, voice recordings).
 - Prompt injection / AI abuse (jailbreaks, extraction of other users' data via the AI, cost-abuse via the AI gateway).
@@ -23,8 +25,8 @@ LinguaAI handles: authentication credentials, voice recordings, personal writing
 
 ## 2. Authentication & session security
 
-- Passwords (where used) hashed with Argon2id; OAuth (Google, Apple, Facebook) preferred and encouraged over password auth.
-- Short-lived JWT access tokens + rotating, revocable refresh tokens (see API.md §3); refresh tokens stored httpOnly/secure/SameSite=strict for web.
+- Passwords (where used) hashed with Argon2id; OAuth (Google, Apple — ADR-020) preferred and encouraged over password auth. Facebook is deferred, not offered at MVP — this list previously also named Facebook, a discrepancy against PRD.md §6's MVP scope statement that ADR-020 resolves authoritatively; corrected here to match (Epic E2).
+- Short-lived JWT access tokens + rotating, revocable refresh tokens (see API.md §3, API_GUIDELINES.md §12); refresh tokens stored httpOnly/secure/SameSite=strict for web. Session revocation (logout, explicit session revoke) is immediate and server-enforced, not merely a wait-for-natural-expiry guarantee — backed by a `jti` denylist (ADR-018).
 - **MFA is mandatory (not merely "ready") for `ADMIN` and `ENTERPRISE_ADMIN` roles before account activation (ADR-011)** — these are the highest-value account-takeover targets in the system. MFA remains optional (but available) for `USER`/`TEACHER` accounts at MVP.
 - Session revocation is immediate and server-enforced (not just client-token expiry) — a compromised account can be locked out without waiting for token expiry.
 - Brute-force/credential-stuffing protection: rate limiting + progressive backoff on auth endpoints, anomaly detection on login patterns (new device/geo triggers step-up verification).
@@ -80,13 +82,13 @@ LinguaAI handles: authentication credentials, voice recordings, personal writing
 
 ### 7.1 Compliance mapping (added)
 
-| Requirement | Primary controls | Documented in |
-|---|---|---|
+| Requirement                                                    | Primary controls                                                    | Documented in                       |
+| -------------------------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------- |
 | GDPR (access/rectify/erase, lawful basis, breach notification) | `ConsentRecord`, erasure/anonymization design, 72h incident process | DATABASE.md §10, §7; SECURITY.md §9 |
-| CCPA | Shared erasure/export tooling with GDPR | SECURITY.md §7 |
-| COPPA | Family plan descoped until consent flow ships (ADR-013) | DECISIONS.md ADR-013 |
-| OWASP Top 10 | §6 of this document | SECURITY.md §6 |
-| SOC 2 Type II (future) | Controls designed additively from MVP | SECURITY.md §10 |
+| CCPA                                                           | Shared erasure/export tooling with GDPR                             | SECURITY.md §7                      |
+| COPPA                                                          | Family plan descoped until consent flow ships (ADR-013)             | DECISIONS.md ADR-013                |
+| OWASP Top 10                                                   | §6 of this document                                                 | SECURITY.md §6                      |
+| SOC 2 Type II (future)                                         | Controls designed additively from MVP                               | SECURITY.md §10                     |
 
 ## 8. Community & content moderation (module 16 risk surface)
 

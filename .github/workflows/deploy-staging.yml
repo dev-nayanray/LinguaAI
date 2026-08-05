@@ -1,0 +1,219 @@
+name: Deploy to staging
+
+# DEPLOYMENT.md §4 / E1 Part 10: merge to main → build & push images →
+# container supply-chain pipeline (ADR-017) → Terraform plan/apply
+# (staging workspace) → deploy ECS services (ADOT sidecar included
+# automatically — it's already part of every task definition, T18's
+# compute module) → smoke tests.
+#
+# Every `uses:` below is pinned to a full commit SHA — T20 semgrep
+# finding applied consistently (yaml.github-actions.security.github-
+# actions-mutable-action-tag).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false # never cancel a deploy mid-flight
+
+env:
+  AWS_REGION: us-east-1
+  TF_VAR_image_tag: ${{ github.sha }}
+  TF_VAR_domain_name: ''
+  TF_VAR_route53_zone_id: ''
+  # TF_VAR_sentry_dsn_secret_arn and TF_VAR_budget_alert_emails come from
+  # repository variables (vars.*) — see the "Required repository
+  # configuration" note in this repo's Terraform README; not secrets
+  # themselves (ARNs/email addresses aren't sensitive), but environment-
+  # specific enough that they don't belong hard-coded in this file.
+  TF_VAR_sentry_dsn_secret_arn: ${{ vars.STAGING_SENTRY_DSN_SECRET_ARN }}
+  TF_VAR_budget_alert_emails: ${{ vars.BUDGET_ALERT_EMAILS }}
+
+jobs:
+  # ECR repositories must exist before anything can be pushed to them,
+  # but they're created BY this same Terraform config (T23 fix — see
+  # modules/compute/main.tf's comment). A targeted apply breaks the
+  # chicken-and-egg: create/ensure just the ECR repos here, then the full
+  # apply later (the `deploy` job) creates/updates everything else,
+  # including the ECS services that reference the image pushed in
+  # between. Idempotent — a no-op on every run after the first.
+  ensure-ecr-repos:
+    name: Ensure ECR repositories exist
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform init
+
+      - name: Terraform apply (ECR repositories only)
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform apply -auto-approve -target=module.compute.aws_ecr_repository.this
+
+  build-sign-verify:
+    name: Build, sign, verify (${{ matrix.service.name }})
+    needs: ensure-ecr-repos
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      contents: read
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - { name: web, dockerfile: infrastructure/docker/web/Dockerfile }
+          - { name: admin, dockerfile: infrastructure/docker/admin/Dockerfile }
+          - { name: api, dockerfile: infrastructure/docker/api/Dockerfile }
+          - { name: ai-engine, dockerfile: infrastructure/docker/ai-engine/Dockerfile }
+          - { name: speech-service, dockerfile: infrastructure/docker/speech-service/Dockerfile }
+          - { name: recommendation-engine, dockerfile: infrastructure/docker/recommendation-engine/Dockerfile }
+          - { name: notification-service, dockerfile: infrastructure/docker/notification-service/Dockerfile }
+          - { name: analytics-service, dockerfile: infrastructure/docker/analytics-service/Dockerfile }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: ${{ steps.ecr-login.outputs.registry }}/linguaai-staging-${{ matrix.service.name }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+
+      - name: Sign and attest image
+        uses: ./.github/actions/container-sign
+        with:
+          image-name: ${{ steps.ecr-login.outputs.registry }}/linguaai-staging-${{ matrix.service.name }}
+          image-digest: ${{ steps.build.outputs.digest }}
+
+      - name: Verify image (defense in depth against a compromised registry entry between build and this step)
+        uses: ./.github/actions/container-verify
+        with:
+          image-name: ${{ steps.ecr-login.outputs.registry }}/linguaai-staging-${{ matrix.service.name }}
+          image-digest: ${{ steps.build.outputs.digest }}
+          signer-workflow: .github/workflows/deploy-staging.yml
+
+  deploy:
+    name: Terraform apply (staging)
+    needs: build-sign-verify
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 20
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform init
+
+      - name: Terraform plan
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform plan -out=tfplan
+
+      # Every image referenced by this plan already passed
+      # build-sign-verify above — this apply only ever updates ECS task
+      # definitions/services to point at an image that's already been
+      # signed and verified, never the other way around.
+      - name: Terraform apply
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform apply -auto-approve tfplan
+
+      - name: Export deploy outputs
+        id: outputs
+        working-directory: infrastructure/terraform/environments/staging
+        run: |
+          echo "alb_dns_name=$(terraform output -raw alb_dns_name)" >> "$GITHUB_OUTPUT"
+          echo "cloudfront_domain_name=$(terraform output -raw cloudfront_domain_name)" >> "$GITHUB_OUTPUT"
+    outputs:
+      alb_dns_name: ${{ steps.outputs.outputs.alb_dns_name }}
+      cloudfront_domain_name: ${{ steps.outputs.outputs.cloudfront_domain_name }}
+
+  smoke-test:
+    name: Smoke test
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Path-based routing (infrastructure/terraform/modules/edge/main.tf):
+      # apps/web owns "/" behind the ALB directly; every other service is
+      # reachable at /<service-name>/health until each has a real
+      # domain/path contract of its own (T18's edge module design).
+      - name: Hit ALB health endpoints
+        env:
+          ALB_DNS_NAME: ${{ needs.deploy.outputs.alb_dns_name }}
+        run: |
+          services="api ai-engine speech-service recommendation-engine notification-service analytics-service"
+          for service in $services; do
+            echo "checking $service..."
+            for i in $(seq 1 30); do
+              status=$(curl -s -o /dev/null -w "%{http_code}" "http://$ALB_DNS_NAME/$service/health" || echo "000")
+              if [ "$status" = "200" ]; then
+                echo "  ok"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "  TIMEOUT: $service never returned 200 (last status: $status)"
+                exit 1
+              fi
+              sleep 10
+            done
+          done
+
+      - name: Hit CloudFront root page
+        env:
+          CLOUDFRONT_DOMAIN_NAME: ${{ needs.deploy.outputs.cloudfront_domain_name }}
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" "https://$CLOUDFRONT_DOMAIN_NAME/")
+          if [ "$status" != "200" ]; then
+            echo "CloudFront root page returned $status, expected 200"
+            exit 1
+          fi

@@ -1,0 +1,21 @@
+{
+  "$comment": "Advisories deliberately excepted from security-scan.yml's blocking dependency-audit job (T20). E1 Part 10's container-scan failure conditions establish the precedent this follows: 'CVEs with no fix yet are logged/tracked... not blocking — a permanently-unfixable transitive dependency must not make the pipeline permanently red.' Every entry here must have a concrete, verifiable reason a fix can't currently be adopted — never a bare suppression. scripts/check-dependency-audit.mjs enforces that only these exact advisories are excepted; anything new still fails the job.",
+  "ignoredAdvisories": [
+    {
+      "id": "GHSA-45rx-2jwx-cxfr",
+      "package": "@opentelemetry/propagator-jaeger",
+      "severity": "high",
+      "reason": "Transitive dependency of @opentelemetry/sdk-trace-node (via packages/observability). This codebase only ever registers the W3C tracecontext+baggage propagator (packages/observability/src/middleware.ts) — the vulnerable Jaeger header-decoding path is never invoked. A real fix requires an OpenTelemetry SDK 1.x -> 2.x major-version migration across every app/service, which drops this dependency entirely but is out of scope for a Dockerfile/CI task and risks regressing already-verified observability wiring (T11/T16).",
+      "discoveredIn": "T17 (container image scan), confirmed via T20 (dependency audit)",
+      "addedOn": "2026-07-29"
+    },
+    {
+      "id": "GHSA-f88m-g3jw-g9cj",
+      "package": "sharp",
+      "severity": "high",
+      "reason": "Next.js 16.2.12 pins sharp to exactly ^0.34.5 for its image-optimization pipeline; the fix (0.35.0) falls outside that range. Forcing an override to the patched version risks breaking Next's native libvips binary compatibility, untested. Tracked pending a future Next.js upgrade.",
+      "discoveredIn": "T17 (container image scan), confirmed via T20 (dependency audit)",
+      "addedOn": "2026-07-29"
+    }
+  ]
+}

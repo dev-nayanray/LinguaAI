@@ -4,7 +4,7 @@ Status: **v1.1 — Consolidated baseline** · Last updated: 2026-07-29
 
 Conventions for writing code in this repository. Complements [CLAUDE.md](../CLAUDE.md) (engineering standards/principles) and [CONTRIBUTING.md](CONTRIBUTING.md) (branching/PR process) — this doc is the "how to write it," not the "how to ship it."
 
-## 1. TypeScript (apps/web, apps/api, apps/admin, packages/*, services/*)
+## 1. TypeScript (apps/web, apps/api, apps/admin, packages/_, services/_)
 
 - **Strict mode everywhere.** `any` requires an inline comment explaining why a proper type isn't feasible — it is never a default escape hatch.
 - **Explicit return types on all exported functions.** Inferred return types are fine for local/private functions.
@@ -51,4 +51,4 @@ ESLint + Prettier are the enforcement mechanism, run via `lint-staged` on commit
 
 ## 8. Comments & documentation in code
 
-Per [CLAUDE.md](../CLAUDE.md): no comments explaining *what* code does (names should do that); a comment is justified only for a non-obvious *why* (a workaround, a subtle invariant, a constraint from another system). Public package exports (`packages/*`) get a one-line doc comment describing the contract, not a multi-paragraph docstring.
+Per [CLAUDE.md](../CLAUDE.md): no comments explaining _what_ code does (names should do that); a comment is justified only for a non-obvious _why_ (a workaround, a subtle invariant, a constraint from another system). Public package exports (`packages/*`) get a one-line doc comment describing the contract, not a multi-paragraph docstring.

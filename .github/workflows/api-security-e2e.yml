@@ -1,0 +1,151 @@
+name: API Security E2E
+
+# E2 final acceptance review (F2, blocking): every mandatory Part 16 /
+# TESTING.md §5 security test class E2 built — cross-tenant RLS negatives
+# (T23), governance concurrency/authorization (T24), audit immutability
+# (T25), MFA/OAuth security (T26), rate limiting (T21), privileged-column
+# protection (T6) — previously ran only when a human typed the command
+# locally. `ci.yml`'s `pnpm test` is unit-only (`apps/api/jest.config.js`
+# `rootDir: 'src'`, `testRegex: '.*\.spec\.ts$'`) and declares no database
+# service, so it structurally could not run these regardless of whether
+# `test:e2e:api` was invoked. This workflow is the actual proof
+# E2-implementation-plan.md §11 step 2 always said CI would provide,
+# running the real suite (`apps/api/test/*.e2e-spec.ts`) against real
+# Postgres/Redis — not a mocked database, not a reduced or parallel
+# suite.
+#
+# Every `uses:` below is pinned to a full commit SHA — same SHAs already
+# vetted and used in ci.yml/e2e.yml (T20 semgrep finding:
+# yaml.github-actions.security.github-actions-mutable-action-tag).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: api-security-e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api-security-e2e:
+    name: API E2E — RLS / governance / audit / MFA / OAuth / rate-limit / privileged-column suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # A real `.env` file, not GitHub Actions `env:` alone — every
+      # existing db/test script in this repo (`db:generate`, `db:migrate`,
+      # `bootstrap-admin`, `apps/api`'s `test:e2e:api`) is hard-wired to
+      # `dotenv -e ../../.env --`, so CI needs the same file local dev has.
+      # Every value here is a non-secret, already-public dev placeholder —
+      # identical to `.env.example`/`.env`'s own committed convention (the
+      # Postgres role passwords are literally hardcoded into the migration
+      # SQL itself, e.g. `CREATE ROLE app_role WITH LOGIN PASSWORD
+      # 'app_role_dev_password'` — there is no real secret to protect here).
+      # Ports match `docker-compose.yml`'s defaults (5432/6379): nothing
+      # else runs on this ephemeral runner to conflict with them, unlike a
+      # shared local dev machine.
+      - name: Write CI .env
+        run: |
+          cat > .env <<'EOF'
+          NODE_ENV=test
+          APP_URL=http://localhost:3000
+          API_URL=http://localhost:4000
+          ADMIN_URL=http://localhost:3001
+          NEXT_PUBLIC_API_URL=http://localhost:4000
+          DATABASE_URL=postgresql://linguaai:linguaai_dev_password@localhost:5432/linguaai
+          POSTGRES_USER=linguaai
+          POSTGRES_PASSWORD=linguaai_dev_password
+          POSTGRES_DB=linguaai
+          APP_DATABASE_URL=postgresql://app_role:app_role_dev_password@localhost:5432/linguaai
+          APP_SERVICE_ROLE_DATABASE_URL=postgresql://app_service_role:app_service_role_dev_password@localhost:5432/linguaai
+          BOOTSTRAP_ADMIN_SECRET=ci_only_bootstrap_secret_do_not_use_in_prod
+          REDIS_URL=redis://localhost:6379
+          JWT_ACCESS_SECRET=ci_only_access_secret
+          JWT_REFRESH_SECRET=ci_only_refresh_secret
+          JWT_ACCESS_TTL=15m
+          JWT_REFRESH_TTL=30d
+          SESSION_SECRET=ci_only_session_secret
+          MFA_SECRET_ENCRYPTION_KEY=zmY8Zo1jCLQg+3sNSgI8K6+oGs1dbejz9WJK9a8q0+Q=
+          LOGIN_FAILURE_HMAC_KEY=7mZduDdhV/d1BX6dn0Sfkx7iREr1go5bFDFBCXEEodo=
+          GOOGLE_CLIENT_ID=ci-placeholder-client-id.apps.googleusercontent.com
+          GOOGLE_CLIENT_SECRET=ci-placeholder-google-client-secret
+          APPLE_CLIENT_ID=com.linguaai.ci.placeholder
+          APPLE_TEAM_ID=CI0PLACEHLDR
+          APPLE_KEY_ID=CI0PLACEHLDR
+          APPLE_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nci-placeholder-not-a-real-key\n-----END PRIVATE KEY-----
+          S3_ENDPOINT=http://localhost:9000
+          S3_REGION=us-east-1
+          S3_BUCKET=linguaai-media
+          S3_ACCESS_KEY_ID=linguaai
+          S3_SECRET_ACCESS_KEY=linguaai_dev_password
+          S3_FORCE_PATH_STYLE=true
+          RATE_LIMIT_WINDOW_MS=60000
+          RATE_LIMIT_MAX_REQUESTS=100
+          LOG_LEVEL=error
+          EOF
+
+      # Postgres + Redis only (`docker-compose.yml`'s stateful dependencies) —
+      # the same file and images local dev and `e2e.yml` already use, so
+      # this environment matches local dev by construction instead of
+      # drifting from a hand-rolled GitHub Actions `services:` block with
+      # different image versions/init behavior. `--wait` blocks until every
+      # service's own `healthcheck:` passes.
+      - name: Start Postgres and Redis
+        run: docker compose up -d postgres redis --wait
+
+      # `test:e2e:api` (`turbo.json`) depends on `build` — this both builds
+      # what the suite needs and generates the Prisma client against the
+      # schema that's about to be migrated.
+      - name: Build
+        run: pnpm build
+
+      - name: Apply database migrations
+        run: pnpm --filter @linguaai/database exec dotenv -e ../../.env -- prisma migrate deploy
+
+      # The real suite, unmodified and unreduced: every *.e2e-spec.ts in
+      # apps/api/test, run via the same underlying Jest config documented
+      # in CLAUDE.md/README — not a second, CI-only test file. `--runInBand`
+      # (verified necessary empirically: the default parallel-worker mode,
+      # all 13 suites hitting one small Postgres instance simultaneously,
+      # produced a one-off cross-suite failure in local verification of
+      # this exact workflow, not reproducible in isolation or on a
+      # subsequent parallel run — a worker-contention flake, not a defect
+      # in any suite) trades some wall-clock time for a gating check that
+      # doesn't intermittently fail for reasons unrelated to the code under
+      # test. `tee` both prints to the live log and retains a copy for the
+      # artifact upload below, so a failure is diagnosable after the run
+      # without re-triggering it.
+      - name: Run API E2E / security suite
+        working-directory: apps/api
+        run: |
+          mkdir -p /tmp/api-e2e-output
+          set -o pipefail
+          pnpm exec dotenv -e ../../.env -- pnpm exec jest --config test/jest-e2e.json --runInBand 2>&1 | tee /tmp/api-e2e-output/api-e2e.log
+
+      - name: Upload API E2E output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: api-e2e-output
+          path: /tmp/api-e2e-output/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Stop stateful dependencies
+        if: always()
+        run: docker compose down

@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // See apps/api/tsconfig.json for the full rationale on Node16 here
+    // (not the deprecated Node10, not Bundler — TS rejects that paired
+    // with module:CommonJS).
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "types": ["node", "jest"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

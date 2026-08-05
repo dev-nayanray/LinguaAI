@@ -1,0 +1,45 @@
+# CODEOWNERS — routes PR review requests by directory.
+#
+# NOTE (placeholder assumption, flagged per T2 acceptance criteria):
+# The teams below (@linguaai/*) do not exist as real GitHub teams yet.
+# This file has no enforcement effect until they are created in the
+# GitHub org and this file is updated with real handles. Tracked as a
+# prerequisite alongside branch-protection setup (T25).
+
+# Default owner for anything not matched below
+*                                    @linguaai/architecture-team
+
+# Apps
+/apps/api/                          @linguaai/backend-team
+/apps/web/                          @linguaai/frontend-team
+/apps/admin/                        @linguaai/frontend-team
+/apps/mobile/                       @linguaai/mobile-team
+
+# Packages
+/packages/ui/                       @linguaai/frontend-team
+/packages/database/                 @linguaai/backend-team
+/packages/types/                    @linguaai/backend-team
+/packages/validation/               @linguaai/backend-team
+/packages/config/                   @linguaai/platform-team
+/packages/utils/                    @linguaai/backend-team
+/packages/observability/            @linguaai/platform-team
+
+# Services
+/services/ai-engine/                @linguaai/ai-team
+/services/speech-service/           @linguaai/ai-team
+/services/recommendation-engine/    @linguaai/ai-team
+/services/notification-service/     @linguaai/backend-team
+/services/analytics-service/        @linguaai/backend-team
+
+# Infrastructure & platform
+/infrastructure/                    @linguaai/devops-team
+/.github/                           @linguaai/devops-team
+/scripts/                           @linguaai/devops-team
+
+# Docs & architecture — architecture-level docs require architecture-team review
+/docs/                              @linguaai/architecture-team
+/docs/epics/                        @linguaai/architecture-team
+/CLAUDE.md                          @linguaai/architecture-team
+
+# Tests
+/tests/                             @linguaai/qa-team

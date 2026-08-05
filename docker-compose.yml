@@ -1,18 +1,24 @@
 name: linguaai
 
+networks:
+  linguaai-local:
+    name: linguaai-local
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: linguaai-postgres
     restart: unless-stopped
+    networks: [linguaai-local]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-linguaai}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-linguaai_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-linguaai}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-linguaai}"]
       interval: 5s
@@ -23,9 +29,10 @@ services:
     image: redis:7-alpine
     container_name: linguaai-redis
     restart: unless-stopped
+    networks: [linguaai-local]
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -38,23 +45,94 @@ services:
     image: mailhog/mailhog:latest
     container_name: linguaai-mailhog
     restart: unless-stopped
+    networks: [linguaai-local]
     ports:
-      - "1025:1025" # SMTP
-      - "8025:8025" # Web UI
+      - "${MAILHOG_SMTP_PORT:-1025}:1025" # SMTP
+      - "${MAILHOG_UI_PORT:-8025}:8025" # Web UI
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "1025"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   minio:
     image: minio/minio:latest
     container_name: linguaai-minio
     restart: unless-stopped
+    networks: [linguaai-local]
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-linguaai}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-linguaai_dev_password}
     ports:
-      - "9000:9000" # S3 API
-      - "9001:9001" # Console
+      - "${MINIO_API_PORT:-9000}:9000" # S3 API
+      - "${MINIO_CONSOLE_PORT:-9001}:9001" # Console
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: auto-creates the linguaai-media bucket (DATABASE.md's object
+  # storage target), then exits — not a long-running service.
+  minio-init:
+    image: minio/mc:latest
+    container_name: linguaai-minio-init
+    networks: [linguaai-local]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-linguaai} ${MINIO_ROOT_PASSWORD:-linguaai_dev_password} &&
+      mc mb --ignore-existing local/linguaai-media
+      "
+    restart: "no"
+
+  # Local trace visualization (ADR-016). Receives OTLP only from
+  # otel-collector, not directly from apps — its OTLP ports are not
+  # published to the host.
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: linguaai-jaeger
+    restart: unless-stopped
+    networks: [linguaai-local]
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686" # UI
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:16686/ > /dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Local OpenTelemetry Collector (ADR-016) — every app/service's
+  # OTEL_EXPORTER_OTLP_ENDPOINT points here. Forwards traces to `jaeger`;
+  # metrics are logged to this container's own console (no local
+  # Prometheus/Grafana stack — see otel-collector-config.yaml).
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: linguaai-otel-collector
+    restart: unless-stopped
+    networks: [linguaai-local]
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./infrastructure/docker/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "${OTEL_COLLECTOR_GRPC_PORT:-4317}:4317" # OTLP gRPC
+      - "${OTEL_COLLECTOR_HTTP_PORT:-4318}:4318" # OTLP HTTP
+    depends_on:
+      jaeger:
+        condition: service_healthy
+    # No container-level healthcheck: the official image is a
+    # scratch/distroless build containing only the otelcol-contrib binary —
+    # no shell, wget, or curl (verified via `docker exec`; there is no
+    # in-container tool capable of self-probing its health_check extension
+    # on :13133). This is a known, intentional characteristic of the
+    # upstream image (minimal attack surface), not an oversight. Health is
+    # instead proven functionally: a real OTLP trace sent to this
+    # container reaching the local Jaeger UI (T11 acceptance criteria).
 
 volumes:
   postgres_data:

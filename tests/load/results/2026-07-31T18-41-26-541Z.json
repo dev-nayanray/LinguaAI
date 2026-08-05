@@ -1,0 +1,53 @@
+{
+  "generatedAt": "2026-07-31T18:41:26.541Z",
+  "apiUrl": "http://localhost:4010",
+  "authRequestCount": 200,
+  "authConcurrency": 20,
+  "rlsIterations": 200,
+  "standardCrudBudget": {
+    "p50": 80,
+    "p95": 300,
+    "p99": 800
+  },
+  "dbHotPathP95BudgetMs": 50,
+  "results": {
+    "register": {
+      "count": 200,
+      "p50": 156.69140000000016,
+      "p95": 383.06819999999993,
+      "p99": 388.7681,
+      "min": 45.52639999999997,
+      "max": 397.3379
+    },
+    "login": {
+      "count": 200,
+      "p50": 172.88049999999976,
+      "p95": 221.54179999999997,
+      "p99": 277.0933,
+      "min": 68.4659999999999,
+      "max": 280.5733
+    },
+    "orgDetailRead": {
+      "count": 200,
+      "p50": 1.6768000000001848,
+      "p95": 2.3710999999993874,
+      "p99": 3.1328000000003158,
+      "min": 1.45470000000023,
+      "max": 20.42960000000039
+    },
+    "membershipListRead": {
+      "count": 200,
+      "p50": 1.7300999999997657,
+      "p95": 2.438799999999901,
+      "p99": 2.9768999999996595,
+      "min": 1.5298000000002503,
+      "max": 3.538300000000163
+    }
+  },
+  "verdicts": {
+    "register": "FAIL",
+    "login": "FAIL",
+    "orgDetailRead": "PASS",
+    "membershipListRead": "PASS"
+  }
+}

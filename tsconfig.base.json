@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Deliberately no "incremental": true — Turborepo already caches the whole
+  // `build` task and skips re-running tsc entirely on a cache hit, so tsc's
+  // own incremental bookkeeping (.tsbuildinfo) is redundant. It also caused
+  // a real bug: deleting dist/ out-of-band (e.g. `rimraf dist`) without also
+  // deleting the stale .tsbuildinfo left tsc believing it was already built,
+  // producing zero output on the next run with no error. Found while
+  // validating T6's build against packages/config's topological dependency.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "exclude": ["node_modules", "dist", "dist-cjs", "build", ".next", ".turbo", "coverage"]
+}

@@ -1,0 +1,87 @@
+{
+  "name": "@linguaai/validation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./identity": {
+      "import": {
+        "types": "./dist/identity/index.d.ts",
+        "default": "./dist/identity/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/identity/index.d.ts",
+        "default": "./dist-cjs/identity/index.js"
+      }
+    },
+    "./learning": {
+      "import": {
+        "types": "./dist/learning/index.d.ts",
+        "default": "./dist/learning/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/learning/index.d.ts",
+        "default": "./dist-cjs/learning/index.js"
+      }
+    },
+    "./ai-coaching": {
+      "import": {
+        "types": "./dist/ai-coaching/index.d.ts",
+        "default": "./dist/ai-coaching/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/ai-coaching/index.d.ts",
+        "default": "./dist-cjs/ai-coaching/index.js"
+      }
+    },
+    "./commerce": {
+      "import": {
+        "types": "./dist/commerce/index.d.ts",
+        "default": "./dist/commerce/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/commerce/index.d.ts",
+        "default": "./dist-cjs/commerce/index.js"
+      }
+    },
+    "./community": {
+      "import": {
+        "types": "./dist/community/index.d.ts",
+        "default": "./dist/community/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/community/index.d.ts",
+        "default": "./dist-cjs/community/index.js"
+      }
+    },
+    "./enterprise": {
+      "import": {
+        "types": "./dist/enterprise/index.d.ts",
+        "default": "./dist/enterprise/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/enterprise/index.d.ts",
+        "default": "./dist-cjs/enterprise/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node ../../scripts/write-cjs-package-json.mjs dist-cjs",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --coverage",
+    "clean": "rimraf dist dist-cjs *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@linguaai/types": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.8",
+    "rimraf": "^6.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.8"
+  }
+}

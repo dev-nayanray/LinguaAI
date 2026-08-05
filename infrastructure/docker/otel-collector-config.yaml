@@ -1,0 +1,42 @@
+# Local OpenTelemetry Collector (T11, remediates Critical 1 — docs/DECISIONS.md
+# ADR-016). Every local app/service exports OTLP here (OTEL_EXPORTER_OTLP_ENDPOINT
+# in .env.example); traces are forwarded to the local `jaeger` container, metrics
+# are logged to the collector's own console output — deliberately no local
+# Prometheus/Grafana stack (ADR-016: "avoid overbuilding local infrastructure
+# ahead of real usage"). Mirrors the shape of the production ADOT sidecar
+# pipeline (DEPLOYMENT.md, Part 8) without any of its AWS-specific exporters.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: detailed
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

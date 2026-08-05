@@ -12,46 +12,46 @@ Copy this file per feature (or per Epic, for tightly related features). Covers l
 
 ## 1. Unit tests
 
-*One row per functional requirement from FEATURE_SPEC_TEMPLATE.md §3.*
+_One row per functional requirement from FEATURE_SPEC_TEMPLATE.md §3._
 
 | Requirement | Test case | Status |
-|---|---|---|
+| ----------- | --------- | ------ |
 
 ## 2. Integration tests
 
-| Scenario | Test case | Status |
-|---|---|---|
-| Happy path | | |
-| Validation failure (400) | | |
-| Auth failure (401/403) | | |
-| Conflict/edge case (409/422) | | |
-| **Cross-tenant isolation** *(if tenant-scoped data, MULTITENANCY.md §6)* | | |
+| Scenario                                                                 | Test case | Status |
+| ------------------------------------------------------------------------ | --------- | ------ |
+| Happy path                                                               |           |        |
+| Validation failure (400)                                                 |           |        |
+| Auth failure (401/403)                                                   |           |        |
+| Conflict/edge case (409/422)                                             |           |        |
+| **Cross-tenant isolation** _(if tenant-scoped data, MULTITENANCY.md §6)_ |           |        |
 
 ## 3. End-to-end tests
 
-*Only for critical journeys (TESTING.md §1) — not every feature needs one.*
+_Only for critical journeys (TESTING.md §1) — not every feature needs one._
 
 **Required:** ☐ Yes ☐ No — [justify if No for a user-facing feature]
 
 ## 4. AI evaluation suites (AI_GOVERNANCE.md §3) — if this touches `services/ai-engine`
 
-| Suite | Applicable | Result |
-|---|---|---|
-| Golden-set regression | ☐ | |
-| Factual-accuracy | ☐ | |
-| Safety/red-team | ☐ | |
-| Cost/latency regression | ☐ | |
+| Suite                   | Applicable | Result |
+| ----------------------- | ---------- | ------ |
+| Golden-set regression   | ☐          |        |
+| Factual-accuracy        | ☐          |        |
+| Safety/red-team         | ☐          |        |
+| Cost/latency regression | ☐          |        |
 
 ## 5. Performance tests
 
-*Against the relevant PERFORMANCE.md budget class.*
+_Against the relevant PERFORMANCE.md budget class._
 
 | Budget | Target | Measured |
-|---|---|---|
+| ------ | ------ | -------- |
 
 ## 6. Security tests
 
-*Cross-reference SECURITY_REVIEW_TEMPLATE.md — this section confirms the tests exist, not that the review happened (that's a separate gate).*
+_Cross-reference SECURITY_REVIEW_TEMPLATE.md — this section confirms the tests exist, not that the review happened (that's a separate gate)._
 
 - [ ] Authorization boundary tests present (role + ownership)
 - [ ] Input validation tests present (boundary/malformed input)
@@ -66,7 +66,7 @@ Copy this file per feature (or per Epic, for tightly related features). Covers l
 
 ## 8. QA sign-off
 
-*Independent verification against FEATURE_SPEC_TEMPLATE.md §7 acceptance criteria — not a rerun of the author's own tests.*
+_Independent verification against FEATURE_SPEC_TEMPLATE.md §7 acceptance criteria — not a rerun of the author's own tests._
 
 **Acceptance criteria verified:** ☐ All pass
 **Testing Gate:** ☐ Passed — [QA reviewer, date]

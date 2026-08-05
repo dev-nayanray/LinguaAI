@@ -1,0 +1,80 @@
+name: Container verify
+description: Verifies a container image's cosign signature and SLSA build provenance attestation before deployment (ADR-017).
+
+# T21 / ADR-017: called by deploy-staging.yml and deploy-production.yml
+# (T23) immediately before an ECS task definition update — DEPLOYMENT.md
+# §2's supply-chain pipeline requires this check to pass before an image
+# is ever referenced in a deployment; aborts with an alert on failure.
+#
+# A composite action, not a reusable (`workflow_call`) workflow — see
+# .github/actions/container-sign/action.yml for why (the same constraint
+# applies symmetrically here: verify needs to run within the same
+# per-image matrix job as the rest of that image's deploy pipeline).
+#
+# Caller responsibilities: same as container-sign — authenticate to the
+# image's registry before using this action.
+#
+# Every `uses:` below is pinned to a full commit SHA — same T20 semgrep
+# finding applied consistently (yaml.github-actions.security.github-
+# actions-mutable-action-tag).
+inputs:
+  image-name:
+    description: 'Fully-qualified image name, without a tag or digest, e.g. "111111111111.dkr.ecr.us-east-1.amazonaws.com/linguaai-api".'
+    required: true
+  image-digest:
+    description: 'Image digest in "sha256:<hex>" form — the exact digest deploy-staging.yml/deploy-production.yml is about to deploy, never a mutable tag.'
+    required: true
+  signer-workflow:
+    description: >
+      Path (relative to the repo root) of the workflow that actually
+      signed/attested this image, e.g. ".github/workflows/deploy-staging.yml".
+      Because container-sign runs as a composite action (steps within the
+      calling job), the attestation's recorded signer identity is
+      whichever workflow file directly invoked it — never a fixed shared
+      value — per `gh attestation verify --help`'s own documented
+      guidance on reusable-workflow-generated attestations (verified by
+      reading the installed gh CLI's help text during T21/T23, not
+      assumed).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+    # Keyless verify (ADR-017) — the counterpart to container-sign's
+    # keyless sign. certificate-identity-regexp scopes trust to "signed
+    # by a workflow in this repository" rather than any Sigstore-issued
+    # cert; certificate-oidc-issuer pins the expected identity provider
+    # to GitHub Actions specifically. Verified locally during T21 that
+    # cosign genuinely rejects an unsigned or wrongly-signed image rather
+    # than silently passing.
+    - name: Verify image signature (cosign)
+      shell: bash
+      env:
+        # GITHUB_REPOSITORY itself is already an ambient default env var
+        # GitHub Actions provides to every step — no need to re-map it
+        # from ${{ github.repository }}.
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_DIGEST: ${{ inputs.image-digest }}
+      run: |
+        cosign verify \
+          --certificate-identity-regexp "^https://github.com/$GITHUB_REPOSITORY/" \
+          --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+          "$IMAGE_NAME@$IMAGE_DIGEST"
+
+    # SLSA provenance verification against GitHub's attestation API.
+    # --signer-workflow pins trust to exactly the workflow file that
+    # generated the attestation.
+    - name: Verify build provenance attestation (gh attestation verify)
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_DIGEST: ${{ inputs.image-digest }}
+        SIGNER_WORKFLOW: ${{ inputs.signer-workflow }}
+      run: |
+        gh attestation verify "oci://$IMAGE_NAME@$IMAGE_DIGEST" \
+          --repo "$GITHUB_REPOSITORY" \
+          --signer-workflow "$GITHUB_REPOSITORY/$SIGNER_WORKFLOW"

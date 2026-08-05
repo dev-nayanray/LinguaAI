@@ -2,6 +2,7 @@
   "name": "linguaai",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "LinguaAI — your personal AI teacher for every language.",
   "license": "UNLICENSED",
   "engines": {
@@ -9,39 +10,55 @@
     "pnpm": ">=9.0.0"
   },
   "packageManager": "pnpm@9.12.0",
-  "workspaces": [
-    "apps/*",
-    "packages/*",
-    "services/*"
-  ],
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "dotenv -e .env -- turbo run dev",
     "build": "turbo run build",
-    "lint": "turbo run lint",
+    "db:generate": "turbo run db:generate",
+    "lint": "turbo run lint && node scripts/verify-boundary-lint.mjs",
     "lint:fix": "turbo run lint -- --fix",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,md,json}\"",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:integration": "turbo run test:integration",
+    "test:e2e:api": "turbo run test:e2e:api",
     "test:e2e": "turbo run test:e2e",
+    "test:load": "turbo run test:load",
     "clean": "turbo run clean && rimraf node_modules",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "devDependencies": {
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "@eslint/js": "^9.15.0",
+    "dependency-cruiser": "^16.4.2",
+    "dotenv-cli": "^7.4.4",
+    "eslint": "^9.15.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-import-resolver-typescript": "^3.6.3",
+    "eslint-plugin-boundaries": "^4.2.2",
+    "globals": "^17.8.0",
     "husky": "^9.1.0",
     "lint-staged": "^15.2.0",
     "prettier": "^3.3.0",
     "rimraf": "^6.0.0",
     "turbo": "^2.1.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.15.0"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
-      "eslint --fix",
+      "eslint --fix --ignore-pattern packages/__boundary_fixture__/** --ignore-pattern apps/web/src/features/__boundary_fixture_b__/**",
       "prettier --write"
     ],
     "*.{md,json}": [
       "prettier --write"
     ]
+  },
+  "pnpm": {
+    "overrides": {
+      "js-yaml@5.2.1": "5.2.2",
+      "postcss@8.4.31": "8.5.25"
+    }
   }
 }

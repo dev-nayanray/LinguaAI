@@ -4,7 +4,7 @@
 
 LinguaAI is an AI-powered global language learning platform that combines Duolingo-style gamification, ChatGPT-level conversational intelligence, Cambly-style live speaking practice, and Babbel-style structured curriculum into a single personalized learning ecosystem — a personal AI teacher that teaches, converses, corrects, and adapts to every learner.
 
-> Status: **Pre-development — architecture & planning phase.** See [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: **Epic E1 (Foundation & Engineering Platform Bootstrap) implementation in progress.** See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/epics/E1-foundation-platform-bootstrap.md](docs/epics/E1-foundation-platform-bootstrap.md).
 
 ## Vision
 
@@ -39,13 +39,13 @@ Full module inventory: [docs/PRD.md](docs/PRD.md) · [docs/ARCHITECTURE.md](docs
 
 ## Tech stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | Next.js 16+, TypeScript, Tailwind CSS, Shadcn UI, React Query, Zustand |
-| Backend | NestJS, TypeScript, Prisma ORM, PostgreSQL, Redis, BullMQ |
-| Mobile | Flutter (iOS & Android) |
-| AI | LLM APIs, speech recognition, text-to-speech, vector database, AI agent framework |
-| Infrastructure | Docker, AWS, Terraform, GitHub Actions |
+| Layer          | Technology                                                                        |
+| -------------- | --------------------------------------------------------------------------------- |
+| Frontend       | Next.js 16+, TypeScript, Tailwind CSS, Shadcn UI, React Query, Zustand            |
+| Backend        | NestJS, TypeScript, Prisma ORM, PostgreSQL, Redis, BullMQ                         |
+| Mobile         | Flutter (iOS & Android)                                                           |
+| AI             | LLM APIs, speech recognition, text-to-speech, vector database, AI agent framework |
+| Infrastructure | Docker, AWS, Terraform, GitHub Actions                                            |
 
 ## Repository structure
 
@@ -66,31 +66,31 @@ See [CLAUDE.md](CLAUDE.md) for engineering conventions and repo rules.
 
 **Start with [docs/BASELINE.md](docs/BASELINE.md)** — the frozen, official architecture baseline.
 
-| Document | Contents |
-|---|---|
-| [docs/BASELINE.md](docs/BASELINE.md) | **Start here.** Frozen v1.1 architecture baseline summary |
-| [docs/PRD.md](docs/PRD.md) | Requirements, personas, journeys, acceptance criteria, business model |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, services, data flow, scaling |
-| [docs/DATABASE.md](docs/DATABASE.md) | Entity model, database strategy |
-| [docs/API.md](docs/API.md) | API policy (see API_GUIDELINES.md for implementation detail) |
-| [docs/AI_SYSTEM.md](docs/AI_SYSTEM.md) | AI agent architecture, RAG, orchestration |
-| [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) | Brand, color, typography, components |
-| [docs/SECURITY.md](docs/SECURITY.md) | Security, privacy, compliance |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Cloud architecture, CI/CD |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | MVP, growth, enterprise phases, 23 implementation epics |
-| [docs/TESTING.md](docs/TESTING.md) | Test strategy |
-| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Contribution workflow |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture Decision Records (ADRs) |
-| [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) | Code conventions |
-| [docs/API_GUIDELINES.md](docs/API_GUIDELINES.md) | API implementation reference |
-| [docs/EVENT_ARCHITECTURE.md](docs/EVENT_ARCHITECTURE.md) | Domain events & messaging |
-| [docs/MULTITENANCY.md](docs/MULTITENANCY.md) | Tenant isolation strategy |
-| [docs/AI_GOVERNANCE.md](docs/AI_GOVERNANCE.md) | AI lifecycle, evaluation, safety governance |
-| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Logging, metrics, tracing, SLOs |
-| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Performance budgets |
-| [docs/RISK_REGISTER.md](docs/RISK_REGISTER.md) | Tracked risks |
-| [docs/CHANGELOG.md](docs/CHANGELOG.md) | Architecture baseline history |
-| [docs/ARCHITECTURE_REVIEW.md](docs/ARCHITECTURE_REVIEW.md) | *Archived* — original review gate findings |
+| Document                                                   | Contents                                                              |
+| ---------------------------------------------------------- | --------------------------------------------------------------------- |
+| [docs/BASELINE.md](docs/BASELINE.md)                       | **Start here.** Frozen v1.1 architecture baseline summary             |
+| [docs/PRD.md](docs/PRD.md)                                 | Requirements, personas, journeys, acceptance criteria, business model |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)               | System design, services, data flow, scaling                           |
+| [docs/DATABASE.md](docs/DATABASE.md)                       | Entity model, database strategy                                       |
+| [docs/API.md](docs/API.md)                                 | API policy (see API_GUIDELINES.md for implementation detail)          |
+| [docs/AI_SYSTEM.md](docs/AI_SYSTEM.md)                     | AI agent architecture, RAG, orchestration                             |
+| [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)             | Brand, color, typography, components                                  |
+| [docs/SECURITY.md](docs/SECURITY.md)                       | Security, privacy, compliance                                         |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)                   | Cloud architecture, CI/CD                                             |
+| [docs/ROADMAP.md](docs/ROADMAP.md)                         | MVP, growth, enterprise phases, 23 implementation epics               |
+| [docs/TESTING.md](docs/TESTING.md)                         | Test strategy                                                         |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)               | Contribution workflow                                                 |
+| [docs/DECISIONS.md](docs/DECISIONS.md)                     | Architecture Decision Records (ADRs)                                  |
+| [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md)       | Code conventions                                                      |
+| [docs/API_GUIDELINES.md](docs/API_GUIDELINES.md)           | API implementation reference                                          |
+| [docs/EVENT_ARCHITECTURE.md](docs/EVENT_ARCHITECTURE.md)   | Domain events & messaging                                             |
+| [docs/MULTITENANCY.md](docs/MULTITENANCY.md)               | Tenant isolation strategy                                             |
+| [docs/AI_GOVERNANCE.md](docs/AI_GOVERNANCE.md)             | AI lifecycle, evaluation, safety governance                           |
+| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)             | Logging, metrics, tracing, SLOs                                       |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md)                 | Performance budgets                                                   |
+| [docs/RISK_REGISTER.md](docs/RISK_REGISTER.md)             | Tracked risks                                                         |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md)                     | Architecture baseline history                                         |
+| [docs/ARCHITECTURE_REVIEW.md](docs/ARCHITECTURE_REVIEW.md) | _Archived_ — original review gate findings                            |
 
 ### Engineering Execution Framework
 
@@ -108,20 +108,40 @@ pnpm install
 # 2. Configure environment
 cp .env.example .env
 # fill in database, redis, LLM provider, and OAuth credentials
+# (pnpm dev loads this file automatically via dotenv-cli — see below)
 
-# 3. Start local infrastructure (Postgres, Redis, pgvector)
+# 3. Start local infrastructure: Postgres (pgvector), Redis, Mailhog, MinIO,
+#    Jaeger, and an OpenTelemetry Collector (traces/metrics sink for local dev)
 docker compose up -d
 
 # 4. Run database migrations
 pnpm --filter @linguaai/database db:migrate
 
-# 5. Start the platform in dev mode
+# 5. Start the platform in dev mode (web, admin, api, and all 5 backend services)
 pnpm dev
 ```
 
-- Web app: http://localhost:3000
-- API: http://localhost:4000
-- Admin: http://localhost:3001
+**Notes:**
+
+- `pnpm dev` runs `dotenv -e .env -- turbo run dev`, so every app/service picks up `.env` (database/redis URLs, `OTEL_EXPORTER_OTLP_ENDPOINT`, etc.) automatically — no per-app `.env` files needed locally.
+- If a port below is already in use by another project on your machine, override it for one run, e.g. `PORT=4010 pnpm --filter @linguaai/api dev` — this is a local machine conflict, not a LinguaAI setup issue.
+- Docker Desktop (WSL2 backend) can take a few seconds after a container reports "healthy" before its port is actually reachable from the host. If `db:migrate` or a service's first request fails to connect, retry once before assuming something is broken.
+
+| App/service             | URL                    |
+| ----------------------- | ---------------------- |
+| Web                     | http://localhost:3000  |
+| Admin                   | http://localhost:3001  |
+| API                     | http://localhost:4000  |
+| AI Engine               | http://localhost:4001  |
+| Speech Service          | http://localhost:4002  |
+| Recommendation Engine   | http://localhost:4003  |
+| Notification Service    | http://localhost:4004  |
+| Analytics Service       | http://localhost:4005  |
+| Jaeger UI (traces)      | http://localhost:16686 |
+| Mailhog UI (test email) | http://localhost:8025  |
+| MinIO Console           | http://localhost:9001  |
+
+Every app/service also exports OpenTelemetry traces to the local collector (`OTEL_EXPORTER_OTLP_ENDPOINT`) — after making a request, its service name and spans should appear in the Jaeger UI within a few seconds.
 
 ## License
 

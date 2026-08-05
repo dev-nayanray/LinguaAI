@@ -1,0 +1,76 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens — DESIGN_SYSTEM.md §2 (color), §2.1 (spacing/elevation/
+ * radius/z-index), §2.2 (motion), §3 (typography). This file is the single
+ * source of truth for brand tokens; apps consume it via
+ * `@import "@linguaai/ui/styles.css"` rather than redeclaring values.
+ *
+ * Spacing intentionally has no override below: Tailwind v4's default
+ * spacing scale (0, 1=4px, 2=8px, 3=12px, 4=16px, 6=24px, 8=32px, 12=48px,
+ * 16=64px) already matches DESIGN_SYSTEM.md §2.1 exactly — verified against
+ * Tailwind's own default theme, not reintroduced here.
+ */
+@theme {
+  /* §2 Color system */
+  --color-primary: #2563eb; /* Lingua Blue */
+  --color-ai: #7c3aed; /* AI Purple — reserved for AI-originated content only */
+  --color-accent: #06b6d4; /* Cyan — real-time communication contexts */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-bg: #f8fafc;
+  --color-bg-dark: #020617;
+  --color-text: #0f172a;
+
+  /* §2.1 Border radius — pill reserved for badges/tags/streak indicators */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 9999px;
+
+  /* §2.1 Elevation/shadow */
+  --shadow-flat: none;
+  --shadow-low: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-medium:
+    0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-high:
+    0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-overlay:
+    0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+
+  /* §2.1 Z-index — fixed scale, never an arbitrary per-component value */
+  --z-index-base: 0;
+  --z-index-dropdown: 10;
+  --z-index-sticky: 20;
+  --z-index-overlay: 30;
+  --z-index-modal: 40;
+  --z-index-toast: 50;
+
+  /* §3 Typography */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+
+  /* §2.2 Motion — default easing curves (--ease-* is a real Tailwind v4
+   * theme namespace, generating ease-entrance/ease-exit utilities
+   * directly). Duration values are declared here too, but exposed as
+   * utilities via @utility below — Tailwind v4 has no customizable
+   * --duration-* theme namespace (verified against the installed
+   * tailwindcss package's own theme.css: duration-* utilities are a
+   * bare-numeric functional utility, e.g. duration-150, not a named
+   * lookup scale like colors/radius/shadow/ease are). */
+  --duration-micro: 150ms;
+  --duration-standard: 250ms;
+  --duration-celebratory: 600ms;
+  --ease-entrance: cubic-bezier(0, 0, 0.2, 1); /* ease-out, for entrances */
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1); /* ease-in, for exits */
+}
+
+@utility duration-micro {
+  transition-duration: var(--duration-micro);
+}
+@utility duration-standard {
+  transition-duration: var(--duration-standard);
+}
+@utility duration-celebratory {
+  transition-duration: var(--duration-celebratory);
+}

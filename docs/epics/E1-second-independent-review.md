@@ -9,6 +9,7 @@ This review verifies the remediation performed in response to [E1-production-rea
 ## SECTION 1 — Observability Verification
 
 **Verified as sound:**
+
 - OpenTelemetry as the single instrumentation layer (ADR-016), wrapped in a new `packages/observability`, is architecturally correct and consistent with OBSERVABILITY.md's tooling direction.
 - The decision to make `requestId` (log correlation), the API error envelope's `requestId` (API_GUIDELINES.md §3), and the OTel trace ID **the same value** is a good, deliberate design choice — it avoids the common failure mode of three parallel, never-quite-aligned IDs.
 - Logging architecture (structured JSON, required fields, PII redaction at the middleware layer) and the metrics baseline (`http_request_duration_seconds`, `http_requests_total`, `http_errors_total`, `db_query_duration_seconds`) are concretely specified in both the E1 document (Part 7) and OBSERVABILITY.md §1–2, and the two are consistent with each other.
@@ -40,8 +41,8 @@ This review verifies the remediation performed in response to [E1-production-rea
 
 **Two defects found, specifically in the observability package's dependencies — exactly where the review brief asked for special attention:**
 
-1. Part 5's corrected build-graph diagram states: *"packages/database, packages/ui, packages/observability (depend on types/validation...)"* — i.e., it claims `packages/observability` depends on `packages/types`/`packages/validation`. But Part 13's task table lists **T6's dependency as `T1–T2` only** — it does not depend on T7/T8 (types/validation). One of these is wrong. Having reviewed `packages/observability`'s described public API (`initObservability`, `correlationIdMiddleware`, `logger`, metric helpers — Part 7), none of it plausibly needs domain types or Zod validation schemas; this looks like **Part 5 overstated the dependency**, not that T13 is missing one. This is the same species of contradiction (Part 5 vs. Part 13) the original High-1 finding addressed — a new instance was introduced while fixing the old one, for the new package the remediation itself added.
-2. Part 5 also states *"ui also needs observability's client-side error boundary helper"* — i.e., `packages/ui` depends on `packages/observability`. This dependency is **missing from T10's task line** (`T10 | ... | T1–T2, T7, T8 | ...` — no T6). Unlike defect #1, this one looks like the *task table* is missing a real dependency, not that the prose overstated it — if `packages/ui` genuinely exports a component that imports `packages/observability`, T10 must depend on T6. Fortunately T6 (6) < T10 (10), so fixing this is a one-line addition to T10's dependency list, not a renumbering.
+1. Part 5's corrected build-graph diagram states: _"packages/database, packages/ui, packages/observability (depend on types/validation...)"_ — i.e., it claims `packages/observability` depends on `packages/types`/`packages/validation`. But Part 13's task table lists **T6's dependency as `T1–T2` only** — it does not depend on T7/T8 (types/validation). One of these is wrong. Having reviewed `packages/observability`'s described public API (`initObservability`, `correlationIdMiddleware`, `logger`, metric helpers — Part 7), none of it plausibly needs domain types or Zod validation schemas; this looks like **Part 5 overstated the dependency**, not that T13 is missing one. This is the same species of contradiction (Part 5 vs. Part 13) the original High-1 finding addressed — a new instance was introduced while fixing the old one, for the new package the remediation itself added.
+2. Part 5 also states _"ui also needs observability's client-side error boundary helper"_ — i.e., `packages/ui` depends on `packages/observability`. This dependency is **missing from T10's task line** (`T10 | ... | T1–T2, T7, T8 | ...` — no T6). Unlike defect #1, this one looks like the _task table_ is missing a real dependency, not that the prose overstated it — if `packages/ui` genuinely exports a component that imports `packages/observability`, T10 must depend on T6. Fortunately T6 (6) < T10 (10), so fixing this is a one-line addition to T10's dependency list, not a renumbering.
 
 Neither defect creates a circular dependency or an ordering violation as currently written — both are self-consistency gaps (a claim in Part 5 not reflected in Part 13, or vice versa), not build-breaking errors. But they are real, and they are precisely what "no contradictions exist" in Section 6 needs to account for honestly.
 
@@ -50,6 +51,7 @@ Neither defect creates a circular dependency or an ordering violation as current
 ## SECTION 4 — Boundary Enforcement Verification
 
 **Verified as sound, enforcement mechanism confirmed CI-integrated.**
+
 - Frontend: `eslint-plugin-boundaries` for inter-package rules (T3) extended to intra-app feature folders (T4) — one tool, two scopes, no new tooling dependency introduced.
 - Backend: `dependency-cruiser` for NestJS module boundaries (T4), with a clearly stated rule ("a module may only import another module via its exported service/`index.ts`, never a deep internal file").
 - Both fold into the existing `pnpm lint` step in `ci.yml` (T19) — no separate workflow, no new CI surface to maintain. Both require a deliberately-violating fixture as proof the rule fires, matching the review's own evidentiary bar from the first pass.
@@ -62,6 +64,7 @@ Neither defect creates a circular dependency or an ordering violation as current
 ## SECTION 5 — Disaster Recovery Foundation
 
 **Verified as sound and correctly scoped.**
+
 - Terraform state protection (versioning + cross-region replication) and RDS backup foundation (PITR + 7-day retention, enabled by default) are both concretely specified as T18 acceptance criteria.
 - Recovery documentation: draft RPO (≤24h) / RTO (≤4h) targets are present, explicitly labeled draft, with a stated finalization point (Epic E23) that matches DEPLOYMENT.md §6's pre-existing commitment — not a new, uncoordinated promise.
 - **Deferred items are correctly deferred**: cross-region **product-data** replication is explicitly pushed to Epic E4 (RISK_REGISTER.md R-26), with a named owner and a concrete reason (no data exists yet to replicate) rather than a vague "later." This is the remediation principle applied correctly — the mechanism exists now, the unnecessary work does not happen prematurely.
@@ -72,12 +75,12 @@ Same citation defect as Section 1 applies here (Part 8 says "T16" where it means
 
 ## SECTION 6 — Document Consistency Audit
 
-| Pair | Result |
-|---|---|
-| Architecture ↔ Implementation Guide | Consistent |
-| Security ↔ CI/CD | Consistent — every new SECURITY.md requirement (supply-chain, hardening) maps to a specific CI/CD task (T20, T21) |
-| Deployment ↔ Observability | Consistent — DEPLOYMENT.md §2/§3/§6 and OBSERVABILITY.md agree on the ADOT/Jaeger approach and terminology |
-| Definition of Done ↔ Epic tasks | Consistent — closed by T6/T13/T14/T16/T18, and DEFINITION_OF_DONE.md itself was updated to remove the interpretive gap |
+| Pair                                | Result                                                                                                                 |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Architecture ↔ Implementation Guide | Consistent                                                                                                             |
+| Security ↔ CI/CD                    | Consistent — every new SECURITY.md requirement (supply-chain, hardening) maps to a specific CI/CD task (T20, T21)      |
+| Deployment ↔ Observability          | Consistent — DEPLOYMENT.md §2/§3/§6 and OBSERVABILITY.md agree on the ADOT/Jaeger approach and terminology             |
+| Definition of Done ↔ Epic tasks     | Consistent — closed by T6/T13/T14/T16/T18, and DEFINITION_OF_DONE.md itself was updated to remove the interpretive gap |
 
 **"Verify no contradictions exist" — not fully true.** The Section 3 findings (Part 5 vs. Part 13 disagreeing on `packages/observability`'s and `packages/ui`'s dependencies) and the Section 4 finding (Part 4's stale tool-choice hedge) are contradictions within the document, introduced by or surviving the remediation itself. They are narrow and do not undermine the substantial, verified closure of the original 2 Critical + 3 High findings — but an honest consistency audit reports them rather than omitting them because the bigger findings are resolved.
 
@@ -98,14 +101,14 @@ The review brief referenced "T1–T23"; the current document has **T1–T26** (t
 
 ### Scores (independently assessed, not adopted from the remediation report's self-scoring)
 
-| Dimension | Score |
-|---|---:|
-| Architecture | 88/100 |
-| Engineering | 89/100 |
-| DevOps | 90/100 |
-| Security | 93/100 |
-| Maintainability | 89/100 |
-| Developer Experience | 88/100 |
+| Dimension                |      Score |
+| ------------------------ | ---------: |
+| Architecture             |     88/100 |
+| Engineering              |     89/100 |
+| DevOps                   |     90/100 |
+| Security                 |     93/100 |
+| Maintainability          |     89/100 |
+| Developer Experience     |     88/100 |
 | **Production Readiness** | **89/100** |
 
 Scores are deliberately a few points below the remediation report's own self-assessment (which ranged 88–96) — this review found real, if narrow, defects the remediation's own audit missed, and an independent score should reflect independently-found gaps rather than ratify the author's self-grading. No score reflects a Critical or High-severity open issue; all deductions are for the Section 1/3/4/6 findings above.

@@ -1,8 +1,8 @@
 # LinguaAI — API Guidelines (Implementation Reference)
 
-Status: **v1.1 — Consolidated baseline** · Last updated: 2026-07-29
+Status: **v1.1 — Consolidated baseline** · Last updated: 2026-08-01
 
-[API.md](API.md) states platform-level API *policy* (style, versioning philosophy, auth model). This document is the **exhaustive implementation reference** engineers use while building an endpoint — conventions here must never be duplicated back into API.md; API.md links here for detail instead.
+[API.md](API.md) states platform-level API _policy_ (style, versioning philosophy, auth model). This document is the **exhaustive implementation reference** engineers use while building an endpoint — conventions here must never be duplicated back into API.md; API.md links here for detail instead.
 
 ## 1. Resource naming & routing
 
@@ -12,30 +12,30 @@ Status: **v1.1 — Consolidated baseline** · Last updated: 2026-07-29
 
 ## 2. HTTP verb usage
 
-| Verb | Usage |
-|---|---|
-| `GET` | Read, never mutates, always safe to retry/cache |
-| `POST` | Create, or a non-idempotent action (requires `Idempotency-Key` — see §6) |
-| `PUT` | Full resource replace (rare — most updates are partial) |
-| `PATCH` | Partial update |
+| Verb     | Usage                                                                                                            |
+| -------- | ---------------------------------------------------------------------------------------------------------------- |
+| `GET`    | Read, never mutates, always safe to retry/cache                                                                  |
+| `POST`   | Create, or a non-idempotent action (requires `Idempotency-Key` — see §6)                                         |
+| `PUT`    | Full resource replace (rare — most updates are partial)                                                          |
+| `PATCH`  | Partial update                                                                                                   |
 | `DELETE` | Soft-delete by default (DATABASE.md soft-delete policy); hard-delete only where the entity's policy specifies it |
 
 ## 3. Error code registry (extends API.md §4 envelope)
 
 Machine-readable `error.code` values. New codes are added here, never invented ad hoc per endpoint.
 
-| Code | HTTP status | Meaning |
-|---|---|---|
-| `VALIDATION_ERROR` | 400 | Request body/query failed Zod schema validation |
-| `AUTH_REQUIRED` | 401 | Missing/invalid/expired access token |
-| `FORBIDDEN` | 403 | Authenticated but not authorized for this resource (role or ownership check failed) |
-| `NOT_FOUND` | 404 | Resource doesn't exist or isn't visible to this caller (tenant-scoped 404, not 403, to avoid leaking existence — SECURITY.md) |
-| `CONFLICT` | 409 | State conflict (e.g., duplicate email on registration) |
-| `SEMANTIC_VALIDATION_ERROR` | 422 | Well-formed but business-rule-invalid (e.g., exam date in the past) |
-| `RATE_LIMITED` | 429 | Generic rate limit exceeded |
-| `USAGE_LIMIT_EXCEEDED` | 429 | Plan entitlement exhausted (AI_SYSTEM.md cost controls) — client renders an upgrade prompt, not a generic retry |
-| `INTERNAL_ERROR` | 500 | Unhandled server error — client shows the generic fallback (CODING_STANDARDS.md §5) |
-| `UPSTREAM_UNAVAILABLE` | 502/503 | A dependency (AI provider, speech provider, Stripe) is down — see ARCHITECTURE.md failure-recovery table for the per-dependency degrade behavior |
+| Code                        | HTTP status | Meaning                                                                                                                                          |
+| --------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `VALIDATION_ERROR`          | 400         | Request body/query failed Zod schema validation                                                                                                  |
+| `AUTH_REQUIRED`             | 401         | Missing/invalid/expired access token                                                                                                             |
+| `FORBIDDEN`                 | 403         | Authenticated but not authorized for this resource (role or ownership check failed)                                                              |
+| `NOT_FOUND`                 | 404         | Resource doesn't exist or isn't visible to this caller (tenant-scoped 404, not 403, to avoid leaking existence — SECURITY.md)                    |
+| `CONFLICT`                  | 409         | State conflict (e.g., duplicate email on registration)                                                                                           |
+| `SEMANTIC_VALIDATION_ERROR` | 422         | Well-formed but business-rule-invalid (e.g., exam date in the past)                                                                              |
+| `RATE_LIMITED`              | 429         | Generic rate limit exceeded                                                                                                                      |
+| `USAGE_LIMIT_EXCEEDED`      | 429         | Plan entitlement exhausted (AI_SYSTEM.md cost controls) — client renders an upgrade prompt, not a generic retry                                  |
+| `INTERNAL_ERROR`            | 500         | Unhandled server error — client shows the generic fallback (CODING_STANDARDS.md §5)                                                              |
+| `UPSTREAM_UNAVAILABLE`      | 502/503     | A dependency (AI provider, speech provider, Stripe) is down — see ARCHITECTURE.md failure-recovery table for the per-dependency degrade behavior |
 
 ## 4. Pagination
 
@@ -79,3 +79,13 @@ Machine-readable `error.code` values. New codes are added here, never invented a
 ## 11. OpenAPI generation
 
 - Generated exclusively from `@nestjs/swagger` decorators on controllers/DTOs — hand-written OpenAPI YAML is never merged, since it immediately drifts from the implementation (API.md §5).
+
+## 12. Authentication implementation detail (extends API.md §3's policy statement — Epic E2, ADR-018)
+
+API.md §3 states the auth _policy_ (Bearer access token, cookie/secure-storage refresh token, RBAC). This section is the implementation-level detail engineers need when building or consuming an authenticated endpoint:
+
+- **Access token**: JWT, `Authorization: Bearer <token>` header, 15-minute lifetime. Claims: `sub`, `role`, `organizationId`, `orgRole`, `jti`, `iat`, `exp`. One transport across every client (web, mobile, admin) — no cookie-based fallback for the access token specifically, since the Flutter mobile app has no cookie jar.
+- **Staleness check**: every authenticated request checks `jwt.iat >= user.tokensValidAfter`. A role or org-membership change bumps `tokensValidAfter`, so a still-cryptographically-valid token issued before the change is rejected on the holder's very next request — this is a distinct mechanism from revocation below, and closes a different gap (a token that's still "valid" by expiry but now claims a stale role).
+- **Immediate single-session revocation**: logout or an explicit session revoke (`DELETE /v1/users/me/sessions/:id`) denylists that session's `jti` in Redis (`JtiDenylistService`), TTL-matched to the token's remaining life; `JwtStrategy` checks the denylist on every request. This check **fails open** on a Redis outage — the same bounded worst-case exposure window as the token's own natural expiry, not an unbounded one — deliberately the opposite of §7's rate limiter, which fails closed; failing closed here would take down the entire authenticated API on any Redis hiccup, a materially worse outcome than a narrow, time-boxed revocation-latency window.
+- **Refresh token**: opaque (not a JWT), hashed at rest (`RefreshToken.tokenHash` — the raw value is never stored, same pattern as `PasswordResetToken`/`MfaChallengeToken`), one-time-use with atomic rotation-on-use. Reuse of an already-rotated token revokes the entire session chain, not just the one request; a race between two near-simultaneous uses of the same token resolves to exactly one winner via a conditional update, the other treated as reuse. 30-day lifetime; httpOnly/secure/SameSite=strict cookie for web, platform-secure storage (Keychain/Keystore) for mobile.
+- **MFA step-up**: an MFA-enrolled `ADMIN`/`ENTERPRISE_ADMIN` does not receive a full session directly from `POST /v1/auth/login` — the response is a discriminated union (`AUTHENTICATED | MFA_REQUIRED`); on `MFA_REQUIRED`, the client exchanges an opaque, hashed, single-use `MfaChallengeToken` via `POST /v1/auth/mfa/challenge` for the real session.

@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars (git-ignored) for local runs, or supply these
+# as -var/-var-file in CI (deploy-production.yml, T23). Never commit real
+# values — DEPLOYMENT.md §7.
+
+aws_region = "us-east-1"
+image_tag  = "replace-with-git-sha" # promoted from a staging-verified image, DEPLOYMENT.md §4
+
+# Left empty until a real domain is provisioned for production.
+domain_name     = ""
+route53_zone_id = ""
+
+sentry_dsn_secret_arn = "arn:aws:secretsmanager:us-east-1:111111111111:secret:linguaai-production-sentry-dsn-XXXXXX"
+
+budget_alert_emails = ["devops@linguaai.example"]

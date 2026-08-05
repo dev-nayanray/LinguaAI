@@ -13,28 +13,28 @@ Copy this file per screen or component group. Covers lifecycle phase 5 ([IMPLEME
 
 ## 1. Design tokens used
 
-*Confirm no ad hoc values — every color/spacing/radius/elevation/z-index traces to DESIGN_SYSTEM.md §2/§2.1.*
+_Confirm no ad hoc values — every color/spacing/radius/elevation/z-index traces to DESIGN_SYSTEM.md §2/§2.1._
 
 ☐ Confirmed — no hardcoded colors, spacing, or one-off values outside `packages/ui` tokens.
 
 ## 2. Components used
 
-| Component | Source | New component needed? |
-|---|---|---|
-| | `packages/ui` existing / new | |
+| Component | Source                       | New component needed? |
+| --------- | ---------------------------- | --------------------- |
+|           | `packages/ui` existing / new |                       |
 
-*If a new component is needed, it's added to `packages/ui` (DESIGN_SYSTEM.md §4) — not built inline in the feature.*
+_If a new component is needed, it's added to `packages/ui` (DESIGN_SYSTEM.md §4) — not built inline in the feature._
 
 ## 3. Required states (DESIGN_SYSTEM.md §5)
 
-| State | Design specified | Notes |
-|---|---|---|
-| Loading | ☐ | |
-| Empty | ☐ | |
-| Error | ☐ | |
-| Success | ☐ | |
+| State   | Design specified | Notes |
+| ------- | ---------------- | ----- |
+| Loading | ☐                |       |
+| Empty   | ☐                |       |
+| Error   | ☐                |       |
+| Success | ☐                |       |
 
-*A state marked "not applicable" requires a one-line justification, not a blank.*
+_A state marked "not applicable" requires a one-line justification, not a blank._
 
 ## 4. Responsive & mobile-first
 

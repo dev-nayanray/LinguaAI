@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-cjs
+build
+.next
+.turbo
+coverage
+storybook-static
+pnpm-lock.yaml
+packages/database/generated
+.husky/_
+# Next.js-managed, regenerated on every dev/build run — "This file should
+# not be edited" per its own header.
+next-env.d.ts

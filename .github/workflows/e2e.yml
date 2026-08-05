@@ -1,0 +1,117 @@
+name: E2E
+
+# DEPLOYMENT.md §4 / E1 Part 10: every PR, skeleton-scoped to health-check
+# journeys only until real product features exist. Every `uses:` below is
+# pinned to a full commit SHA — same T20 semgrep finding applied
+# consistently (yaml.github-actions.security.github-actions-mutable-
+# action-tag).
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DATABASE_URL: postgresql://linguaai:linguaai_dev_password@localhost:5432/linguaai
+  REDIS_URL: redis://localhost:6379
+
+jobs:
+  e2e:
+    name: Playwright health-check suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @linguaai/e2e-tests exec playwright install --with-deps chromium
+
+      # DEPLOYMENT.md §4: "Spin up ephemeral environment (Docker
+      # Compose)". Apps/services themselves are NOT part of
+      # docker-compose.yml (root) — that file is stateful dependencies
+      # only (Part 8), matching local dev where apps run natively via
+      # `pnpm dev`/start commands, started separately below.
+      - name: Start stateful dependencies
+        run: docker compose up -d --wait
+
+      - name: Build all apps/packages/services
+        run: pnpm build
+
+      # Production-mode start (not `pnpm dev`) — a one-shot e2e smoke
+      # test needs the apps running once, stably, not in watch mode.
+      # SENTRY_DSN is deliberately left unset: packages/config's schema
+      # treats it as optional (T22 fixed a real bug here — an *empty
+      # string*, matching .env.example's own documented "not configured
+      # yet" convention, used to fail Zod's `.url().optional()` check;
+      # verified by reproducing the crash against this exact stack before
+      # fixing packages/config/src/schemas.ts).
+      - name: Start apps and services
+        run: |
+          mkdir -p /tmp/app-logs
+          NODE_ENV=production PORT=4000 node apps/api/dist/main.js > /tmp/app-logs/api.log 2>&1 &
+          PORT=4001 node services/ai-engine/dist/main.js > /tmp/app-logs/ai-engine.log 2>&1 &
+          PORT=4002 node services/speech-service/dist/main.js > /tmp/app-logs/speech-service.log 2>&1 &
+          PORT=4003 node services/recommendation-engine/dist/main.js > /tmp/app-logs/recommendation-engine.log 2>&1 &
+          PORT=4004 node services/notification-service/dist/main.js > /tmp/app-logs/notification-service.log 2>&1 &
+          PORT=4005 node services/analytics-service/dist/main.js > /tmp/app-logs/analytics-service.log 2>&1 &
+          PORT=3000 HOSTNAME=0.0.0.0 pnpm --filter @linguaai/web start > /tmp/app-logs/web.log 2>&1 &
+          PORT=3001 HOSTNAME=0.0.0.0 pnpm --filter @linguaai/admin start > /tmp/app-logs/admin.log 2>&1 &
+          disown -a
+
+      - name: Wait for apps to become healthy
+        run: |
+          for port in 3000 3001 4000 4001 4002 4003 4004 4005; do
+            echo "waiting for localhost:$port..."
+            for i in $(seq 1 30); do
+              if curl -sf "http://localhost:$port/" >/dev/null 2>&1 || curl -sf "http://localhost:$port/health" >/dev/null 2>&1; then
+                echo "  up"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "  TIMEOUT waiting for localhost:$port"
+                echo "--- logs ---"
+                tail -n 50 /tmp/app-logs/*.log
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Run Playwright suite
+        env:
+          APP_URL: http://localhost:3000
+          ADMIN_URL: http://localhost:3001
+          API_URL: http://localhost:4000
+          AI_ENGINE_URL: http://localhost:4001
+          SPEECH_SERVICE_URL: http://localhost:4002
+          RECOMMENDATION_ENGINE_URL: http://localhost:4003
+          NOTIFICATION_SERVICE_URL: http://localhost:4004
+          ANALYTICS_SERVICE_URL: http://localhost:4005
+        run: pnpm --filter @linguaai/e2e-tests test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Stop stateful dependencies
+        if: always()
+        run: docker compose down

@@ -1,0 +1,39 @@
+{
+  "name": "@linguaai/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --coverage",
+    "clean": "rimraf .next *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@linguaai/auth-client": "workspace:*",
+    "@linguaai/observability": "workspace:*",
+    "@linguaai/ui": "workspace:*",
+    "@linguaai/validation": "workspace:*",
+    "next": "16.2.12",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.9.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitest/coverage-v8": "^2.1.8",
+    "jsdom": "^30.0.1",
+    "rimraf": "^6.0.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.8"
+  }
+}
