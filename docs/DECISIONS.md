@@ -347,46 +347,57 @@ Format: Context → Decision → Consequences → Status.
 **Reversibility:** High — a job definition move is low-cost.
 **Status:** Proposed.
 
+### ADR-036 — `services/*` microservices connect to Postgres as `app_role`, never the migration-owning `DATABASE_URL` role
+
+**Context:** E5 T4 (Orchestrator) is the first `services/*` microservice to touch the database at all — every prior real consumer was `apps/api`, whose `DatabaseModule` (E2-T8/T10) already deliberately avoids `packages/database`'s shared `getPrismaClient()` singleton (wired to `DATABASE_URL`, the migration-owning superuser) in favor of its own `app_role`/`app_service_role` connections (`APP_DATABASE_URL`/`APP_SERVICE_ROLE_DATABASE_URL`). `ai.prisma`'s own domain carries no RLS policy (E4 T5's own header comment: "Not tenant-scoped... no RLS policy, no organizationId column on anything here"), so the specific reason `apps/api` gives (RLS bypass) doesn't literally apply to ai-engine's own tables — but connecting as the migration-owning role is a broader least-privilege question than RLS alone, and R-72 (E4) already established that "the real application connects as `app_role`, not the migration-owning superuser" as a platform-wide statement, not an `apps/api`-specific one.
+**Decision:** Every real `services/*` application (ai-engine now; `speech-service`/`recommendation-engine` when they gain real database access) connects as `app_role` via `APP_DATABASE_URL`, the same role `apps/api` uses for ordinary request-scoped queries — never `DATABASE_URL`. A compromised service credential should never carry schema-altering, every-table-including-tenant-scoped-ones access, regardless of whether that specific service's own tables happen to have RLS policies. A new, narrower `appRoleDatabaseEnvSchema` fragment (`packages/config`) exposes just `APP_DATABASE_URL` — `services/*` consumers with no `app_service_role`/`BYPASSRLS` use case (ai-engine has none of apps/api's four named exceptions, ADR-022) are never required to configure a credential they'll never use. `packages/database`'s `withAiMessageEncryption` extension is now re-exported from its public barrel (previously composed only internally by `getPrismaClient()`) so a consumer connecting under a different role can still compose the same `AIMessage.content` field-level encryption onto its own client, exactly as `apps/api` already composes its own `tenantRlsExtension` this way.
+**Alternatives considered:** Reusing `getPrismaClient()` directly (rejected — hardwired to `DATABASE_URL`, the exact role this ADR says a real application must never connect as); giving ai-engine `apps/api`'s full `appDatabaseEnvSchema` including `APP_SERVICE_ROLE_DATABASE_URL` (rejected — ai-engine has no BYPASSRLS use case, and requiring an unused credential is a real, if minor, unnecessary-privilege smell worth avoiding at zero cost); a brand-new `ai_engine_role` Postgres role scoped only to `ai.*` tables (rejected as premature — `app_role` already has the correct grants on every table, including `ai.*`, per E4 T11's broad grant plus `ALTER DEFAULT PRIVILEGES`; a narrower per-service role is worth revisiting only if a real reason to differentiate `app_role`'s privileges _between_ services emerges, not speculatively now).
+**Consequences:** Establishes the reusable pattern every future `services/*` epic (E10 speech-service, E14 recommendation-engine, etc.) follows rather than each independently rediscovering this question. `app_role`'s grants must keep covering every table a `services/*` consumer needs, including future `ai.*` migrations (already guaranteed by E4 T11's `ALTER DEFAULT PRIVILEGES`, R-72).
+**Security implications:** Directly closes a least-privilege gap that would otherwise have shipped: ai-engine handling untrusted, LLM-adjacent user input while holding schema-altering, full-database credentials would have been a materially larger blast radius for any future ai-engine-specific vulnerability (prompt-injection-driven or otherwise) than the same vulnerability under `app_role`.
+**Reversibility:** High — a connection-string/role change, no data-model impact.
+**Status:** Accepted (2026-08-07) — implemented in E5 T4, by the same explicit user direction covering T1–T3.
+
 ---
 
 ## ADR index
 
-| ID      | Title                                                                         | Status   |
-| ------- | ----------------------------------------------------------------------------- | -------- |
-| ADR-001 | Turborepo + pnpm monorepo                                                     | Accepted |
-| ADR-002 | Modular monolith + targeted microservices                                     | Accepted |
-| ADR-003 | REST over GraphQL                                                             | Accepted |
-| ADR-004 | pgvector for MVP vector search                                                | Accepted |
-| ADR-005 | Postgres RLS for tenant isolation                                             | Accepted |
-| ADR-006 | AI Gateway pattern                                                            | Accepted |
-| ADR-007 | Single Orchestrator + tool-calling agent handoff                              | Accepted |
-| ADR-008 | RAG grounding required for factual AI output                                  | Accepted |
-| ADR-009 | ECS Fargate over Kubernetes                                                   | Accepted |
-| ADR-010 | Domain events over point-to-point queues                                      | Accepted |
-| ADR-011 | Mandatory MFA for privileged roles                                            | Accepted |
-| ADR-012 | Platform-level AI cost circuit breaker                                        | Accepted |
-| ADR-013 | Family plan descoped from MVP                                                 | Accepted |
-| ADR-014 | Split test runner: Jest (NestJS) / Vitest (elsewhere)                         | Accepted |
-| ADR-015 | Dependency-boundary enforcement via ESLint                                    | Accepted |
-| ADR-016 | Observability stack: OTel + CloudWatch + X-Ray (ADOT) + Sentry + local Jaeger | Accepted |
-| ADR-017 | Container supply chain: Syft + Trivy + cosign + GitHub attestation            | Accepted |
-| ADR-018 | JWT Bearer access token + rotating refresh token, `jti` denylist              | Accepted |
-| ADR-019 | TOTP as mandatory MFA mechanism for privileged roles                          | Accepted |
-| ADR-020 | OAuth provider set at MVP: Google + Apple only                                | Accepted |
-| ADR-021 | Two-person approval for `ADMIN` role grants/revocations                       | Accepted |
-| ADR-022 | Narrow `BYPASSRLS` service role for cross-tenant operations                   | Accepted |
-| ADR-023 | Privileged-column protection: `REVOKE`/`GRANT` + `SECURITY DEFINER`           | Accepted |
-| ADR-024 | Flutter design-token export: build-only, never-committed artifact             | Proposed |
-| ADR-025 | `lucide-react` as the v1 icon library                                         | Accepted |
-| ADR-026 | Storybook access control: CloudFront Function + KeyValueStore                 | Proposed |
-| ADR-027 | Prisma multi-file schema composition (`prismaSchemaFolder`)                   | Accepted |
-| ADR-028 | `pg_partman` for time-based partition maintenance                             | Accepted |
-| ADR-029 | `AIMessage.content` field-level encryption via a Prisma Client Extension      | Accepted |
-| ADR-030 | Cross-domain FKs must be real Prisma `@relation`s, not plain scalars          | Accepted |
-| ADR-031 | Pin AI embedding model to OpenAI `text-embedding-3-small` (1536-dim)          | Accepted |
-| ADR-032 | Specialist trigger-condition catalog + tool-registry versioning scheme        | Proposed |
-| ADR-033 | `apps/api`↔`ai-engine` contract: REST + `@nestjs/swagger`, SSE streaming      | Proposed |
-| ADR-034 | AI cost circuit breaker: Redis sliding-window counter, 3-stage breach ladder  | Proposed |
-| ADR-035 | `AIMessage`/partitioned-table maintenance: BullMQ job inside `ai-engine`      | Proposed |
+| ID      | Title                                                                              | Status   |
+| ------- | ---------------------------------------------------------------------------------- | -------- |
+| ADR-001 | Turborepo + pnpm monorepo                                                          | Accepted |
+| ADR-002 | Modular monolith + targeted microservices                                          | Accepted |
+| ADR-003 | REST over GraphQL                                                                  | Accepted |
+| ADR-004 | pgvector for MVP vector search                                                     | Accepted |
+| ADR-005 | Postgres RLS for tenant isolation                                                  | Accepted |
+| ADR-006 | AI Gateway pattern                                                                 | Accepted |
+| ADR-007 | Single Orchestrator + tool-calling agent handoff                                   | Accepted |
+| ADR-008 | RAG grounding required for factual AI output                                       | Accepted |
+| ADR-009 | ECS Fargate over Kubernetes                                                        | Accepted |
+| ADR-010 | Domain events over point-to-point queues                                           | Accepted |
+| ADR-011 | Mandatory MFA for privileged roles                                                 | Accepted |
+| ADR-012 | Platform-level AI cost circuit breaker                                             | Accepted |
+| ADR-013 | Family plan descoped from MVP                                                      | Accepted |
+| ADR-014 | Split test runner: Jest (NestJS) / Vitest (elsewhere)                              | Accepted |
+| ADR-015 | Dependency-boundary enforcement via ESLint                                         | Accepted |
+| ADR-016 | Observability stack: OTel + CloudWatch + X-Ray (ADOT) + Sentry + local Jaeger      | Accepted |
+| ADR-017 | Container supply chain: Syft + Trivy + cosign + GitHub attestation                 | Accepted |
+| ADR-018 | JWT Bearer access token + rotating refresh token, `jti` denylist                   | Accepted |
+| ADR-019 | TOTP as mandatory MFA mechanism for privileged roles                               | Accepted |
+| ADR-020 | OAuth provider set at MVP: Google + Apple only                                     | Accepted |
+| ADR-021 | Two-person approval for `ADMIN` role grants/revocations                            | Accepted |
+| ADR-022 | Narrow `BYPASSRLS` service role for cross-tenant operations                        | Accepted |
+| ADR-023 | Privileged-column protection: `REVOKE`/`GRANT` + `SECURITY DEFINER`                | Accepted |
+| ADR-024 | Flutter design-token export: build-only, never-committed artifact                  | Proposed |
+| ADR-025 | `lucide-react` as the v1 icon library                                              | Accepted |
+| ADR-026 | Storybook access control: CloudFront Function + KeyValueStore                      | Proposed |
+| ADR-027 | Prisma multi-file schema composition (`prismaSchemaFolder`)                        | Accepted |
+| ADR-028 | `pg_partman` for time-based partition maintenance                                  | Accepted |
+| ADR-029 | `AIMessage.content` field-level encryption via a Prisma Client Extension           | Accepted |
+| ADR-030 | Cross-domain FKs must be real Prisma `@relation`s, not plain scalars               | Accepted |
+| ADR-031 | Pin AI embedding model to OpenAI `text-embedding-3-small` (1536-dim)               | Accepted |
+| ADR-032 | Specialist trigger-condition catalog + tool-registry versioning scheme             | Proposed |
+| ADR-033 | `apps/api`↔`ai-engine` contract: REST + `@nestjs/swagger`, SSE streaming           | Proposed |
+| ADR-034 | AI cost circuit breaker: Redis sliding-window counter, 3-stage breach ladder       | Proposed |
+| ADR-035 | `AIMessage`/partitioned-table maintenance: BullMQ job inside `ai-engine`           | Proposed |
+| ADR-036 | `services/*` microservices connect to Postgres as `app_role`, never `DATABASE_URL` | Accepted |
 
 New ADRs are appended, never renumbered or rewritten in place.

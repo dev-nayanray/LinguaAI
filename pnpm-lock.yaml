@@ -718,6 +718,9 @@ importers:
       '@linguaai/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@linguaai/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       '@linguaai/observability':
         specifier: workspace:*
         version: link:../../packages/observability

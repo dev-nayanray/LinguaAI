@@ -3,10 +3,16 @@ import { ObservabilityModule, RequestLoggingMiddleware } from '@linguaai/observa
 
 import { GatewayModule } from './gateway/gateway.module.js';
 import { HealthController } from './health/health.controller.js';
+import { OrchestratorModule } from './orchestrator/orchestrator.module.js';
 import { PromptModule } from './prompts/prompt.module.js';
 
 @Module({
-  imports: [ObservabilityModule.forRoot('ai-engine'), GatewayModule, PromptModule],
+  imports: [
+    ObservabilityModule.forRoot('ai-engine'),
+    GatewayModule,
+    PromptModule,
+    OrchestratorModule,
+  ],
   controllers: [HealthController],
 })
 export class AppModule implements NestModule {
