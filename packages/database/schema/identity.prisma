@@ -162,6 +162,8 @@ model User {
   comments                  Comment[]
   contentReports            ContentReport[]
   moderationActions         ModerationAction[]
+  mockTestAttempts          MockTestAttempt[]
+  certificates              Certificate[]
 
   @@index([organizationId])
 }

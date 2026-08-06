@@ -227,7 +227,8 @@ model KnowledgeBaseEntry {
   createdAt             DateTime                     @default(now())
   updatedAt             DateTime                     @updatedAt
 
-  language Language? @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language     Language?                       @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  examPrograms ExamProgramKnowledgeBaseEntry[]
 
   @@index([languageId, category, isActive])
   @@map("KnowledgeBaseEntry")

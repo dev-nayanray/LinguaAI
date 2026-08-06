@@ -106,9 +106,11 @@ Hierarchy: `Language → Course → Level → Unit → Lesson → Activity → E
 
 ### 2.8 Exams & certification (modules 19, 21)
 
-- `ExamProgram` — supported exam definitions (IELTS, TOEFL, JLPT, TOPIK, HSK, DELE) with rubric metadata, linked to relevant `KnowledgeBaseEntry` rows for RAG-grounded scoring (ADR-008).
-- `MockTestAttempt` — a full or partial mock test run, scored per section.
-- `Certificate` — issued certificate record with a public verification token/URL; **explicitly foreign-keyed to the `Course`/`Level`/`ExamProgram` milestone that triggered it** (previously implicit, now a required relationship).
+**Status: Implemented (schema only) — Epic E4 T8** (docs/epics/E4-database-schema-core-data-layer.md). Schema/migration exist in `packages/database`; the application logic (mock test delivery, RAG-grounded scoring, certificate issuance/public verification UI) is separate, later epic scope (E19/E20). ROADMAP.md scopes MVP to 1-2 active exam programs and basic verification; full 6-program breadth and "verification depth" are Version 1.1 — the schema supports all six programs from the start (`ExamProgram.isActive`, mirroring `Plan`'s §2.9 inactive-rows pattern) rather than needing a later migration.
+
+- `ExamProgram` — supported exam definitions (IELTS, TOEFL, JLPT, TOPIK, HSK, DELE) with rubric metadata, linked to relevant `KnowledgeBaseEntry` rows for RAG-grounded scoring (ADR-008) via `ExamProgramKnowledgeBaseEntry` _(added)_, the N:N join table §3's ERD names the relationship for but not the table itself.
+- `MockTestAttempt` — a full or partial mock test run, scored per section (`MockTestSectionScore` _(added)_). `status` reuses §2.2's `AssessmentStatus` enum; `MockTestSectionScore.skill` reuses §2.2's `Skill` enum — a mock test attempt's lifecycle and scoring vocabulary are the same shape as a placement assessment's, not independently defined.
+- `Certificate` — issued certificate record with a public verification token/URL; **explicitly foreign-keyed to the `Course`/`Level`/`ExamProgram` milestone that triggered it** (previously implicit, now a required relationship) — three real, separate nullable FK columns plus a `CHECK (num_nonnulls(...) = 1)` constraint enforcing exactly one is ever set, not a polymorphic no-FK pointer. Never deleted (a legal/verification artifact, same immutability class as `AuditLog`). `verificationTokenHash` follows §2.1's hash-not-raw pattern (`PasswordResetToken`, `MfaChallengeToken`) — a 32-byte (256-bit) random token, SHA-256 hashed for storage; the public verification endpoint is rate-limited to 10 requests/IP/5min at the application layer (E20), stricter than the platform default given no auth to fall back on.
 
 ### 2.9 Subscriptions & billing (module 22)
 

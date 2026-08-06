@@ -1,0 +1,162 @@
+// E4 T8 — Exams & certification domain (DATABASE.md §2.8, docs/epics/
+// E4-database-schema-core-data-layer.md §5/§9/§10 resolved item 2).
+//
+// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy, no
+// organizationId column on anything here.
+//
+// Cross-domain references (`userId`, `courseId`, `levelId`,
+// `knowledgeBaseEntryId`) are real Prisma `@relation` fields, with
+// matching back-relation arrays added to identity.prisma's `User`,
+// content.prisma's `Course`/`Level`, and ai.prisma's `KnowledgeBaseEntry`
+// (ADR-030).
+//
+// `MockTestAttempt.status` reuses assessment.prisma's `AssessmentStatus`
+// enum (IN_PROGRESS/COMPLETED/ABANDONED — identical vocabulary, not a
+// coincidence: a mock test attempt's lifecycle is the same shape as a
+// placement assessment attempt's) and `MockTestSectionScore.skill` reuses
+// its `Skill` enum, rather than duplicating either — same reasoning as
+// T7's `Challenge.metric` reusing `gamification.prisma`'s `MissionMetric`.
+//
+// `Certificate`'s trigger relationship (DATABASE.md §2.8: "explicitly
+// foreign-keyed to the Course/Level/ExamProgram milestone that triggered
+// it — previously implicit, now a required relationship") is real FKs on
+// three nullable columns, not a polymorphic no-FK pointer like
+// ContentVersion/PronunciationScore/ContentReport — DATABASE.md's own
+// wording asks for "explicitly foreign-keyed," which only real,
+// per-column FKs deliver. A hand-written CHECK constraint (this domain's
+// migration) enforces exactly one of the three is set, since Prisma's
+// schema language has no native representation for that invariant either
+// (same "Prisma schema + raw SQL" shape T1 established for RLS/vector,
+// reused here for a constraint type instead of an index/extension).
+//
+// `Certificate.verificationTokenHash` follows identity.prisma's
+// established hash-not-raw pattern (PasswordResetToken, MfaChallengeToken)
+// — the raw token is only ever held by the certificate holder / embedded
+// in the public verification URL, never persisted. Per §10 resolved item
+// 2, this task's own evidence bar requires the entropy/rate-limiting
+// parameters be specified now, not deferred:
+//   - Token: 32 random bytes (256-bit) via crypto.randomBytes,
+//     base64url-encoded for the public-facing raw token (~43 chars);
+//     SHA-256 hash (64 hex chars) is what's actually stored and looked up
+//     by. 2^256 keyspace makes brute-force enumeration computationally
+//     infeasible regardless of rate limiting.
+//   - Rate limiting (application-layer, E20's own implementation — named
+//     here so it isn't silently left unspecified): the public
+//     verification endpoint is limited to 10 requests per IP per 5
+//     minutes, stricter than the platform's general
+//     RATE_LIMIT_WINDOW_MS/RATE_LIMIT_MAX_REQUESTS default (.env.example)
+//     given this endpoint has no auth to fall back on.
+//
+// `ExamProgram.isActive` mirrors `Plan`'s (§2.9) "rows exist but
+// inactive/unreleased" pattern — ROADMAP.md scopes MVP to 1-2 active exam
+// programs, full 6-program breadth (IELTS/TOEFL/JLPT/TOPIK/HSK/DELE) is
+// Version 1.1, but the schema supports all of them from the start rather
+// than needing a later migration to add rows' worth of columns.
+//
+// `ExamProgramKnowledgeBaseEntry` is `_(added)_` — DATABASE.md's own ERD
+// (§3) states "ExamProgram ──N:N── KnowledgeBaseEntry" but names no join
+// table for it, structurally required for the N:N to exist at all.
+
+model ExamProgram {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String
+  code        String  @unique
+  description String?
+  /// Rubric metadata (DATABASE.md §2.8) — structured, consumed by RAG-grounded scoring (ADR-008), this schema only stores the shape.
+  rubric      Json
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  mockTestAttempts     MockTestAttempt[]
+  certificates         Certificate[]
+  knowledgeBaseEntries ExamProgramKnowledgeBaseEntry[]
+
+  @@map("ExamProgram")
+}
+
+model ExamProgramKnowledgeBaseEntry {
+  id                   String @id @default(uuid()) @db.Uuid
+  examProgramId        String @db.Uuid
+  knowledgeBaseEntryId String @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  examProgram        ExamProgram        @relation(fields: [examProgramId], references: [id])
+  knowledgeBaseEntry KnowledgeBaseEntry @relation(fields: [knowledgeBaseEntryId], references: [id])
+
+  @@unique([examProgramId, knowledgeBaseEntryId])
+  @@map("ExamProgramKnowledgeBaseEntry")
+}
+
+model MockTestAttempt {
+  id            String           @id @default(uuid()) @db.Uuid
+  userId        String           @db.Uuid
+  examProgramId String           @db.Uuid
+  status        AssessmentStatus @default(IN_PROGRESS)
+  overallScore  Float?
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User                   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  examProgram   ExamProgram            @relation(fields: [examProgramId], references: [id])
+  sectionScores MockTestSectionScore[]
+
+  @@index([userId, createdAt])
+  @@index([examProgramId])
+  @@map("MockTestAttempt")
+}
+
+model MockTestSectionScore {
+  id                String @id @default(uuid()) @db.Uuid
+  mockTestAttemptId String @db.Uuid
+  skill             Skill
+  score             Float
+
+  createdAt DateTime @default(now())
+
+  mockTestAttempt MockTestAttempt @relation(fields: [mockTestAttemptId], references: [id])
+
+  @@unique([mockTestAttemptId, skill])
+  @@map("MockTestSectionScore")
+}
+
+/// Never deleted — a legal/verification artifact, same immutability class
+/// as AuditLog (E4 §5's scoping table). Exactly one of courseId/levelId/
+/// examProgramId is set — enforced by a hand-written CHECK constraint,
+/// see this file's header comment.
+model Certificate {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+
+  courseId      String? @db.Uuid
+  levelId       String? @db.Uuid
+  examProgramId String? @db.Uuid
+
+  /// SHA-256 hash (hex) of the public-facing raw token — see this file's header comment for the full entropy/rate-limiting spec. Never the raw token.
+  verificationTokenHash String   @unique
+  issuedAt              DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // onDelete: Restrict on all three (not Prisma's SET NULL default for
+  // optional relations) -- SET NULL would silently violate the "exactly
+  // one of the three is set" CHECK constraint below if a Course/Level/
+  // ExamProgram row were ever hard-deleted. In practice Course/Level use
+  // soft-delete (deletedAt, DATABASE.md §6), never a real DELETE, so this
+  // never fires -- Restrict is still the correct, defensive choice for a
+  // "never deleted... legal/verification artifact" row.
+  user        User         @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  course      Course?      @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  level       Level?       @relation(fields: [levelId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  examProgram ExamProgram? @relation(fields: [examProgramId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([userId])
+  @@map("Certificate")
+}
