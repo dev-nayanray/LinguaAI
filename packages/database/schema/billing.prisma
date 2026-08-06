@@ -1,0 +1,164 @@
+// E4 T9 — Subscriptions & billing domain (DATABASE.md §2.9, docs/epics/
+// E4-database-schema-core-data-layer.md §5/§9/§10 resolved item 3).
+//
+// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy beyond what E2
+// already built for `Organization`/`OrganizationMembership`; a
+// `Subscription` referencing an `Organization` doesn't itself need a new
+// policy, it's just another table with a foreign key into an
+// already-RLS-protected one.
+//
+// Cross-domain references (`userId`, `organizationId`) are real Prisma
+// `@relation` fields, with matching back-relation arrays on
+// identity.prisma's `User`/`Organization` (ADR-030).
+//
+// `Coupon`/`Discount` are explicitly NOT built here — §10 resolved item 3:
+// "a genuinely unshaped reservation was judged more likely to lock in a
+// wrong shape than to save a later migration." Not a gap, a decision.
+//
+// `Subscription` is "user or organization" (DATABASE.md §2.9) — modeled
+// as two real, separate nullable FK columns plus a hand-written CHECK
+// constraint enforcing exactly one is set, the same pattern T8's
+// `Certificate` established for its own "exactly one of several
+// triggers" requirement (not a polymorphic no-FK pointer, since both
+// `User` and `Organization` are always resolvable, concrete targets).
+//
+// `Plan.limits`/`Entitlement.limits`/`Entitlement.usage` are structured
+// JSON, not fixed columns per named feature (maxLanguages,
+// dailyAiConversationMinutes, pronunciationLabAccess, ...) — PRD.md §7's
+// own plan table is explicitly "indicative" pricing/feature detail, not
+// a finalized schema; a JSON shape lets E15 (Subscription & Billing
+// Platform, this domain's app-logic epic) iterate the actual limit set
+// without a schema migration per feature-flag change, matching the same
+// reasoning already used for `Badge.criteria`/`ExamProgram.rubric`.
+//
+// `Invoice` amounts are integer minor-units (cents), the standard Stripe
+// convention — never a float, which cannot represent currency exactly.
+//
+// `Invoice` retention: 7-year floor (DATABASE.md §7), never shortened by
+// a user erasure request — a data-handling policy for the application
+// layer to enforce, not something the schema itself can express as a
+// constraint (there is no "don't delete for 7 years" SQL primitive);
+// documented here so it isn't silently dropped at implementation time.
+//
+// `Plan.isActive` mirrors the existing DATABASE.md-documented pattern:
+// FREE/PREMIUM active at MVP; FAMILY (ADR-013, blocked on a
+// COPPA-compliant parental-consent flow) and BUSINESS (Enterprise phase)
+// rows exist but are inactive/unreleased.
+
+enum PlanTier {
+  FREE
+  PREMIUM
+  FAMILY
+  BUSINESS
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+model Plan {
+  id       String   @id @default(uuid()) @db.Uuid
+  tier     PlanTier @unique
+  name     String
+  /// Structured entitlement-limit definition (e.g. {maxLanguages: 1, dailyAiConversationMinutes: 30, pronunciationLabAccess: false}) — see this file's header comment for why this is JSON, not fixed columns.
+  limits   Json
+  isActive Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions Subscription[]
+  entitlements  Entitlement[]
+
+  @@map("Plan")
+}
+
+/// "User or organization" (DATABASE.md §2.9) — exactly one of userId/
+/// organizationId is set, enforced by a hand-written CHECK constraint,
+/// see this file's header comment.
+model Subscription {
+  id             String  @id @default(uuid()) @db.Uuid
+  userId         String? @db.Uuid
+  organizationId String? @db.Uuid
+  planId         String  @db.Uuid
+
+  status               SubscriptionStatus
+  stripeCustomerId     String
+  stripeSubscriptionId String             @unique
+  currentPeriodEnd     DateTime
+  /// Supports the trial flow (PRD.md §5.1) — null once trial ends or for a subscription that never had one.
+  trialEndsAt          DateTime?
+  canceledAt           DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  plan         Plan          @relation(fields: [planId], references: [id])
+  invoices     Invoice[]
+
+  @@index([userId])
+  @@index([organizationId])
+  @@map("Subscription")
+}
+
+/// Synced from Stripe (DATABASE.md §2.9). 7-year retention floor — see
+/// this file's header comment; never shortened by a user erasure request.
+model Invoice {
+  id              String        @id @default(uuid()) @db.Uuid
+  subscriptionId  String        @db.Uuid
+  stripeInvoiceId String        @unique
+  status          InvoiceStatus
+  /// Minor units (cents) — never a float, see this file's header comment.
+  amountDue       Int
+  amountPaid      Int
+  currency        String
+
+  issuedAt DateTime
+  paidAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@index([subscriptionId])
+  @@map("Invoice")
+}
+
+/// 1:1 with User (same `userId`-as-primary-key pattern as `UserXP`/
+/// `Streak`) — the current, resolved snapshot; `EntitlementChangeLog`
+/// (§2.1, already implemented E2) is the separate, immutable audit trail
+/// of how it got there. `usage` resets per `currentPeriodEnd`
+/// (application-layer responsibility, not a schema-enforced rule).
+model Entitlement {
+  userId String @id @db.Uuid
+  planId String @db.Uuid
+
+  /// Effective limits — normally mirrors Plan.limits but can diverge (e.g. an admin-granted override), which is why it's stored per-user, not just resolved via a join every read.
+  limits           Json
+  /// Current-period usage counters (e.g. {aiConversationMinutesUsedToday: 12}).
+  usage            Json
+  currentPeriodEnd DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  plan Plan @relation(fields: [planId], references: [id])
+
+  @@map("Entitlement")
+}

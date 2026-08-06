@@ -1,0 +1,269 @@
+// E4 T7 — Community domain (DATABASE.md §2.7, docs/epics/
+// E4-database-schema-core-data-layer.md §5/§9).
+//
+// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy, no
+// organizationId column on anything here.
+//
+// Cross-domain references (`userId`-shaped columns) are real Prisma
+// `@relation` fields, with matching back-relation arrays on
+// identity.prisma's User (ADR-030). Relations within this file use
+// normal Prisma `@relation`s.
+//
+// Soft-delete: `Discussion`/`Post`/`Comment`/`Group` are all in
+// DATABASE.md §6's "content & community (reversible, moderation-relevant)"
+// soft-delete category — `deletedAt`, excluded from default queries,
+// recoverable by admin action, never a hard delete.
+//
+// Voice rooms (PRD.md module 16: "Post-MVP") are explicitly out of scope
+// here, matching SECURITY.md §8's own "requires a moderation design
+// completed before launch" note for that future feature.
+//
+// `Challenge.metric` reuses `gamification.prisma`'s `MissionMetric` enum
+// (XP_EARNED/LESSONS_COMPLETED/MINUTES_STUDIED/STREAK_DAYS) rather than
+// duplicating an equivalent enum — DATABASE.md's own "Challenge ... tied
+// to gamification" wording, taken literally: the two features share one
+// vocabulary of measurable progress, not two independent ones.
+//
+// `ChallengeParticipant`, `ContentReport`/`ModerationAction`'s polymorphic
+// (targetType, targetId) shape are `_(added)_` per this repo's established
+// convention (e.g. `ContentVersion`, `EncryptionDataKey`) — DATABASE.md
+// names `Challenge`/`ContentReport`/`ModerationAction` but not how
+// per-participant progress or a polymorphic moderation target is
+// represented; both are structurally required for the named entities to
+// function at all, not speculative scope.
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  BLOCKED
+}
+
+enum GroupMembershipRole {
+  OWNER
+  MEMBER
+}
+
+enum ChallengeStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+/// Polymorphic target for both ContentReport and ModerationAction — the
+/// reported/actioned-on item varies by table, same reasoning as T2's
+/// ContentVersion (no single FK target exists to point at).
+enum ModerationTargetType {
+  DISCUSSION
+  POST
+  COMMENT
+  USER
+}
+
+enum ContentReportStatus {
+  PENDING
+  REVIEWED
+  DISMISSED
+}
+
+enum ModerationActionType {
+  WARNING
+  CONTENT_REMOVED
+  USER_SUSPENDED
+  USER_BANNED
+  NO_ACTION
+}
+
+model Friendship {
+  id          String           @id @default(uuid()) @db.Uuid
+  requesterId String           @db.Uuid
+  addresseeId String           @db.Uuid
+  status      FriendshipStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requester User @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  addressee User @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([requesterId, addresseeId])
+  @@index([addresseeId, status])
+  @@map("Friendship")
+}
+
+model Group {
+  id          String  @id @default(uuid()) @db.Uuid
+  ownerId     String  @db.Uuid
+  name        String
+  description String?
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  owner       User              @relation(fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  memberships GroupMembership[]
+  discussions Discussion[]
+  challenges  Challenge[]
+
+  @@index([ownerId])
+  @@map("Group")
+}
+
+model GroupMembership {
+  id      String              @id @default(uuid()) @db.Uuid
+  groupId String              @db.Uuid
+  userId  String              @db.Uuid
+  role    GroupMembershipRole @default(MEMBER)
+
+  joinedAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id])
+  user  User  @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@map("GroupMembership")
+}
+
+/// Group or friend challenge — `groupId` null means a direct
+/// friend-to-friend challenge, not tied to any group.
+model Challenge {
+  id          String          @id @default(uuid()) @db.Uuid
+  groupId     String?         @db.Uuid
+  creatorId   String          @db.Uuid
+  metric      MissionMetric
+  targetValue Int
+  status      ChallengeStatus @default(PENDING)
+  startsAt    DateTime
+  endsAt      DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  group        Group?                 @relation(fields: [groupId], references: [id])
+  creator      User                   @relation(fields: [creatorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  participants ChallengeParticipant[]
+
+  @@index([groupId])
+  @@index([creatorId])
+  @@map("Challenge")
+}
+
+model ChallengeParticipant {
+  id          String   @id @default(uuid()) @db.Uuid
+  challengeId String   @db.Uuid
+  userId      String   @db.Uuid
+  progress    Int      @default(0)
+  joinedAt    DateTime @default(now())
+
+  challenge Challenge @relation(fields: [challengeId], references: [id])
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([challengeId, userId])
+  @@map("ChallengeParticipant")
+}
+
+/// Top-level topic/thread container — nullable `groupId` means a global,
+/// public discussion not scoped to any group.
+model Discussion {
+  id       String  @id @default(uuid()) @db.Uuid
+  groupId  String? @db.Uuid
+  authorId String  @db.Uuid
+  title    String
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  group  Group? @relation(fields: [groupId], references: [id])
+  author User   @relation(fields: [authorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  posts  Post[]
+
+  @@index([groupId])
+  @@index([authorId])
+  @@map("Discussion")
+}
+
+model Post {
+  id           String @id @default(uuid()) @db.Uuid
+  discussionId String @db.Uuid
+  authorId     String @db.Uuid
+  content      String @db.Text
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  discussion Discussion @relation(fields: [discussionId], references: [id])
+  author     User       @relation(fields: [authorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  comments   Comment[]
+
+  @@index([discussionId])
+  @@index([authorId])
+  @@map("Post")
+}
+
+model Comment {
+  id       String @id @default(uuid()) @db.Uuid
+  postId   String @db.Uuid
+  authorId String @db.Uuid
+  content  String @db.Text
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  post   Post @relation(fields: [postId], references: [id])
+  author User @relation(fields: [authorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([postId])
+  @@index([authorId])
+  @@map("Comment")
+}
+
+/// User-submitted report — feeds the `community.content.reported` domain
+/// event (EVENT_ARCHITECTURE.md, SECURITY.md §8). `targetId` has no DB-level
+/// FK — see this file's header comment.
+model ContentReport {
+  id         String               @id @default(uuid()) @db.Uuid
+  reporterId String               @db.Uuid
+  targetType ModerationTargetType
+  targetId   String               @db.Uuid
+  reason     String
+  status     ContentReportStatus  @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reporter          User               @relation(fields: [reporterId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  moderationActions ModerationAction[]
+
+  @@index([reporterId])
+  @@index([targetType, targetId])
+  @@index([status])
+  @@map("ContentReport")
+}
+
+/// The resulting moderation decision — `contentReportId` is nullable
+/// since an action can also originate from proactive automated moderation
+/// (SECURITY.md §8), not only a user report; `moderatorId` is nullable for
+/// the same reason (an automated action has no human moderator).
+model ModerationAction {
+  id              String               @id @default(uuid()) @db.Uuid
+  contentReportId String?              @db.Uuid
+  moderatorId     String?              @db.Uuid
+  targetType      ModerationTargetType
+  targetId        String               @db.Uuid
+  actionType      ModerationActionType
+  reason          String
+
+  createdAt DateTime @default(now())
+
+  contentReport ContentReport? @relation(fields: [contentReportId], references: [id])
+  moderator     User?          @relation(fields: [moderatorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([contentReportId])
+  @@index([targetType, targetId])
+  @@map("ModerationAction")
+}

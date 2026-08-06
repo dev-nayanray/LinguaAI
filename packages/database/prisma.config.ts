@@ -25,5 +25,10 @@ export default defineConfig({
   // 23 of E2's migrations applied, until this was added).
   migrations: {
     path: 'migrations',
+    // E4 T12 — replaces the deprecated `package.json#prisma.seed` field.
+    // Deliberately not run automatically by `migrate deploy`/`db:migrate:
+    // deploy` (T11's migration dry-run gate stays a pure schema-
+    // correctness check) — invoked explicitly via `pnpm run db:seed`.
+    seed: 'tsx scripts/seed.ts',
   },
 });

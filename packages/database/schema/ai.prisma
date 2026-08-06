@@ -1,0 +1,274 @@
+// E4 T5 — AI teacher & conversation domain (DATABASE.md §2.5/§5, docs/epics/
+// E4-database-schema-core-data-layer.md §5/§6.3/§6.4/§6.5/§9).
+//
+// The domain E4's own task sequence names as the one that must genuinely
+// exercise all three of T1's cross-cutting mechanics for real, not as a
+// proof-of-concept: AIMessage is range-partitioned by month (ADR-028,
+// pg_partman) and field-level encrypted on `content` (ADR-029, a Prisma
+// Client Extension in ../src/index.ts); AIMemoryEntry/KnowledgeBaseEntry
+// carry real pgvector HNSW-indexed embedding columns (§6.3).
+//
+// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy, no
+// organizationId column on anything here.
+//
+// Cross-domain references (`userId`/`languageId`) are real Prisma
+// `@relation` fields, with matching back-relation arrays on
+// identity.prisma's User and content.prisma's Language — see
+// identity.prisma's User model for why (a real, empirically-confirmed
+// finding from earlier in this same task: a plain scalar + manual
+// migration-SQL FK does not survive the next `prisma migrate dev` run
+// from any domain). `AIMessage.sessionId` is likewise a real relation to
+// AIAgentSession — despite AIMessage itself being partitioned (see its
+// own comment), that only constrains what can reference AIMessage's own
+// (composite) primary key, not what AIMessage references on a
+// non-partitioned table with a normal single-column key.
+//
+// FLAGGED GAP (not silently resolved): DATABASE.md §2.5 describes
+// PronunciationScore as "tied to an AIMessage or a dedicated Pronunciation
+// Lab attempt," but no "Pronunciation Lab attempt" entity exists anywhere
+// in DATABASE.md's domain-by-domain list (§2.1-§2.11) — that table has
+// never been designed. PronunciationScore below models this as a
+// polymorphic (sourceType, sourceId) pointer with no DB-level FK (same
+// shape as T2's ContentVersion, for the same structural reason: the
+// pointed-to table varies, and one of the two variants doesn't exist yet
+// to reference; separately, AIMessage's composite primary key would also
+// require a denormalized createdAt column here to form a real FK, which
+// no current need justifies adding speculatively). Whichever future epic
+// designs the real Pronunciation Lab module owns closing this gap for
+// real, not this schema.
+//
+// PROVISIONAL PARAMETER (not silently decided): DATABASE.md §4 and this
+// epic's own §6.3 are explicit that embedding dimensionality is
+// AI_SYSTEM.md/AI_GOVERNANCE.md's decision, "consumed here as a
+// parameter, not decided here" — and neither of those documents pins a
+// concrete embedding model or dimension anywhere today (confirmed by
+// direct search: `embeddingModelVersion` is a tracked field, not yet a
+// tracked value). `vector(1536)` below (OpenAI text-embedding-3-small /
+// ada-002's dimension — the most common default) is used as a real,
+// working placeholder so this domain's schema is genuinely functional
+// today, not as a claim that this is the decided production model.
+// Changing it later is a real re-embedding migration — a cost DATABASE.md
+// §4 already names as inherent to any dimension choice, not specific to
+// picking wrong here. Flagged in E4's risk register (§11) as a real open
+// item for an AI_SYSTEM.md/AI_GOVERNANCE.md ADR before an AI-facing epic
+// (E5+) starts writing real embeddings against this column.
+
+enum OrchestratorAgentPersona {
+  PERSONAL_LANGUAGE_TEACHER
+  CONVERSATION_PARTNER
+  VOCABULARY_COACH
+  WRITING_COACH
+  EXAM_COACH
+}
+
+enum AgentSessionStatus {
+  ACTIVE
+  ENDED
+  ABANDONED
+}
+
+enum AIMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum MemoryCategory {
+  MISTAKE
+  INTEREST
+  GOAL
+  OTHER
+}
+
+enum KnowledgeBaseCategory {
+  CEFR_DESCRIPTOR
+  GRAMMAR_REFERENCE
+  EXAM_RUBRIC
+  OTHER
+}
+
+enum PronunciationScoreSource {
+  AI_MESSAGE
+  PRONUNCIATION_LAB_ATTEMPT
+}
+
+/// Envelope-encryption key registry (ADR-029) — not a DATABASE.md-named
+/// entity, added here to support real KMS-wrapped data keys for
+/// AIMessage.content. `wrappedKey` is the provider's encrypted form only;
+/// the decrypted data key is never persisted, only cached in memory
+/// (packages/database/src/encryption/ai-message-cipher.ts).
+model EncryptionDataKey {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// e.g. "ai_message_content" — scoped per column/purpose so this table can be reused if another field-level-encrypted column is added later without a schema change.
+  purpose String
+
+  wrappedKey String  @db.Text
+  kmsKeyId   String?
+  /// Which DataKeyProvider produced this wrapping ("AWS_KMS" | "LOCAL_STUB") — audit/debugging only, not read by decrypt logic (the configured provider, an env-level decision, is what actually runs).
+  provider   String
+
+  createdAt DateTime  @default(now())
+  /// Null = active (new encryptions use this key). Set on rotation; retired keys are kept forever so historical rows stay decryptable.
+  retiredAt DateTime?
+
+  @@index([purpose, retiredAt])
+  @@map("EncryptionDataKey")
+}
+
+model AIAgentSession {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId     String @db.Uuid
+  languageId String @db.Uuid
+
+  orchestratorAgent     OrchestratorAgentPersona
+  /// Specialist tool invocations during this session (Grammar/Pronunciation Coach critiques) — AI_SYSTEM.md §3. Structured, auditable; not itself a relation since specialists don't own rows here, they return critique objects the Orchestrator consumes.
+  specialistInvocations Json?
+  status                AgentSessionStatus       @default(ACTIVE)
+  startedAt             DateTime                 @default(now())
+  endedAt               DateTime?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language      Language       @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  messages      AIMessage[]
+  fluencyScores FluencyScore[]
+
+  @@index([userId, startedAt])
+  @@index([languageId])
+  @@map("AIAgentSession")
+}
+
+/// Range-partitioned by month (createdAt) via pg_partman (ADR-028) — see
+/// this domain's migration for the hand-authored PARTITION BY / initial
+/// partitions / partman.create_parent() call Prisma's schema language has
+/// no native representation for. Because Postgres requires a partitioned
+/// table's primary key to include the partition key, `id` alone is not
+/// unique across partitions — the real primary key is (id, createdAt).
+///
+/// `content` holds ciphertext only — see the Prisma Client Extension in
+/// ../src/index.ts (ADR-029) and ../src/encryption/. Every consumer of the
+/// shared Prisma client gets transparent encrypt-on-write/decrypt-on-read;
+/// a raw `$queryRaw` deliberately bypasses the extension (used by this
+/// domain's own verification script to prove the on-disk value really is
+/// ciphertext, not merely that reads work).
+model AIMessage {
+  id String @default(uuid()) @db.Uuid
+
+  sessionId String @db.Uuid
+
+  role          AIMessageRole
+  content       String        @db.Text
+  audioUrl      String?
+  latencyMs     Int?
+  promptVersion String?
+  modelId       String?
+  createdAt     DateTime      @default(now())
+
+  session AIAgentSession @relation(fields: [sessionId], references: [id])
+
+  @@id([id, createdAt])
+  @@index([sessionId, createdAt])
+  @@map("AIMessage")
+}
+
+/// Durable, vector-indexed learner memory (AI_SYSTEM.md §5) — distinct
+/// from KnowledgeBaseEntry: this answers "what do we know about this
+/// specific learner," never merged with the shared knowledge base even
+/// though both use pgvector (AI_SYSTEM.md §4).
+model AIMemoryEntry {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId     String @db.Uuid
+  languageId String @db.Uuid
+
+  category              MemoryCategory
+  fact                  String
+  /// Unsupported — Prisma has no native vector type (§6.3); see this domain's migration for the raw-SQL column + HNSW index. Provisional dimension — see this file's header comment.
+  embedding             Unsupported("vector(1536)")?
+  /// Pins the embedding model used (AI_SYSTEM.md §6/§11, AI_GOVERNANCE.md §4) — a model change requires an explicit, tracked re-embedding migration, never silent drift.
+  embeddingModelVersion String
+
+  confidence       Float    @default(1.0)
+  lastReinforcedAt DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language Language @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([userId, languageId])
+  @@map("AIMemoryEntry")
+}
+
+/// Curated, versioned RAG grounding content (ADR-008, AI_GOVERNANCE.md
+/// §4) — CEFR descriptors, grammar reference, exam rubrics. Vector-indexed
+/// like AIMemoryEntry but a distinct collection, per AI_SYSTEM.md §4's own
+/// "never merged" rule.
+model KnowledgeBaseEntry {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Nullable — some entries (e.g. a CEFR descriptor) are language-agnostic; others (grammar reference) are language-specific.
+  languageId String? @db.Uuid
+
+  category              KnowledgeBaseCategory
+  title                 String
+  content               String                       @db.Text
+  /// Unsupported — see AIMemoryEntry's own comment; same provisional dimension.
+  embedding             Unsupported("vector(1536)")?
+  embeddingModelVersion String
+  /// Independent of embeddingModelVersion and prompt version (AI_GOVERNANCE.md §4) — any of the three can change without implying the others changed.
+  knowledgeBaseVersion  String
+  linguistSignOffBy     String?
+  linguistSignOffAt     DateTime?
+  isActive              Boolean                      @default(true)
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
+
+  language     Language?                       @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  examPrograms ExamProgramKnowledgeBaseEntry[]
+
+  @@index([languageId, category, isActive])
+  @@map("KnowledgeBaseEntry")
+}
+
+/// Phoneme-level scoring. Polymorphic (sourceType, sourceId) instead of a
+/// Prisma relation to AIMessage — see this file's header comment's
+/// flagged gap for the full reasoning (partitioned composite key +
+/// missing Pronunciation Lab table).
+model PronunciationScore {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+
+  sourceType PronunciationScoreSource
+  sourceId   String                   @db.Uuid
+
+  phonemeScores Json
+  overallScore  Float
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([sourceType, sourceId])
+  @@map("PronunciationScore")
+}
+
+/// Session-level speaking-practice scoring — ties to AIAgentSession (not
+/// partitioned), a normal same-file Prisma relation.
+model FluencyScore {
+  id        String @id @default(uuid()) @db.Uuid
+  sessionId String @db.Uuid
+
+  overallScore    Float
+  /// e.g. {fluency, coherence, pronunciation, grammar} — exact rubric is AI_GOVERNANCE.md's concern, this column only stores the shape.
+  componentScores Json
+  createdAt       DateTime @default(now())
+
+  session AIAgentSession @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId])
+  @@map("FluencyScore")
+}

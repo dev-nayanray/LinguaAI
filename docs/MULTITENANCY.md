@@ -41,4 +41,4 @@ Schema reserves an `Organization.dataRegion` field (nullable, defaulting to the 
 
 ## 6. Testing requirement
 
-Per TESTING.md §5, every PR that adds a tenant-scoped table must add: (a) the RLS policy in the same migration, (b) an application-layer filter, and (c) a cross-tenant-leak integration test — CI treats a tenant-scoped table without an accompanying RLS policy as a failing check (enforced via a schema-lint script introduced in Epic E1/E22).
+Per TESTING.md §5, every PR that adds a tenant-scoped table must add: (a) the RLS policy in the same migration, (b) an application-layer filter, and (c) a cross-tenant-leak integration test — CI treats a tenant-scoped table without an accompanying RLS policy as a failing check. An **interim** version of this check now exists (`packages/database/scripts/lint-rls-policies.ts`, wired into CI, Epic E4 T11 — docs/epics/E4-database-schema-core-data-layer.md §10 resolved item 1): static analysis over migration SQL text, not a full SQL parser. E1 never built the originally-planned schema-lint script; E22 (Security Hardening & Compliance Gate) is still the owner of the permanent, fully-general replacement.

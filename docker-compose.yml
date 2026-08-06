@@ -6,7 +6,10 @@ networks:
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    build:
+      context: ./infrastructure/docker/postgres
+      dockerfile: Dockerfile
+    image: linguaai-postgres:local
     container_name: linguaai-postgres
     restart: unless-stopped
     networks: [linguaai-local]

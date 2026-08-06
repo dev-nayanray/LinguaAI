@@ -1,0 +1,126 @@
+// E4 T4 — Vocabulary intelligence domain (DATABASE.md §2.4, docs/epics/
+// E4-database-schema-core-data-layer.md §5/§9).
+//
+// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy, no
+// organizationId column on anything here.
+//
+// Cross-domain references (`userId`/`languageId`) are real Prisma
+// `@relation` fields, with matching back-relation arrays on
+// identity.prisma's User and content.prisma's Language. An earlier
+// version of this file used plain scalar columns + a manual migration-SQL
+// FK instead — corrected in E4 T5 after discovering, against the real
+// database, that the manual-FK approach doesn't survive even one further
+// `prisma migrate dev` run from any domain (Prisma's diff engine has no
+// record the constraint should exist and silently drops it as drift; this
+// is exactly how T5's own migration generation would have dropped this
+// file's four FKs). See identity.prisma's User model for the full
+// explanation. Relations within this file (e.g. UserVocabulary →
+// VocabularyItem) were already normal Prisma `@relation`s.
+
+enum PartOfSpeech {
+  NOUN
+  VERB
+  ADJECTIVE
+  ADVERB
+  PRONOUN
+  PREPOSITION
+  CONJUNCTION
+  INTERJECTION
+  PHRASE
+  OTHER
+}
+
+enum VocabularySource {
+  READING
+  CAMERA_TRANSLATION
+  CONVERSATION
+  MANUAL
+  OTHER
+}
+
+/// Curated, shared vocabulary catalog — not per-user. DATABASE.md §2.4:
+/// "a word/phrase in a target language with translations, part of
+/// speech, audio, example sentences."
+model VocabularyItem {
+  id String @id @default(uuid()) @db.Uuid
+
+  languageId String @db.Uuid
+
+  term             String
+  partOfSpeech     PartOfSpeech
+  /// Keyed by target UI-language code (e.g. {"en": "hello", "fr": "bonjour"}) — a user may see this vocabulary item translated into whichever UI language they're using, not just one fixed language.
+  translations     Json
+  audioUrl         String?
+  /// Array of {sentence, translation?} objects — structured, never raw HTML.
+  exampleSentences Json?
+  deletedAt        DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  language           Language             @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  userVocabulary     UserVocabulary[]
+  personalDictionary PersonalDictionary[]
+
+  @@index([languageId])
+  @@map("VocabularyItem")
+}
+
+/// Per-user SRS (spaced-repetition) state for a VocabularyItem —
+/// SM-2-derivative algorithm fields (DATABASE.md §2.4). AI-assisted
+/// example generation referenced there is AI_SYSTEM.md's concern, not
+/// this schema's.
+model UserVocabulary {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String @db.Uuid
+
+  vocabularyItemId String @db.Uuid
+
+  /// SM-2 standard starting ease factor.
+  easeFactor     Float     @default(2.5)
+  intervalDays   Int       @default(0)
+  repetitions    Int       @default(0)
+  nextReviewAt   DateTime  @default(now())
+  lastReviewedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  vocabularyItem VocabularyItem @relation(fields: [vocabularyItemId], references: [id])
+
+  @@unique([userId, vocabularyItemId])
+  @@index([userId, nextReviewAt])
+  @@map("UserVocabulary")
+}
+
+/// User-saved words/phrases from any module (DATABASE.md §2.4) — a
+/// lightweight bookmark, not necessarily matching a curated
+/// VocabularyItem (camera translation or conversation can surface a term
+/// the catalog has never seen). `vocabularyItemId` links it when a match
+/// exists; the term/translation are always stored directly regardless,
+/// so this table never depends on a catalog entry existing.
+model PersonalDictionary {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String @db.Uuid
+
+  languageId String @db.Uuid
+
+  term        String
+  translation String?
+  source      VocabularySource
+  notes       String?
+
+  vocabularyItemId String?         @db.Uuid
+  vocabularyItem   VocabularyItem? @relation(fields: [vocabularyItemId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language Language @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([userId, languageId])
+  @@index([vocabularyItemId])
+  @@map("PersonalDictionary")
+}
