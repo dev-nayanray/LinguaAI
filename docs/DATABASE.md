@@ -37,6 +37,8 @@ The schema is organized into the following domains. Each maps to one or more Pri
 
 ### 2.2 Assessment & learning plan
 
+**Status: Implemented (schema only) — Epic E4 T3** (docs/epics/E4-database-schema-core-data-layer.md). Schema/migration exist in `packages/database`; the application logic that runs assessments and generates plans is separate, later epic scope (E6/E7).
+
 - `AssessmentAttempt` — one per placement/re-assessment run, status, started/completed timestamps.
 - `AssessmentResponse` — individual item responses within an attempt, per skill (reading/writing/listening/speaking/vocabulary/grammar).
 - `ProficiencyLevel` — **current** CEFR level per user, per language, per skill, with confidence score and last-updated source (assessment vs. inferred from ongoing performance).
