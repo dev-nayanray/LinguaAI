@@ -305,7 +305,7 @@ Format: Context → Decision → Consequences → Status.
 **Consequences:** If AI Engineering's own evaluation later prefers a different embedding model for retrieval-quality reasons, that is a real, tracked re-embedding migration (DATABASE.md §4's own named cost), not a surprise this ADR pretends won't happen — it only avoids paying that cost today without a concrete quality reason to.
 **Security implications:** None beyond what pgvector/HNSW already carry (ADR-004).
 **Reversibility:** Medium — reversible, but a real re-embedding migration each time, the same cost regardless of which model was picked first.
-**Status:** Proposed.
+**Status:** Accepted (2026-08-07) — implemented in E5 T2 (`services/ai-engine/src/gateway/embedding.constants.ts`; `RouterService.embed()` pins the model and rejects any embedding response whose dimension doesn't match `AI_EMBEDDING_DIMENSIONS`, rather than trusting every future caller to supply the right model string), by the same explicit user direction covering E5 T1 (not an independent Architecture Gate review).
 
 ### ADR-032 — Specialist trigger-condition catalog and tool-registry versioning scheme
 
@@ -383,7 +383,7 @@ Format: Context → Decision → Consequences → Status.
 | ADR-028 | `pg_partman` for time-based partition maintenance                             | Accepted |
 | ADR-029 | `AIMessage.content` field-level encryption via a Prisma Client Extension      | Accepted |
 | ADR-030 | Cross-domain FKs must be real Prisma `@relation`s, not plain scalars          | Accepted |
-| ADR-031 | Pin AI embedding model to OpenAI `text-embedding-3-small` (1536-dim)          | Proposed |
+| ADR-031 | Pin AI embedding model to OpenAI `text-embedding-3-small` (1536-dim)          | Accepted |
 | ADR-032 | Specialist trigger-condition catalog + tool-registry versioning scheme        | Proposed |
 | ADR-033 | `apps/api`↔`ai-engine` contract: REST + `@nestjs/swagger`, SSE streaming      | Proposed |
 | ADR-034 | AI cost circuit breaker: Redis sliding-window counter, 3-stage breach ladder  | Proposed |

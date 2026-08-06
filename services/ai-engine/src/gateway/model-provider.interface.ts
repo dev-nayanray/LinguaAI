@@ -57,8 +57,8 @@ export interface EmbedResponse {
  * implement `embed()` would mean either a fake stub that throws at
  * runtime for a call that was always structurally impossible, or an
  * awkward optional method every generate-only caller has to null-check.
- * ADR-031 already settled there is exactly one embedding provider
- * (OpenAI `text-embedding-3-small`) — no failover story for embeddings
+ * ADR-031 already settled there is exactly one embedding provider and
+ * model (`embedding.constants.ts`) — no failover story for embeddings
  * exists at this task's scope, so the Router's `embed()` talks to that
  * one `EmbeddingProvider` directly, not through provider selection.
  */
