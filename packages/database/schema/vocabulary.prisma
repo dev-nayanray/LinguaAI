@@ -4,10 +4,18 @@
 // Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy, no
 // organizationId column on anything here.
 //
-// Same cross-domain-reference rule as T2/T3: `userId`/`languageId` are
-// plain scalars + a manual FK in this domain's companion raw-SQL
-// migration, never a Prisma `@relation` back-coupling another domain's
-// schema file. Relations within this file use normal Prisma `@relation`s.
+// Cross-domain references (`userId`/`languageId`) are real Prisma
+// `@relation` fields, with matching back-relation arrays on
+// identity.prisma's User and content.prisma's Language. An earlier
+// version of this file used plain scalar columns + a manual migration-SQL
+// FK instead — corrected in E4 T5 after discovering, against the real
+// database, that the manual-FK approach doesn't survive even one further
+// `prisma migrate dev` run from any domain (Prisma's diff engine has no
+// record the constraint should exist and silently drops it as drift; this
+// is exactly how T5's own migration generation would have dropped this
+// file's four FKs). See identity.prisma's User model for the full
+// explanation. Relations within this file (e.g. UserVocabulary →
+// VocabularyItem) were already normal Prisma `@relation`s.
 
 enum PartOfSpeech {
   NOUN
@@ -36,7 +44,6 @@ enum VocabularySource {
 model VocabularyItem {
   id String @id @default(uuid()) @db.Uuid
 
-  /// Cross-domain — see this file's header comment. References content.prisma's Language.
   languageId String @db.Uuid
 
   term             String
@@ -50,6 +57,7 @@ model VocabularyItem {
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
+  language           Language             @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   userVocabulary     UserVocabulary[]
   personalDictionary PersonalDictionary[]
 
@@ -77,6 +85,7 @@ model UserVocabulary {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  user           User           @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   vocabularyItem VocabularyItem @relation(fields: [vocabularyItemId], references: [id])
 
   @@unique([userId, vocabularyItemId])
@@ -95,7 +104,6 @@ model PersonalDictionary {
 
   userId String @db.Uuid
 
-  /// Cross-domain — see this file's header comment. References content.prisma's Language.
   languageId String @db.Uuid
 
   term        String
@@ -108,6 +116,9 @@ model PersonalDictionary {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language Language @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@index([userId, languageId])
   @@index([vocabularyItemId])

@@ -5,17 +5,16 @@
 // organizationId column on anything here.
 //
 // Cross-domain references (`userId` → identity.prisma's User, `languageId`
-// → content.prisma's Language) are deliberately plain scalar columns, not
-// Prisma `@relation` fields — same reasoning as T2's own header comment:
-// a `@relation` would require a matching back-relation array added to the
-// *other* domain's schema file, coupling every future domain that
-// references User/Language to editing files it doesn't own. Real
-// referential integrity is still enforced at the database level via
-// FOREIGN KEY constraints added by hand in this domain's companion raw-SQL
-// migration. Relations *within* this same file (e.g. AssessmentResponse →
-// AssessmentAttempt) use normal Prisma `@relation`s — the rule is "same
-// file, real relation; different file, scalar + manual FK," applied
-// consistently since T2.
+// → content.prisma's Language) are real Prisma `@relation` fields, with
+// matching back-relation arrays on those models. An earlier version of
+// this file used plain scalar columns + a manual migration-SQL FK instead,
+// specifically to avoid coupling this file to identity.prisma/
+// content.prisma — corrected in E4 T5 after discovering, against the real
+// database, that the manual-FK approach doesn't survive even one further
+// `prisma migrate dev` run from any domain (Prisma's diff engine has no
+// record the constraint should exist and silently drops it as drift; this
+// is exactly how T4's migration silently dropped nine of this file's own
+// FKs). See identity.prisma's User model for the full explanation.
 
 enum Skill {
   READING
@@ -45,7 +44,6 @@ enum ProficiencySource {
 model AssessmentAttempt {
   id         String @id @default(uuid()) @db.Uuid
   userId     String @db.Uuid
-  /// Cross-domain — see this file's header comment. References content.prisma's Language.
   languageId String @db.Uuid
 
   type        AssessmentType
@@ -55,6 +53,8 @@ model AssessmentAttempt {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language  Language             @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   responses AssessmentResponse[]
 
   @@index([userId, createdAt])
@@ -97,7 +97,9 @@ model ProficiencyLevel {
   createdAt  DateTime          @default(now())
   updatedAt  DateTime          @updatedAt
 
-  history ProficiencyLevelHistory[]
+  user     User                      @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language Language                  @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  history  ProficiencyLevelHistory[]
 
   @@unique([userId, languageId, skill])
   @@index([userId, languageId])
@@ -122,6 +124,8 @@ model ProficiencyLevelHistory {
   recordedAt DateTime          @default(now())
 
   proficiencyLevel ProficiencyLevel @relation(fields: [proficiencyLevelId], references: [id])
+  user             User             @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language         Language         @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@index([userId, languageId, skill])
   @@index([proficiencyLevelId])
@@ -142,6 +146,8 @@ model LearningPlan {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
+  user       User        @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language   Language    @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   dailyGoals DailyGoal[]
 
   @@index([userId, languageId])
@@ -163,6 +169,7 @@ model DailyGoal {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
+  user         User          @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   learningPlan LearningPlan? @relation(fields: [learningPlanId], references: [id])
 
   @@unique([userId, date])

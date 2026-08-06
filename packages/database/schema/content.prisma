@@ -6,14 +6,17 @@
 // column on anything here; this is shared reference/content data, not
 // per-organization data.
 //
-// Cross-domain references to `User` (e.g. ExerciseAttempt.userId) are
-// deliberately plain scalar columns, not Prisma `@relation` fields — a
-// `@relation` would require a matching back-relation array added to
-// `identity.prisma` (E2's file), which would couple every future content-
-// domain migration to editing E2's schema file. Referential integrity is
-// still enforced at the database level via a real FOREIGN KEY constraint
-// added in this domain's companion raw-SQL migration (the same "Prisma
-// schema + raw SQL" pattern T1 established for RLS/vector), not skipped.
+// Cross-domain references to `User` (e.g. ExerciseAttempt.userId) are real
+// Prisma `@relation` fields, with the matching back-relation array on
+// `identity.prisma`'s `User` model. An earlier version of this file used a
+// plain scalar + manual migration-SQL FK instead, specifically to avoid
+// that coupling — corrected in E4 T5 after discovering, against the real
+// database, that the manual-FK approach doesn't survive even one further
+// `prisma migrate dev` run from any domain (Prisma's diff engine has no
+// record the constraint should exist and silently drops it as drift; this
+// is exactly how T3's migration silently dropped this file's own
+// ExerciseAttempt FK). See identity.prisma's User model for the full
+// explanation.
 
 enum ScriptDirection {
   LTR
@@ -70,6 +73,19 @@ model Language {
   updatedAt           DateTime        @updatedAt
 
   courses Course[]
+
+  // E4 cross-domain back-relations (T3-T5) -- see identity.prisma's User
+  // model for the full explanation of why these are real @relations, not
+  // plain scalars.
+  assessmentAttempts        AssessmentAttempt[]
+  proficiencyLevels         ProficiencyLevel[]
+  proficiencyLevelHistories ProficiencyLevelHistory[]
+  learningPlans             LearningPlan[]
+  vocabularyItems           VocabularyItem[]
+  personalDictionary        PersonalDictionary[]
+  aiAgentSessions           AIAgentSession[]
+  aiMemoryEntries           AIMemoryEntry[]
+  knowledgeBaseEntries      KnowledgeBaseEntry[]
 
   @@map("Language")
 }
@@ -209,7 +225,6 @@ model Exercise {
 
 model ExerciseAttempt {
   id     String @id @default(uuid()) @db.Uuid
-  /// Plain scalar, no Prisma @relation — see this file's own header comment.
   userId String @db.Uuid
 
   exerciseId       String  @db.Uuid
@@ -224,6 +239,7 @@ model ExerciseAttempt {
   score     Float?
   createdAt DateTime @default(now())
 
+  user           User            @relation(fields: [userId], references: [id])
   exercise       Exercise        @relation(fields: [exerciseId], references: [id])
   contentVersion ContentVersion? @relation(fields: [contentVersionId], references: [id])
 

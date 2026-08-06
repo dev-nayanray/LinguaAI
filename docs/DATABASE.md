@@ -71,12 +71,15 @@ Hierarchy: `Language → Course → Level → Unit → Lesson → Activity → E
 
 ### 2.5 AI teacher & conversation (modules 4, 7, 8, 29)
 
-- `AIAgentSession` — a session with a given agent persona; `orchestratorAgent` field records which persona held the Orchestrator role for the session (AI_GOVERNANCE.md §2, ADR-007), and `specialistInvocations` (JSON) records any tool-called specialist critiques for auditability.
-- `AIMessage` — individual turns within a session (role, content, audio reference, latency metadata, `promptVersion`, `modelId`). See §5 Conversation lifecycle for this table's dedicated retention/partitioning/encryption treatment.
-- `AIMemoryEntry` — durable, embedded memory facts about a learner (recurring mistakes, interests, goals) referenced by `ai-engine`; vector-indexed via pgvector; `embeddingModelVersion` field _(added)_ pins the embedding model used, per AI_SYSTEM.md §11/AI_GOVERNANCE.md §4 — a model change requires an explicit re-embedding migration, never silent drift. `confidence`/`lastReinforcedAt` fields _(added)_ support the memory-decay model (AI_SYSTEM.md §4).
-- `KnowledgeBaseEntry` _(added)_ — the curated, versioned RAG grounding content (CEFR descriptors, grammar reference, exam rubrics — ADR-008, AI_GOVERNANCE.md §4), vector-indexed like `AIMemoryEntry` but in a separate collection with its own `knowledgeBaseVersion` and linguist-sign-off metadata.
-- `PronunciationScore` — phoneme-level scoring results tied to an `AIMessage` or a dedicated Pronunciation Lab attempt.
+**Status: Implemented (schema only) — Epic E4 T5** (docs/epics/E4-database-schema-core-data-layer.md). Schema/migration exist in `packages/database`; the application logic that runs sessions/RAG/scoring is separate, later epic scope (E5+).
+
+- `AIAgentSession` — a session with a given agent persona; `orchestratorAgent` field records which persona held the Orchestrator role for the session (AI_GOVERNANCE.md §2, ADR-007 — restricted to the five personas AI_SYSTEM.md §3 actually lists as Orchestrator-capable: Personal Language Teacher, Conversation Partner, Vocabulary Coach, Writing Coach, Exam Coach; Grammar/Pronunciation Coach are specialist-tool-only in that same table), and `specialistInvocations` (JSON) records any tool-called specialist critiques for auditability.
+- `AIMessage` — individual turns within a session (role, content, audio reference, latency metadata, `promptVersion`, `modelId`). See §5 Conversation lifecycle for this table's dedicated retention/partitioning/encryption treatment — all three genuinely implemented in T5 (range-partitioned via pg_partman/ADR-028, `content` field-level encrypted via a Prisma Client Extension/ADR-029), not deferred.
+- `AIMemoryEntry` — durable, embedded memory facts about a learner (recurring mistakes, interests, goals) referenced by `ai-engine`; vector-indexed via pgvector (real HNSW index, cosine distance); `embeddingModelVersion` field _(added)_ pins the embedding model used, per AI_SYSTEM.md §11/AI_GOVERNANCE.md §4 — a model change requires an explicit re-embedding migration, never silent drift. `confidence`/`lastReinforcedAt` fields _(added)_ support the memory-decay model (AI_SYSTEM.md §4). **Provisional:** `embedding` is `vector(1536)` — no AI_SYSTEM.md/AI_GOVERNANCE.md ADR pins a concrete embedding model/dimension yet (confirmed by direct search); flagged in the E4 risk register as an open item before an AI-facing epic writes real embeddings against this column.
+- `KnowledgeBaseEntry` _(added)_ — the curated, versioned RAG grounding content (CEFR descriptors, grammar reference, exam rubrics — ADR-008, AI_GOVERNANCE.md §4), vector-indexed like `AIMemoryEntry` but in a separate collection with its own `knowledgeBaseVersion` and linguist-sign-off metadata. Same provisional embedding dimension as `AIMemoryEntry`.
+- `PronunciationScore` — phoneme-level scoring results tied to an `AIMessage` or a dedicated Pronunciation Lab attempt. **Flagged gap:** no "Pronunciation Lab attempt" entity exists anywhere in this document's domain list — modeled in T5 as a polymorphic `(sourceType, sourceId)` pointer with no DB-level FK; whichever future epic designs the real Pronunciation Lab module owns closing this for real.
 - `FluencyScore` — session-level scoring for speaking practice.
+- `EncryptionDataKey` _(added)_ — envelope-encryption key registry supporting `AIMessage.content`'s field-level encryption (ADR-029); not itself a DATABASE.md-named domain entity, added as T5's own supporting infrastructure.
 
 ### 2.6 Gamification (module 15)
 
@@ -165,10 +168,10 @@ Full field-level schema is authored directly in `packages/database/schema.prisma
 
 `AIMessage` is the largest-volume, most PII-sensitive table in the system (raw learner conversation transcripts) and the Architecture Review specifically flagged it as underspecified relative to that risk. It now has its own explicit policy, distinct from the generic PII statement in §7:
 
-- **Partitioning**: range-partitioned by month, same pattern as `LearningEvent`/`AIUsageLog`.
-- **Encryption**: field-level encryption on the `content` column (not just table/disk-level encryption), keyed via KMS envelope encryption (§7).
-- **Retention**: active partition retained for the product-facing window needed for session history/review (default 12 months — see §6 retention matrix); older partitions are archived, not deleted outright, per §8.
-- **Access**: read access to raw `AIMessage.content` is restricted to the owning user and the serving request path — admin/support tooling accesses a redacted view by default, with full access requiring a logged, justified break-glass action (`AuditLog`).
+- **Partitioning**: range-partitioned by month, same pattern as `LearningEvent`/`AIUsageLog`. **Implemented (E4 T5)** via native Postgres declarative partitioning + `pg_partman` (ADR-028) for ongoing monthly partition creation — not a design intent, a real, verified mechanism.
+- **Encryption**: field-level encryption on the `content` column (not just table/disk-level encryption), keyed via KMS envelope encryption (§7). **Implemented (E4 T5)** via a Prisma Client Extension (ADR-029) with a real `AwsKmsDataKeyProvider` (used in production) and a `LocalStubDataKeyProvider` (dev/CI, no AWS credentials required — env-gated, refuses to run in production). Proven via a raw-SQL bypass confirming the on-disk value is genuine ciphertext, not merely a working decrypted read.
+- **Retention**: active partition retained for the product-facing window needed for session history/review (default 12 months — see §6 retention matrix); older partitions are archived, not deleted outright, per §8. Archival job itself is later, application-layer scope — not built by E4.
+- **Access**: read access to raw `AIMessage.content` is restricted to the owning user and the serving request path — admin/support tooling accesses a redacted view by default, with full access requiring a logged, justified break-glass action (`AuditLog`). **Not yet enforced** — this is an application/API-authorization concern (later epic scope, e.g. E5), not something E4's schema alone can guarantee.
 
 ## 6. Soft delete policy
 

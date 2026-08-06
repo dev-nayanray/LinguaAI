@@ -121,6 +121,32 @@ model User {
   auditLogs                   AuditLog[]
   entitlementChangeLogs       EntitlementChangeLog[]
 
+  // E4 cross-domain back-relations (T2-T5). Required by Prisma for every
+  // `@relation` declared from another domain's schema file -- see this
+  // repo's real, empirically-confirmed finding: a plain scalar column
+  // plus a hand-written migration FK (no Prisma relation) does not
+  // survive the *next* `prisma migrate dev` invocation, from ANY domain,
+  // because Prisma's diff engine has no record the constraint should
+  // exist and silently drops it as drift. T2/T3 briefly used that
+  // pattern; it accumulated silent FK loss (T3's migration dropped T2's
+  // ExerciseAttempt FK, T4's dropped nine of T3's) before being caught
+  // and corrected here. Real `@relation`s are the only mechanism Prisma
+  // persists correctly across future migrations -- the resulting
+  // coupling (this file must gain an array field for every new domain
+  // that references User) is an accepted, understood cost, not an
+  // oversight.
+  exerciseAttempts          ExerciseAttempt[]
+  assessmentAttempts        AssessmentAttempt[]
+  proficiencyLevels         ProficiencyLevel[]
+  proficiencyLevelHistories ProficiencyLevelHistory[]
+  learningPlans             LearningPlan[]
+  dailyGoals                DailyGoal[]
+  userVocabulary            UserVocabulary[]
+  personalDictionary        PersonalDictionary[]
+  aiAgentSessions           AIAgentSession[]
+  aiMemoryEntries           AIMemoryEntry[]
+  pronunciationScores       PronunciationScore[]
+
   @@index([organizationId])
 }
 
