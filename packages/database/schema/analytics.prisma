@@ -1,14 +1,26 @@
 // E4 T10 — Analytics & platform domain (DATABASE.md §2.10, docs/epics/
 // E4-database-schema-core-data-layer.md §5/§9).
 //
-// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy of its own;
-// `LearningEvent.organizationId` is a plain FK into an already-RLS-
-// protected table (same reasoning as T9's `Subscription.organizationId`),
-// not a new tenant-isolation surface.
+// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy, no
+// organizationId column on anything here.
 //
-// Cross-domain references (`userId`, `organizationId`) are real Prisma
-// `@relation` fields, with matching back-relation arrays on
-// identity.prisma's `User`/`Organization` (ADR-030).
+// RETRACTED (T11): `LearningEvent` originally carried its own
+// `organizationId` column, mirroring EVENT_ARCHITECTURE.md §2's event
+// envelope (`tenantId`). T11's own RLS-policy-lint script correctly
+// flagged it as a tenant-scoped column with no RLS policy — surfacing
+// the exact tension §3.3 already reasoned through and the user already
+// confirmed for every other table (duplicating `User.organizationId`
+// creates a drift surface; org-scoped queries should join through
+// `User`, not carry a redundant column). Applying that same,
+// already-confirmed reasoning here rather than adding a bespoke RLS
+// policy or a lint-script exception for one table: the column is
+// removed. An org-scoped analytics query filters via
+// `LearningEvent.userId → User.organizationId`, identical to every other
+// domain in this epic.
+//
+// Cross-domain references (`userId`) are real Prisma `@relation` fields,
+// with matching back-relation arrays on identity.prisma's `User`
+// (ADR-030).
 //
 // `LearningEvent` and `AIUsageLog` reuse T5's partitioning mechanism
 // (native `PARTITION BY RANGE` + `pg_partman.create_parent()`, ADR-028)
@@ -122,22 +134,19 @@ model LearningEvent {
   occurredAt DateTime
   producedBy String
 
-  userId         String? @db.Uuid
-  organizationId String? @db.Uuid
+  userId String? @db.Uuid
 
   /// Event-specific fields (EVENT_ARCHITECTURE.md §2's payload) — structured, shape varies per event type.
   payload Json
 
   createdAt DateTime @default(now())
 
-  user         User?         @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@id([id, createdAt])
   @@index([eventId])
   @@index([userId, createdAt])
   @@index([type, createdAt])
-  @@index([organizationId])
   @@map("LearningEvent")
 }
 

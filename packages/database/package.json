@@ -25,6 +25,8 @@
     "test": "vitest run --coverage",
     "db:generate": "dotenv -e ../../.env -- prisma generate",
     "db:migrate": "dotenv -e ../../.env -- prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "lint:rls": "tsx scripts/lint-rls-policies.ts",
     "bootstrap-admin": "dotenv -e ../../.env -- tsx scripts/bootstrap-admin.ts",
     "clean": "rimraf dist dist-cjs *.tsbuildinfo"
   },

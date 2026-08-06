@@ -90,6 +90,87 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # E4 T11 (interim — MULTITENANCY.md §6, docs/epics/
+      # E4-database-schema-core-data-layer.md §10 resolved item 1): static
+      # analysis over migration SQL only, no database needed. Real gate is
+      # the "database-migrations" job below applying every migration to a
+      # genuinely fresh database — this step just confirms every
+      # tenant-scoped (organizationId-bearing) table found in that history
+      # also has an RLS policy.
+      - name: RLS policy lint
+        run: pnpm --filter @linguaai/database run lint:rls
+
+  # E4 T11: migration dry-run gate — every migration must apply cleanly to
+  # a genuinely fresh database, not just the long-lived local dev database
+  # every migration in this repo has so far only ever been tested against.
+  # Builds the same pgvector+pg_partman image local dev uses
+  # (infrastructure/docker/postgres/Dockerfile), not the bare
+  # pgvector/pgvector:pg16 base image — AIMessage/LearningEvent/AIUsageLog's
+  # partitioning migrations call pg_partman functions that don't exist
+  # without it. Deliberately not a `services:` container: GitHub Actions
+  # starts `services:` before any step runs in the same job, so a locally
+  # built image can't be referenced there — built and run as explicit
+  # `docker` steps instead.
+  database-migrations:
+    name: Database migration dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build local Postgres image (pgvector + pg_partman)
+        run: docker build -t linguaai-postgres:ci ./infrastructure/docker/postgres
+
+      - name: Start a fresh Postgres container
+        run: |
+          docker run -d --name ci-postgres \
+            -e POSTGRES_USER=linguaai \
+            -e POSTGRES_PASSWORD=linguaai_dev_password \
+            -e POSTGRES_DB=linguaai \
+            -p 5432:5432 \
+            linguaai-postgres:ci
+          for i in $(seq 1 30); do
+            docker exec ci-postgres pg_isready -U linguaai && exit 0
+            sleep 2
+          done
+          echo "Postgres did not become ready in time" >&2
+          exit 1
+
+      # Mirrors infrastructure/docker/postgres-init's two init scripts —
+      # those only run on a container's first-ever start against an empty
+      # data directory, which this freshly-created container is, but
+      # replicated explicitly here rather than relying on that timing.
+      - name: Enable required extensions
+        run: |
+          docker exec ci-postgres psql -U linguaai -d linguaai -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          docker exec ci-postgres psql -U linguaai -d linguaai -c "CREATE EXTENSION IF NOT EXISTS citext;"
+          docker exec ci-postgres psql -U linguaai -d linguaai -c "CREATE SCHEMA IF NOT EXISTS partman; CREATE EXTENSION IF NOT EXISTS pg_partman SCHEMA partman;"
+
+      - name: Apply every migration to the fresh database
+        working-directory: packages/database
+        env:
+          DATABASE_URL: postgresql://linguaai:linguaai_dev_password@localhost:5432/linguaai
+        run: pnpm run db:migrate:deploy
+
+      - name: Stop Postgres container
+        if: always()
+        run: docker rm -f ci-postgres || true
+
   # E3 T15: @storybook/test-runner harness (interaction smoke tests +
   # @storybook/addon-a11y's axe checks, wired via preview.tsx's
   # `a11y.test = 'error'`) — a separate job from `ci` above since it needs

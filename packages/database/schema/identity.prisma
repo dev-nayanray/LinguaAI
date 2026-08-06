@@ -412,11 +412,10 @@ model Organization {
   seatCount  Int      @default(0)
   createdAt  DateTime @default(now())
 
-  users          User[]
-  memberships    OrganizationMembership[]
-  auditLogs      AuditLog[]
-  subscriptions  Subscription[]
-  learningEvents LearningEvent[]
+  users         User[]
+  memberships   OrganizationMembership[]
+  auditLogs     AuditLog[]
+  subscriptions Subscription[]
 }
 
 model OrganizationMembership {
