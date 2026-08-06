@@ -25,6 +25,8 @@
     "build-storybook": "storybook build",
     "test-storybook": "test-storybook",
     "test-storybook:ci": "concurrently -k -s first -n \"SB,TEST\" -c \"magenta,blue\" \"pnpm build-storybook --quiet && npx http-server storybook-static --port 6006 --silent\" \"wait-on tcp:6006 && pnpm test-storybook\"",
+    "test-storybook:ci:dark": "cross-env STORYBOOK_THEME=dark concurrently -k -s first -n \"SB,TEST\" -c \"magenta,blue\" \"pnpm build-storybook --quiet && npx http-server storybook-static --port 6006 --silent\" \"wait-on tcp:6006 && pnpm test-storybook\"",
+    "generate:tokens": "node scripts/generate-tokens.mjs",
     "clean": "rimraf storybook-static *.tsbuildinfo"
   },
   "peerDependencies": {
@@ -65,10 +67,12 @@
     "@types/react-dom": "^19.2.3",
     "@vitest/coverage-v8": "^2.1.8",
     "concurrently": "^10.0.4",
+    "cross-env": "^10.1.0",
     "eslint-plugin-storybook": "^10.5.5",
     "http-server": "^14.1.1",
     "jsdom": "^30.0.1",
     "playwright": "^1.62.1",
+    "postcss": "^8.5.25",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "rimraf": "^6.0.0",

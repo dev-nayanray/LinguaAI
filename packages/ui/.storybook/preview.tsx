@@ -34,8 +34,18 @@ const preview: Preview = {
       },
     },
   },
+  // E3 §17's "Accessibility (automated): axe on every story, every theme"
+  // row (T16) — reading `STORYBOOK_THEME` here (Storybook's Vite builder
+  // exposes any `STORYBOOK_`-prefixed environment variable via
+  // `import.meta.env`, the same convention Vite itself uses for `VITE_*`)
+  // lets `test-storybook:ci:dark` (packages/ui/package.json) build a
+  // second Storybook instance that starts every story in dark mode, so
+  // the exact same addon-a11y `test: 'error'` mechanism already covering
+  // light mode runs a second, independent pass against dark — reusing the
+  // one proven a11y mechanism twice, rather than building a second,
+  // bespoke per-story dark-mode toggle inside the test-runner itself.
   initialGlobals: {
-    theme: 'light',
+    theme: import.meta.env.STORYBOOK_THEME === 'dark' ? 'dark' : 'light',
   },
   decorators: [withTheme],
   parameters: {

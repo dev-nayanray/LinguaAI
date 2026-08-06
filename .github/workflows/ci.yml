@@ -95,10 +95,18 @@ jobs:
   # `a11y.test = 'error'`) — a separate job from `ci` above since it needs
   # a Playwright browser instead of jsdom, and only packages/ui has stories
   # today.
+  #
+  # E3 T16 (§17's "Accessibility (automated): axe on every story, every
+  # theme" row) adds the second, dark-mode pass below: `preview.tsx` reads
+  # `STORYBOOK_THEME` (Storybook's own env-var-passthrough convention) to
+  # pick the story's *initial* theme, so `test-storybook:ci:dark` builds a
+  # second Storybook instance that starts every story in dark mode and runs
+  # the identical addon-a11y mechanism against it — the same proven
+  # mechanism run twice, not a second bespoke per-story theme-toggle.
   storybook-tests:
     name: Storybook interaction + a11y tests (packages/ui)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -120,5 +128,8 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --filter @linguaai/ui exec playwright install --with-deps chromium
 
-      - name: Build Storybook, serve it, and run the test-runner against it
+      - name: Build Storybook (light theme), serve it, and run the test-runner against it
         run: pnpm --filter @linguaai/ui test-storybook:ci
+
+      - name: Build Storybook (dark theme), serve it, and run the test-runner against it
+        run: pnpm --filter @linguaai/ui test-storybook:ci:dark
