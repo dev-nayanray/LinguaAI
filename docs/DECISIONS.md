@@ -297,6 +297,56 @@ Format: Context → Decision → Consequences → Status.
 **Reversibility:** Low cost to reverse the specific coupling (removing an array field is a small, mechanical schema change) but the underlying lesson — manual migration-SQL FKs don't survive Prisma's own tooling — is not something a future task should re-litigate without re-deriving this same empirical finding.
 **Status:** Accepted (2026-08-07) — found and fixed during E4 T5 implementation, by the same explicit user direction covering T5 (not an independent Architecture Gate review). Recorded here as what actually happened, matching ADR-025's precedent for this distinction.
 
+### ADR-031 — Pin the AI embedding model to OpenAI `text-embedding-3-small` (1536-dim)
+
+**Context:** E4 T5 shipped `AIMemoryEntry.embedding`/`KnowledgeBaseEntry.embedding` as `vector(1536)`, explicitly labeled a provisional placeholder — no AI_SYSTEM.md/AI_GOVERNANCE.md ADR had ever pinned a concrete embedding model or dimension (E4 risk R-70). E5 is the first epic that would write real, production embeddings against those columns, and DATABASE.md §4 is explicit that a later dimension change is a genuine re-embedding migration, not a config change.
+**Decision:** Pin the embedding model to OpenAI `text-embedding-3-small`, which outputs 1536-dimension vectors — the exact dimension already shipped. `OPENAI_API_KEY` is already a declared `.env.example` variable. `AIMemoryEntry.embeddingModelVersion`/`KnowledgeBaseEntry.embeddingModelVersion` record this pin per DATABASE.md §4/AI_GOVERNANCE.md §4's own versioning requirement; a future model change still goes through the tracked re-embedding migration those documents already require.
+**Alternatives considered:** Voyage AI embeddings (a common pairing with an Anthropic-primary generation stack, per `AI_GATEWAY_DEFAULT_PROVIDER=anthropic`) — rejected for the initial pin specifically because Voyage's models are typically 1024-dimension, which would make the already-shipped `vector(1536)` columns wrong regardless of which embedding model is eventually chosen, forcing a real re-embedding migration before any production embedding is even written; choosing the model that already matches avoids that cost at zero quality data to justify paying it yet. Anthropic's own embeddings — not offered as a product at the time of this decision. Leaving the dimension unpinned further — rejected: E5's own Memory Manager and RAG Retrieval Layer cannot write a real embedding without a concrete model to call.
+**Consequences:** If AI Engineering's own evaluation later prefers a different embedding model for retrieval-quality reasons, that is a real, tracked re-embedding migration (DATABASE.md §4's own named cost), not a surprise this ADR pretends won't happen — it only avoids paying that cost today without a concrete quality reason to.
+**Security implications:** None beyond what pgvector/HNSW already carry (ADR-004).
+**Reversibility:** Medium — reversible, but a real re-embedding migration each time, the same cost regardless of which model was picked first.
+**Status:** Proposed.
+
+### ADR-032 — Specialist trigger-condition catalog and tool-registry versioning scheme
+
+**Context:** AI_SYSTEM.md §3 states the exact trigger-condition catalog and tool-registry versioning "live in AI_GOVERNANCE.md §2, §6." Read directly, neither section contains them — §2 gives one worked example only, §6 states only that a versioned registry exists as policy. No catalog or versioning scheme is documented anywhere in the repository. ADR-007's entire tool-calling contract (a specialist fires only on a real, defined trigger, never by default every turn) is unimplementable without this existing somewhere concrete.
+**Decision:** [To be filled at E5 T5 implementation time — this ADR is proposed now to record that the decision is required and owned by E5, not deferred further. The catalog's format (a versioned registry file per agent under `services/ai-engine/src/agents/registry/`), the trigger-condition schema (confidence thresholds, pattern-repetition counts per specialist), and the semver-style version-bump rule are T5's own implementation-time detail per E5 §9.]
+**Alternatives considered:** Leaving the catalog undocumented and trigger logic scattered inline per specialist's own code (rejected — reproduces exactly the "forward-reference to nothing" gap this ADR exists to close, and makes trigger conditions untestable as a structural contract per AI_GOVERNANCE.md §2's own stated requirement).
+**Consequences:** AI_GOVERNANCE.md §2/§6 must be updated in the same PR that lands this ADR's implementation, so the existing forward-reference becomes true rather than staying a dangling promise.
+**Security implications:** The tool registry's own versioning is what AI_GOVERNANCE.md §6 calls the mechanism preventing "unscoped code execution or unrestricted external calls" — this is a real security-relevant boundary, not just documentation hygiene.
+**Reversibility:** High — a registry format change is additive/versioned by design.
+**Status:** Proposed.
+
+### ADR-033 — Internal `apps/api` ↔ `ai-engine` contract: REST + `@nestjs/swagger` OpenAPI, SSE for streaming
+
+**Context:** AI_SYSTEM.md §2 states the internal request/response contract between `apps/api` and `ai-engine` "is documented alongside the OpenAPI spec (API_GUIDELINES.md §11)." Read directly, API_GUIDELINES.md §11 only states OpenAPI is generated exclusively from `@nestjs/swagger` decorators — a mechanism for documenting any REST contract, not evidence this specific one exists. No DTO, controller, or contract for `ai-engine` exists anywhere in the repository as of this ADR.
+**Decision:** REST (not gRPC), matching ADR-003 and every other `apps/api`-to-`services/*` integration already in this repo. Contract documented via `@nestjs/swagger` decorators on real controllers/DTOs in `services/ai-engine`, the same mechanism API_GUIDELINES.md §11 already mandates platform-wide. Streaming responses (session message generation) use Server-Sent Events over the same REST endpoint — not a WebSocket — since the client only ever consumes a one-directional stream for a given message turn.
+**Alternatives considered:** gRPC (rejected — no stated performance case this integration needs that REST-with-SSE can't meet within PERFORMANCE.md §2's 900ms first-token budget; would introduce a second inter-service contract style with no precedent in this repo); WebSocket for streaming (rejected — ADR-003 already reserves WebSocket specifically for "real-time flows," i.e. the client↔`apps/api`↔`speech-service` audio pipeline that is E10's own scope; full-duplex capability is unused overhead for a one-directional generation stream).
+**Consequences:** `apps/api`'s AI-facing module calls `ai-engine` through a typed client generated from the OpenAPI spec, matching `packages/types`/`packages/validation`'s established role as the platform's real contract-enforcement mechanism (ARCHITECTURE.md §4).
+**Security implications:** None beyond what any internal REST integration already carries (internal-network-only, matching other `services/*` integrations).
+**Reversibility:** Medium — an internal contract, changeable without external API-consumer impact, but every consumer (`apps/api` today, potentially `apps/mobile` later) must update together.
+**Status:** Proposed.
+
+### ADR-034 — AI cost circuit breaker: Redis sliding-window counter, 3-stage breach ladder, provisional thresholds
+
+**Context:** ADR-012 already accepted the policy (a platform-wide, aggregate spend-rate cap independent of per-user entitlements). AI_GOVERNANCE.md §5 names the breach response ladder but explicitly withholds numeric thresholds, stating they "are set from real staging/production traffic data and reviewed monthly, not fixed permanently at a guessed initial value." E5 needs a real, working mechanism to ship T9, even though the numbers inside it are deliberately not yet final.
+**Decision:** A Redis sliding-window counter (per-minute and per-hour windows, matching AI_GOVERNANCE.md §5's own review cadence), incremented from every `AIUsageLog.costUsdMicros` write, checked before each new AI-invoking request reaches the Router. Breach ladder transcribed verbatim from AI_GOVERNANCE.md §5: (1) degrade new requests to a cheaper model tier where the request class allows it, (2) if breach persists, hard-stop new AI-invoking requests with a graceful, honest user-facing message, (3) page on-call immediately. Initial thresholds are a conservative placeholder, explicitly marked provisional in the implementation itself (not silently presented as final), pending real staging traffic data per AI_GOVERNANCE.md §5's own stated review cadence.
+**Alternatives considered:** A database-backed counter instead of Redis (rejected — Redis is already the platform's cache/rate-limit infrastructure per ARCHITECTURE.md, and a spend-rate check needs to run on every request's hot path, where a Postgres round-trip is the wrong latency profile against PERFORMANCE.md §2's 900ms LLM-stage budget); a fixed, permanently-set threshold decided now (rejected outright — directly contradicts AI_GOVERNANCE.md §5's explicit instruction not to guess a permanent value).
+**Consequences:** The threshold values themselves need a real, tracked update once staging data exists — this ADR's own mechanism is stable, but the numbers inside it are expected to change, by design, not as a sign something was wrong.
+**Security implications:** A false-positive trip degrades service during a legitimate spike (accepted risk, per ADR-012's own consequences); a missed/too-loose threshold risks real unbounded cost exposure — the reason a P0 "circuit breaker tripped" alert already exists (OBSERVABILITY.md).
+**Reversibility:** High — thresholds are a config value; the mechanism itself is stable infrastructure once built.
+**Status:** Proposed.
+
+### ADR-035 — `AIMessage`/partitioned-table maintenance runs as a BullMQ job inside `ai-engine`
+
+**Context:** E4 ADR-028 established `pg_partman` for monthly partition maintenance on `AIMessage`, `LearningEvent`, and `AIUsageLog`, but explicitly left `partman.run_maintenance_proc()` unscheduled (E4 risk R-69: "not yet wired to any scheduler — open until a later epic adds that job"). `ai-engine` is the heaviest writer among the three partitioned tables and is the first epic to add real BullMQ usage to the AI Coaching bounded context.
+**Decision:** A BullMQ repeatable job (daily cadence) inside `ai-engine`, invoking `partman.run_maintenance_proc()`, with a monitored failure hook (OBSERVABILITY.md alerting) so a missed run is visible, not silent.
+**Alternatives considered:** A dedicated "platform jobs" service (rejected for now — no such service exists yet, module 30's "Internal Platform Services" has no current home for a single scheduled job, and standing one up for this alone is premature infrastructure ahead of a real second use case); a Postgres-native `pg_cron` job instead of BullMQ (rejected — BullMQ is already the platform's job-queue standard per ARCHITECTURE.md §7, and mixing scheduling mechanisms for no functional gain adds an unnecessary second operational pattern to monitor).
+**Consequences:** If a genuine shared "platform jobs" service is stood up later, this job is designed to be relocatable (a self-contained job definition, not entangled with `ai-engine`-specific state) rather than a permanent fixture there.
+**Security implications:** None — an internal maintenance operation with no user-facing surface.
+**Reversibility:** High — a job definition move is low-cost.
+**Status:** Proposed.
+
 ---
 
 ## ADR index
@@ -333,5 +383,10 @@ Format: Context → Decision → Consequences → Status.
 | ADR-028 | `pg_partman` for time-based partition maintenance                             | Accepted |
 | ADR-029 | `AIMessage.content` field-level encryption via a Prisma Client Extension      | Accepted |
 | ADR-030 | Cross-domain FKs must be real Prisma `@relation`s, not plain scalars          | Accepted |
+| ADR-031 | Pin AI embedding model to OpenAI `text-embedding-3-small` (1536-dim)          | Proposed |
+| ADR-032 | Specialist trigger-condition catalog + tool-registry versioning scheme        | Proposed |
+| ADR-033 | `apps/api`↔`ai-engine` contract: REST + `@nestjs/swagger`, SSE streaming      | Proposed |
+| ADR-034 | AI cost circuit breaker: Redis sliding-window counter, 3-stage breach ladder  | Proposed |
+| ADR-035 | `AIMessage`/partitioned-table maintenance: BullMQ job inside `ai-engine`      | Proposed |
 
 New ADRs are appended, never renumbered or rewritten in place.
