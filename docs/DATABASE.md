@@ -46,6 +46,8 @@ The schema is organized into the following domains. Each maps to one or more Pri
 
 ### 2.3 Content & curriculum (module 5)
 
+**Status: Implemented (schema only) — Epic E4 T2** (docs/epics/E4-database-schema-core-data-layer.md). Schema/migration exist in `packages/database`; the application logic that authors/serves this content is separate, later epic scope (E8 Course Management System).
+
 Hierarchy: `Language → Course → Level → Unit → Lesson → Activity → Exercise/Quiz`.
 
 - `Language` — supported languages metadata (code, name, script direction, voice/TTS availability); a separate `uiLanguageSupported` boolean distinguishes "learnable as a target language" from "available as an interface language" (PRD.md §5.1).

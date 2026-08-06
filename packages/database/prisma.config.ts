@@ -16,4 +16,14 @@ import { defineConfig } from 'prisma/config';
 // model/field changes.
 export default defineConfig({
   schema: 'schema',
+  // Explicit as of the prismaSchemaFolder switch (ADR-027) — Prisma's
+  // migrations-directory inference defaults to "prisma/migrations"
+  // relative to the schema, which stopped resolving to this repo's actual
+  // top-level `migrations/` once `schema` became a directory rather than
+  // a single file (confirmed empirically: `prisma migrate status` silently
+  // reported "No migration found" against a database that in fact had all
+  // 23 of E2's migrations applied, until this was added).
+  migrations: {
+    path: 'migrations',
+  },
 });
