@@ -83,11 +83,13 @@ Hierarchy: `Language → Course → Level → Unit → Lesson → Activity → E
 
 ### 2.6 Gamification (module 15)
 
-- `UserXP` — running XP total and level, per user.
-- `Streak` — current/longest streak, last-active date (timezone-aware, UTC-anchored with a defined grace window for cross-timezone travel — ARCHITECTURE.md, PRD.md §5.1).
-- `Badge` / `UserBadge` — badge catalog and earned badges.
-- `Mission` / `UserMission` — time-boxed challenges and progress.
-- `League` / `Cohort` _(added)_ — the scoping entity `LeaderboardEntry.league` references; groups users into comparable, periodically-rotated competitive cohorts.
+**Status: Implemented (schema only) — Epic E4 T6** (docs/epics/E4-database-schema-core-data-layer.md). Schema/migration exist in `packages/database`; the application logic (XP grants, streak grace-window computation, mission progress, league rotation, anti-gaming safeguards — PRD.md §6, RISK_REGISTER.md R-15) is separate, later epic scope (E14).
+
+- `UserXP` — running XP total and level, per user. 1:1 with `User` (same `userId`-as-primary-key pattern as `UserProfile`).
+- `Streak` — current/longest streak, last-active date (timezone-aware, UTC-anchored with a defined grace window for cross-timezone travel — ARCHITECTURE.md, PRD.md §5.1). 1:1 with `User`; stores an IANA `timezone` string so the application layer's grace-window logic has what it needs — the grace-window policy itself (how much leeway) is an application-config parameter, not a schema concern. Streak-freeze/cosmetic streak-repair items are Version 1.1+ (PRD.md §6) — not modeled here, matching the `Coupon`/`Discount` precedent (§2.9).
+- `Badge` / `UserBadge` — badge catalog and earned badges. `Badge.criteria` (JSON) stores structured earning criteria consumed by the gamification-engine app logic.
+- `Mission` / `UserMission` — time-boxed challenges and progress. `UserMission.progress` is always attributable to a specific per-user-per-mission row (not a bare shared counter), so E14's anti-gaming logic has a real audit trail to inspect.
+- `League` / `Cohort` _(added)_ — the scoping entity `LeaderboardEntry.league` references; groups users into comparable, periodically-rotated competitive cohorts. Modeled as one `League` row per rotation/tier instance (e.g. "Gold League, week of 2026-08-03"), not a static tier catalog.
 - `LeaderboardEntry` — denormalized, periodically recomputed (not read-path joins) leaderboard standings, scoped by `League`.
 
 ### 2.7 Community (module 16)

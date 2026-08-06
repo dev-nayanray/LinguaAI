@@ -146,6 +146,11 @@ model User {
   aiAgentSessions           AIAgentSession[]
   aiMemoryEntries           AIMemoryEntry[]
   pronunciationScores       PronunciationScore[]
+  userXp                    UserXP?
+  streak                    Streak?
+  userBadges                UserBadge[]
+  userMissions              UserMission[]
+  leaderboardEntries        LeaderboardEntry[]
 
   @@index([organizationId])
 }

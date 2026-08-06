@@ -1,0 +1,194 @@
+// E4 T6 — Gamification domain (DATABASE.md §2.6, docs/epics/
+// E4-database-schema-core-data-layer.md §5/§9).
+//
+// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy, no
+// organizationId column on anything here.
+//
+// Cross-domain references (`userId`) are real Prisma `@relation` fields,
+// with matching back-relation arrays on identity.prisma's User (ADR-030 —
+// the plain-scalar + manual-FK convention T2 originally used does not
+// survive a further `prisma migrate dev` run from any domain and was
+// retired after causing real, silently-dropped constraints across
+// T2-T4). Relations within this file use normal Prisma `@relation`s.
+//
+// Anti-gaming safeguards (PRD.md §6 module 15: "Anti-gaming safeguards
+// are launch-blocking, not fast-follow" — RISK_REGISTER.md R-15) are
+// E14's (Gamification Engine app logic) own scope, not this schema's —
+// E4 only ensures the shape doesn't preclude them later (e.g. XP/mission
+// progress changes are always attributable to a specific row with a
+// timestamp, not a bare counter increment with no audit trail).
+//
+// Streak-freeze / cosmetic streak-repair items are explicitly Version
+// 1.1+ (PRD.md §6, non-MVP) — not modeled here, matching E4's own
+// Coupon/Discount precedent ("wait for a real feature spec" — E4 §10
+// resolved item 3) rather than reserving an unshaped column now.
+
+enum MissionType {
+  DAILY
+  WEEKLY
+  SPECIAL_EVENT
+}
+
+enum MissionMetric {
+  XP_EARNED
+  LESSONS_COMPLETED
+  MINUTES_STUDIED
+  STREAK_DAYS
+}
+
+enum LeagueTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+  DIAMOND
+}
+
+/// 1:1 with User (DATABASE.md §3 ERD) — same "userId as primary key"
+/// pattern identity.prisma's UserProfile already established for a 1:1
+/// child table.
+model UserXP {
+  userId String @id @db.Uuid
+
+  totalXp Int @default(0)
+  level   Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@map("UserXP")
+}
+
+/// 1:1 with User (DATABASE.md §3 ERD). `lastActiveDate`/`timezone`
+/// (IANA name, e.g. "America/Sao_Paulo") are what the application layer's
+/// UTC-anchored grace-window logic (DATABASE.md §2.6, ARCHITECTURE.md)
+/// needs to compute streak continuity correctly across a user's travel —
+/// the grace-window policy itself (how many hours/days of leeway) is an
+/// application-config parameter, not a schema concern.
+model Streak {
+  userId String @id @db.Uuid
+
+  currentStreak  Int      @default(0)
+  longestStreak  Int      @default(0)
+  lastActiveDate DateTime @db.Date
+  timezone       String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@map("Streak")
+}
+
+model Badge {
+  id String @id @default(uuid()) @db.Uuid
+
+  name        String
+  description String
+  iconUrl     String?
+  /// Structured earning-criteria definition (e.g. {type: "STREAK_DAYS", threshold: 30}), consumed by E14's own gamification-engine logic — this schema only stores the shape.
+  criteria    Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userBadges UserBadge[]
+
+  @@map("Badge")
+}
+
+model UserBadge {
+  id      String @id @default(uuid()) @db.Uuid
+  userId  String @db.Uuid
+  badgeId String @db.Uuid
+
+  earnedAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  badge Badge @relation(fields: [badgeId], references: [id])
+
+  @@unique([userId, badgeId])
+  @@index([userId])
+  @@map("UserBadge")
+}
+
+model Mission {
+  id String @id @default(uuid()) @db.Uuid
+
+  type        MissionType
+  metric      MissionMetric
+  targetValue Int
+  rewardXp    Int
+  startsAt    DateTime
+  endsAt      DateTime
+  isActive    Boolean       @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userMissions UserMission[]
+
+  @@index([type, isActive])
+  @@map("Mission")
+}
+
+model UserMission {
+  id        String @id @default(uuid()) @db.Uuid
+  userId    String @db.Uuid
+  missionId String @db.Uuid
+
+  /// Current progress toward Mission.targetValue, in Mission.metric's unit — always attributable to this specific row (not a bare shared counter), so E14's anti-gaming/audit logic has a real per-user-per-mission trail to inspect.
+  progress    Int       @default(0)
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  mission Mission @relation(fields: [missionId], references: [id])
+
+  @@unique([userId, missionId])
+  @@index([userId, completedAt])
+  @@map("UserMission")
+}
+
+/// One row per rotation/tier instance (e.g. "Gold League, week of
+/// 2026-08-03") — the "periodically-rotated competitive cohort" DATABASE.md
+/// §2.6 describes. `LeaderboardEntry` is what actually assigns a user to
+/// a specific League instance.
+model League {
+  id String @id @default(uuid()) @db.Uuid
+
+  tier        LeagueTier
+  periodStart DateTime
+  periodEnd   DateTime
+
+  createdAt DateTime @default(now())
+
+  leaderboardEntries LeaderboardEntry[]
+
+  @@index([tier, periodStart])
+  @@map("League")
+}
+
+/// Denormalized, periodically recomputed by a scheduled job — never a
+/// live-aggregation read path (DATABASE.md §4).
+model LeaderboardEntry {
+  id       String @id @default(uuid()) @db.Uuid
+  leagueId String @db.Uuid
+  userId   String @db.Uuid
+
+  score      Int
+  rank       Int
+  computedAt DateTime @default(now())
+
+  league League @relation(fields: [leagueId], references: [id])
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([leagueId, userId])
+  @@index([leagueId, rank])
+  @@map("LeaderboardEntry")
+}
