@@ -1,0 +1,251 @@
+// E4 T2 — Content & curriculum domain (DATABASE.md §2.3, docs/epics/
+// E4-database-schema-core-data-layer.md §5/§9). Hierarchy: Language →
+// Course → Level → Unit → Lesson → Activity → Exercise/Quiz.
+//
+// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy, no organizationId
+// column on anything here; this is shared reference/content data, not
+// per-organization data.
+//
+// Cross-domain references to `User` (e.g. ExerciseAttempt.userId) are
+// deliberately plain scalar columns, not Prisma `@relation` fields — a
+// `@relation` would require a matching back-relation array added to
+// `identity.prisma` (E2's file), which would couple every future content-
+// domain migration to editing E2's schema file. Referential integrity is
+// still enforced at the database level via a real FOREIGN KEY constraint
+// added in this domain's companion raw-SQL migration (the same "Prisma
+// schema + raw SQL" pattern T1 established for RLS/vector), not skipped.
+
+enum ScriptDirection {
+  LTR
+  RTL
+}
+
+enum CefrLevel {
+  A1
+  A2
+  B1
+  B2
+  C1
+  C2
+}
+
+enum ActivityType {
+  VOCABULARY_DRILL
+  GRAMMAR_EXPLANATION
+  LISTENING
+  SPEAKING
+  READING
+  WRITING
+  CONVERSATION
+}
+
+enum ExerciseType {
+  MULTIPLE_CHOICE
+  FILL_BLANK
+  MATCHING
+  TRANSLATION
+  LISTENING_COMPREHENSION
+  SPEAKING_PROMPT
+}
+
+enum ContentEntityType {
+  LESSON
+  ACTIVITY
+  EXERCISE
+  QUIZ
+}
+
+model Language {
+  id                  String          @id @default(uuid()) @db.Uuid
+  code                String          @unique
+  name                String
+  nativeName          String?
+  scriptDirection     ScriptDirection @default(LTR)
+  /// Real TTS/STT provider support exists for this language (DATABASE.md §2.3).
+  voiceAvailable      Boolean         @default(false)
+  /// Distinct from "learnable as a target language" — PRD.md §5.1.
+  uiLanguageSupported Boolean         @default(false)
+  isActive            Boolean         @default(true)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  courses Course[]
+
+  @@map("Language")
+}
+
+model Course {
+  id          String    @id @default(uuid()) @db.Uuid
+  languageId  String    @db.Uuid
+  title       String
+  description String?
+  slug        String
+  /// Null = draft/unpublished. Set = live. Distinct from deletedAt (DATABASE.md §6: content unpublish is soft delete, not this field).
+  publishedAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  language Language @relation(fields: [languageId], references: [id])
+  levels   Level[]
+
+  @@unique([languageId, slug])
+  @@index([languageId])
+  @@map("Course")
+}
+
+model Level {
+  id          String    @id @default(uuid()) @db.Uuid
+  courseId    String    @db.Uuid
+  cefrLevel   CefrLevel
+  title       String
+  description String?
+  order       Int
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  course Course @relation(fields: [courseId], references: [id])
+  units  Unit[]
+
+  @@index([courseId])
+  @@map("Level")
+}
+
+model Unit {
+  id          String    @id @default(uuid()) @db.Uuid
+  levelId     String    @db.Uuid
+  title       String
+  description String?
+  order       Int
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  level   Level    @relation(fields: [levelId], references: [id])
+  lessons Lesson[]
+
+  @@index([levelId])
+  @@map("Unit")
+}
+
+model Lesson {
+  id               String    @id @default(uuid()) @db.Uuid
+  unitId           String    @db.Uuid
+  title            String
+  description      String?
+  order            Int
+  estimatedMinutes Int?
+  deletedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  unit       Unit       @relation(fields: [unitId], references: [id])
+  activities Activity[]
+
+  @@index([unitId])
+  @@map("Lesson")
+}
+
+model Activity {
+  id        String       @id @default(uuid()) @db.Uuid
+  lessonId  String       @db.Uuid
+  type      ActivityType
+  title     String
+  /// Type-specific payload (e.g. a listening clip's audio reference, a grammar explanation's body) — shape varies per ActivityType, validated at the application layer (packages/validation), not the database layer.
+  content   Json
+  order     Int
+  deletedAt DateTime?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  lesson    Lesson     @relation(fields: [lessonId], references: [id])
+  exercises Exercise[]
+  quizzes   Quiz[]
+
+  @@index([lessonId])
+  @@map("Activity")
+}
+
+model Quiz {
+  id                  String    @id @default(uuid()) @db.Uuid
+  activityId          String    @db.Uuid
+  title               String
+  passingScorePercent Int?
+  order               Int
+  deletedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  activity  Activity   @relation(fields: [activityId], references: [id])
+  exercises Exercise[]
+
+  @@index([activityId])
+  @@map("Quiz")
+}
+
+model Exercise {
+  id            String       @id @default(uuid()) @db.Uuid
+  activityId    String       @db.Uuid
+  /// Optional grouping into a Quiz — an Exercise always belongs to its Activity directly; Quiz membership is an additional, optional grouping (DATABASE.md §2.3's "Exercise/Quiz" sibling framing).
+  quizId        String?      @db.Uuid
+  type          ExerciseType
+  prompt        String
+  /// Structured, never raw HTML — validated at the application layer.
+  correctAnswer Json
+  order         Int
+  deletedAt     DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  activity Activity          @relation(fields: [activityId], references: [id])
+  quiz     Quiz?             @relation(fields: [quizId], references: [id])
+  attempts ExerciseAttempt[]
+
+  @@index([activityId])
+  @@index([quizId])
+  @@map("Exercise")
+}
+
+model ExerciseAttempt {
+  id     String @id @default(uuid()) @db.Uuid
+  /// Plain scalar, no Prisma @relation — see this file's own header comment.
+  userId String @db.Uuid
+
+  exerciseId       String  @db.Uuid
+  /// The ContentVersion this attempt was actually made against, so a later
+  /// content edit never retroactively changes what a past attempt "was
+  /// scored on" (DATABASE.md §2.3's ContentVersion rationale). Nullable —
+  /// an exercise with no versioning history yet has no version to pin to.
+  contentVersionId String? @db.Uuid
+
+  response  Json
+  isCorrect Boolean
+  score     Float?
+  createdAt DateTime @default(now())
+
+  exercise       Exercise        @relation(fields: [exerciseId], references: [id])
+  contentVersion ContentVersion? @relation(fields: [contentVersionId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([exerciseId])
+  @@map("ExerciseAttempt")
+}
+
+model ContentVersion {
+  id            String            @id @default(uuid()) @db.Uuid
+  /// Polymorphic — no FK constraint, since entityId's owning table varies by entityType (Lesson/Activity/Exercise/Quiz all have independent id spaces).
+  entityType    ContentEntityType
+  entityId      String            @db.Uuid
+  versionNumber Int
+  /// Full content snapshot at this version, not a diff — simplest correct representation, matching AIMemoryEntry/KnowledgeBaseEntry's own "snapshot, not delta" precedent (DATABASE.md §2.5).
+  snapshot      Json
+  publishedAt   DateTime          @default(now())
+  createdAt     DateTime          @default(now())
+
+  exerciseAttempts ExerciseAttempt[]
+
+  @@unique([entityType, entityId, versionNumber])
+  @@index([entityType, entityId])
+  @@map("ContentVersion")
+}

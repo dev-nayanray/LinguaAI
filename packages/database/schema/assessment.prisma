@@ -1,0 +1,170 @@
+// E4 T3 — Assessment & learning plan domain (DATABASE.md §2.2, docs/epics/
+// E4-database-schema-core-data-layer.md §5/§9).
+//
+// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy, no
+// organizationId column on anything here.
+//
+// Cross-domain references (`userId` → identity.prisma's User, `languageId`
+// → content.prisma's Language) are deliberately plain scalar columns, not
+// Prisma `@relation` fields — same reasoning as T2's own header comment:
+// a `@relation` would require a matching back-relation array added to the
+// *other* domain's schema file, coupling every future domain that
+// references User/Language to editing files it doesn't own. Real
+// referential integrity is still enforced at the database level via
+// FOREIGN KEY constraints added by hand in this domain's companion raw-SQL
+// migration. Relations *within* this same file (e.g. AssessmentResponse →
+// AssessmentAttempt) use normal Prisma `@relation`s — the rule is "same
+// file, real relation; different file, scalar + manual FK," applied
+// consistently since T2.
+
+enum Skill {
+  READING
+  WRITING
+  LISTENING
+  SPEAKING
+  VOCABULARY
+  GRAMMAR
+}
+
+enum AssessmentType {
+  PLACEMENT
+  REASSESSMENT
+}
+
+enum AssessmentStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+enum ProficiencySource {
+  ASSESSMENT
+  INFERRED
+}
+
+model AssessmentAttempt {
+  id         String @id @default(uuid()) @db.Uuid
+  userId     String @db.Uuid
+  /// Cross-domain — see this file's header comment. References content.prisma's Language.
+  languageId String @db.Uuid
+
+  type        AssessmentType
+  status      AssessmentStatus @default(IN_PROGRESS)
+  startedAt   DateTime         @default(now())
+  completedAt DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  responses AssessmentResponse[]
+
+  @@index([userId, createdAt])
+  @@index([languageId])
+  @@map("AssessmentAttempt")
+}
+
+model AssessmentResponse {
+  id        String   @id @default(uuid()) @db.Uuid
+  attemptId String   @db.Uuid
+  skill     Skill
+  prompt    String
+  /// Structured, never raw HTML — validated at the application layer.
+  response  Json
+  isCorrect Boolean?
+  score     Float?
+  createdAt DateTime @default(now())
+
+  attempt AssessmentAttempt @relation(fields: [attemptId], references: [id])
+
+  @@index([attemptId])
+  @@map("AssessmentResponse")
+}
+
+/// Current CEFR level per user/language/skill — "current state" only; see
+/// ProficiencyLevelHistory for the append-only trend record (DATABASE.md
+/// §2.2's own stated reason this history table is required, not optional:
+/// "did this user's fluency actually improve" is the named MVP success
+/// metric, and current-state-only cannot answer it).
+model ProficiencyLevel {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId     String @db.Uuid
+  languageId String @db.Uuid
+
+  skill      Skill
+  cefrLevel  CefrLevel
+  confidence Float
+  source     ProficiencySource
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  history ProficiencyLevelHistory[]
+
+  @@unique([userId, languageId, skill])
+  @@index([userId, languageId])
+  @@map("ProficiencyLevel")
+}
+
+model ProficiencyLevelHistory {
+  id                 String @id @default(uuid()) @db.Uuid
+  proficiencyLevelId String @db.Uuid
+
+  // Denormalized alongside proficiencyLevelId (not solely joined through
+  // it) so a fluency-trend query never has to join through the mutable
+  // ProficiencyLevel row — DATABASE.md §4's own (userId, languageId)
+  // composite-index guidance, applied here.
+  userId     String @db.Uuid
+  languageId String @db.Uuid
+
+  skill      Skill
+  cefrLevel  CefrLevel
+  confidence Float
+  source     ProficiencySource
+  recordedAt DateTime          @default(now())
+
+  proficiencyLevel ProficiencyLevel @relation(fields: [proficiencyLevelId], references: [id])
+
+  @@index([userId, languageId, skill])
+  @@index([proficiencyLevelId])
+  @@map("ProficiencyLevelHistory")
+}
+
+model LearningPlan {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId     String @db.Uuid
+  languageId String @db.Uuid
+
+  goal       String
+  targetDate DateTime?
+  /// Generated milestones — structured, produced by recommendation-engine (a later epic's own concern); this domain only stores the shape.
+  milestones Json
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  dailyGoals DailyGoal[]
+
+  @@index([userId, languageId])
+  @@map("LearningPlan")
+}
+
+model DailyGoal {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+
+  /// Optional — a daily goal can exist independent of any specific LearningPlan (a platform-wide default target).
+  learningPlanId String? @db.Uuid
+
+  date             DateTime @db.Date
+  targetXp         Int
+  targetMinutes    Int
+  targetActivities Int
+  completed        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  learningPlan LearningPlan? @relation(fields: [learningPlanId], references: [id])
+
+  @@unique([userId, date])
+  @@map("DailyGoal")
+}

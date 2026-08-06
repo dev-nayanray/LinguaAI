@@ -37,6 +37,8 @@ The schema is organized into the following domains. Each maps to one or more Pri
 
 ### 2.2 Assessment & learning plan
 
+**Status: Implemented (schema only) — Epic E4 T3** (docs/epics/E4-database-schema-core-data-layer.md). Schema/migration exist in `packages/database`; the application logic that runs assessments and generates plans is separate, later epic scope (E6/E7).
+
 - `AssessmentAttempt` — one per placement/re-assessment run, status, started/completed timestamps.
 - `AssessmentResponse` — individual item responses within an attempt, per skill (reading/writing/listening/speaking/vocabulary/grammar).
 - `ProficiencyLevel` — **current** CEFR level per user, per language, per skill, with confidence score and last-updated source (assessment vs. inferred from ongoing performance).
@@ -45,6 +47,8 @@ The schema is organized into the following domains. Each maps to one or more Pri
 - `DailyGoal` — per-user, per-day target (XP, minutes, activities) and completion state.
 
 ### 2.3 Content & curriculum (module 5)
+
+**Status: Implemented (schema only) — Epic E4 T2** (docs/epics/E4-database-schema-core-data-layer.md). Schema/migration exist in `packages/database`; the application logic that authors/serves this content is separate, later epic scope (E8 Course Management System).
 
 Hierarchy: `Language → Course → Level → Unit → Lesson → Activity → Exercise/Quiz`.
 
@@ -102,8 +106,8 @@ Hierarchy: `Language → Course → Level → Unit → Lesson → Activity → E
 - `Subscription` — user or organization subscription state, Stripe customer/subscription IDs, status, renewal date; `trialEndsAt` field _(added)_ supports the trial flow (PRD.md §5.1).
 - `Invoice` — synced from Stripe for in-app billing history.
 - `Entitlement` — resolved, queryable feature/usage limits for a user at a point in time (derived from `Plan` + `Subscription`, cached in Redis, source of truth in Postgres).
-- `EntitlementChangeLog` _(added)_ — append-only audit trail of every entitlement change (what changed, why — upgrade/downgrade/webhook/manual admin override, who/what triggered it) — required for billing dispute resolution, distinct from the general `AuditLog`.
-- `Coupon` / `Discount` _(added, schema-reserved)_ — promotional code definitions; not exposed in product UI until a promotions feature ships, but reserved now to avoid a painful later migration.
+- `EntitlementChangeLog` — see §2.1, already implemented (E2). Listed here too since it's this domain's own audit trail, not because it's separate new work.
+- `Coupon` / `Discount` _(added, schema-reserved)_ — promotional code definitions; not exposed in product UI until a promotions feature ships, but reserved now to avoid a painful later migration. **Not built by E4** (docs/epics/E4-database-schema-core-data-layer.md §10, resolved item 3) — a genuinely unshaped reservation was judged more likely to lock in a wrong shape than to save a later migration; still reserved conceptually here for whichever future epic designs the real promotions feature.
 
 ### 2.10 Analytics & platform (modules 23, 30)
 
@@ -111,7 +115,7 @@ Hierarchy: `Language → Course → Level → Unit → Lesson → Activity → E
 - `AIUsageLog` — per-request AI cost/latency/token metering, keyed by user, agent, model, `promptVersion` — critical for the cost controls in AI_SYSTEM.md §8 / AI_GOVERNANCE.md §5.
 - `NotificationLog` — delivery record per notification (module 25), channel, status.
 - `NotificationPreference` _(added)_ — per-user, per-channel, per-notification-type opt-in/opt-out (previously only delivery was modeled, not preference) — required for the granular consent PRD.md and SECURITY.md commit to.
-- `AuditLog` — admin, automated-billing, and security-sensitive action trail (modules 24, 26) — immutable, append-only.
+- `AuditLog` — see §2.1, already implemented (E2). Listed here too since it's this domain's own action trail (modules 24, 26), not because it's separate new work.
 
 ### 2.11 Reserved for future phases (schema-planned, not built at MVP)
 
