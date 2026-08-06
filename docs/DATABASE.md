@@ -94,12 +94,15 @@ Hierarchy: `Language → Course → Level → Unit → Lesson → Activity → E
 
 ### 2.7 Community (module 16)
 
-- `Friendship` — user-to-user connection with status (pending/accepted/blocked).
+**Status: Implemented (schema only) — Epic E4 T7** (docs/epics/E4-database-schema-core-data-layer.md). Schema/migration exist in `packages/database`; the application logic (friend requests, group management, moderation review UI/queue) is separate, later epic scope. Voice rooms (PRD.md module 16: "Post-MVP") are out of scope entirely, pending the moderation design SECURITY.md §8/RISK_REGISTER.md R-16 require first.
+
+- `Friendship` — user-to-user connection with status (pending/accepted/blocked). Self-referential (`requester`/`addressee` named relations on `User`).
 - `Group` — community group, ownership, membership.
 - `GroupMembership`.
-- `Challenge` — group or friend challenges tied to gamification.
-- `Discussion` / `Post` / `Comment` — lightweight community content, moderated (see SECURITY.md).
-- `ContentReport` / `ModerationAction` _(added)_ — user-submitted reports (target type/id, reason) and the resulting moderation decision, feeding the `community.content.reported` domain event (EVENT_ARCHITECTURE.md).
+- `Challenge` — group or friend challenges tied to gamification; `metric` reuses §2.6's `MissionMetric` enum rather than a duplicate vocabulary. `groupId` nullable — null means a direct friend-to-friend challenge.
+- `ChallengeParticipant` _(added)_ — per-user progress tracking for a `Challenge`, needed for both group members opting in and the two sides of a friend challenge.
+- `Discussion` / `Post` / `Comment` — lightweight community content, moderated (see SECURITY.md). Hierarchy: `Discussion` (topic, optionally group-scoped) → `Post` → `Comment`. All three (plus `Group`) are soft-delete (§6).
+- `ContentReport` / `ModerationAction` _(added)_ — user-submitted reports (target type/id, reason) and the resulting moderation decision, feeding the `community.content.reported` domain event (EVENT_ARCHITECTURE.md). `targetType`/`targetId` are polymorphic (no DB-level FK, same shape as `ContentVersion`) since the reported/actioned-on item varies by table. `ModerationAction.contentReportId`/`moderatorId` are nullable — an action can originate from proactive automated moderation, not only a user report.
 
 ### 2.8 Exams & certification (modules 19, 21)
 

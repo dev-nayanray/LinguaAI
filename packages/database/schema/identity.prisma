@@ -151,6 +151,17 @@ model User {
   userBadges                UserBadge[]
   userMissions              UserMission[]
   leaderboardEntries        LeaderboardEntry[]
+  friendshipsRequested      Friendship[]              @relation("FriendshipRequester")
+  friendshipsReceived       Friendship[]              @relation("FriendshipAddressee")
+  ownedGroups               Group[]
+  groupMemberships          GroupMembership[]
+  createdChallenges         Challenge[]
+  challengeParticipations   ChallengeParticipant[]
+  discussions               Discussion[]
+  posts                     Post[]
+  comments                  Comment[]
+  contentReports            ContentReport[]
+  moderationActions         ModerationAction[]
 
   @@index([organizationId])
 }
