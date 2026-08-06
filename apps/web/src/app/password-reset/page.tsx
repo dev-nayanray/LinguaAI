@@ -3,8 +3,9 @@
 import { useState, type FormEvent } from 'react';
 import { ApiError } from '@linguaai/auth-client';
 import { Button } from '@linguaai/ui';
+import { FormField, Input } from '@linguaai/ui/forms';
 
-import { FormError, FormField, FormSuccess, TextInput } from '@/components/auth-form';
+import { FormError, FormSuccess } from '@/components/auth-form';
 import { authClient } from '@/lib/auth-client';
 
 /**
@@ -46,9 +47,8 @@ export default function PasswordResetRequestPage() {
         <h1 className="text-2xl font-semibold">Reset your password</h1>
 
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
-          <FormField label="Email" htmlFor="email">
-            <TextInput
-              id="email"
+          <FormField label="Email">
+            <Input
               name="email"
               type="email"
               autoComplete="email"
@@ -66,7 +66,7 @@ export default function PasswordResetRequestPage() {
           </Button>
         </form>
 
-        <p className="text-sm text-neutral-500">
+        <p className="text-sm text-neutral-text">
           <a href="/login" className="text-primary hover:underline">
             Back to log in
           </a>

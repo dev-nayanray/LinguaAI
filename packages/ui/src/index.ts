@@ -5,3 +5,4 @@ export {
   type ErrorBoundaryFallbackProps,
 } from './components/error-boundary';
 export { cn } from './lib/cn';
+export { useReducedMotion } from './hooks/use-reduced-motion';

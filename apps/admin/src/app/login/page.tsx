@@ -4,8 +4,9 @@ import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { ApiError, useSessionStore } from '@linguaai/auth-client';
 import { Button } from '@linguaai/ui';
+import { FormField, Input } from '@linguaai/ui/forms';
 
-import { FormError, FormField, TextInput } from '@/components/auth-form';
+import { FormError } from '@/components/auth-form';
 import { authClient } from '@/lib/auth-client';
 
 type Step = { kind: 'password' } | { kind: 'mfa'; challengeToken: string };
@@ -81,9 +82,8 @@ export default function AdminLoginPage() {
 
         {step.kind === 'password' ? (
           <form onSubmit={onPasswordSubmit} className="space-y-4" noValidate>
-            <FormField label="Email" htmlFor="email">
-              <TextInput
-                id="email"
+            <FormField label="Email">
+              <Input
                 name="email"
                 type="email"
                 autoComplete="email"
@@ -93,9 +93,8 @@ export default function AdminLoginPage() {
               />
             </FormField>
 
-            <FormField label="Password" htmlFor="password">
-              <TextInput
-                id="password"
+            <FormField label="Password">
+              <Input
                 name="password"
                 type="password"
                 autoComplete="current-password"
@@ -113,13 +112,12 @@ export default function AdminLoginPage() {
           </form>
         ) : (
           <form onSubmit={onCodeSubmit} className="space-y-4" noValidate>
-            <p className="text-sm text-neutral-500">
+            <p className="text-sm text-neutral-text">
               Enter the 6-digit code from your authenticator app.
             </p>
 
-            <FormField label="6-digit code" htmlFor="code">
-              <TextInput
-                id="code"
+            <FormField label="6-digit code">
+              <Input
                 name="code"
                 inputMode="numeric"
                 pattern="\d{6}"

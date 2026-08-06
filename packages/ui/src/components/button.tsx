@@ -7,18 +7,25 @@ import { cn } from '../lib/cn';
 const buttonVariants = cva(
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ' +
     'transition-colors duration-micro ease-entrance focus-visible:outline-none focus-visible:ring-2 ' +
-    'focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ' +
+    'focus-visible:ring-focus-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ' +
     '[&_svg]:pointer-events-none [&_svg]:shrink-0',
   {
     variants: {
+      // Re-themed onto E3's semantic token layer (E3 design document §12.1
+      // "Brand tokens vs. Action tokens"). `primary`/`destructive` use the
+      // validated `-solid` fill tokens (not the raw `--color-primary`/
+      // `--color-danger` anchors directly — a raw anchor is documented as
+      // decorative-only and must never be used as a white-text fill).
+      // `secondary`/`ghost` are action-role treatments with no brand color
+      // of their own, built from the already-validated neutral surface/
+      // border/text tokens — no separate `dark:` classes are needed for any
+      // variant, since every token referenced here already resolves its own
+      // light/dark value via `[data-theme="dark"]` (tokens.css).
       variant: {
-        primary: 'bg-primary text-white hover:bg-primary/90',
-        secondary:
-          'border border-neutral-300 bg-neutral-100 text-neutral-900 hover:bg-neutral-200 ' +
-          'dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-50 dark:hover:bg-neutral-700',
-        ghost:
-          'text-neutral-900 hover:bg-neutral-100 dark:text-neutral-50 dark:hover:bg-neutral-800',
-        destructive: 'bg-red-600 text-white hover:bg-red-700',
+        primary: 'bg-primary-solid text-white hover:bg-primary-solid/90',
+        secondary: 'border border-border bg-surface-muted text-text hover:bg-surface-muted/80',
+        ghost: 'text-text hover:bg-surface-muted',
+        destructive: 'bg-danger-solid text-white hover:bg-danger-solid/90',
       },
       size: {
         default: 'h-10 px-4 py-2',

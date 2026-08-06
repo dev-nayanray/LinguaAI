@@ -14,7 +14,7 @@ describe('Button', () => {
   it('defaults to the primary variant and default size classes', () => {
     render(<Button>Go</Button>);
     const button = screen.getByRole('button', { name: 'Go' });
-    expect(button.className).toContain('bg-primary');
+    expect(button.className).toContain('bg-primary-solid');
     expect(button.className).toContain('h-10');
   });
 
@@ -25,8 +25,23 @@ describe('Button', () => {
       </Button>,
     );
     const button = screen.getByRole('button', { name: 'Delete' });
-    expect(button.className).toContain('bg-red-600');
+    expect(button.className).toContain('bg-danger-solid');
     expect(button.className).toContain('w-10');
+  });
+
+  it('applies the secondary variant using neutral surface/border/text tokens, not a brand color', () => {
+    render(<Button variant="secondary">Cancel</Button>);
+    const button = screen.getByRole('button', { name: 'Cancel' });
+    expect(button.className).toContain('bg-surface-muted');
+    expect(button.className).toContain('border-border');
+    expect(button.className).toContain('text-text');
+  });
+
+  it('applies the ghost variant with a hover-only background', () => {
+    render(<Button variant="ghost">Skip</Button>);
+    const button = screen.getByRole('button', { name: 'Skip' });
+    expect(button.className).toContain('text-text');
+    expect(button.className).toContain('hover:bg-surface-muted');
   });
 
   it('calls onClick when clicked', async () => {

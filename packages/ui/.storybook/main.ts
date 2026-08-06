@@ -24,10 +24,19 @@ const config: StorybookConfig = {
   // what actually processes `@import "tailwindcss"`/`@theme` in tokens.css.
   // packages/ui has no standalone vite.config.ts of its own (it's a
   // component library, not a Vite app), so the plugin is registered here.
+  // The `@ui` alias (E3 T3, §6b) is registered the same way, for the same
+  // reason vitest.config.ts needs its own copy — Storybook's Vite build is
+  // an independent resolver from both the TS compiler and Vitest.
   async viteFinal(viteConfig) {
     const { mergeConfig } = await import('vite');
+    const { fileURLToPath } = await import('node:url');
     return mergeConfig(viteConfig, {
       plugins: [tailwindcss()],
+      resolve: {
+        alias: {
+          '@ui': fileURLToPath(new URL('../src', import.meta.url)),
+        },
+      },
     });
   },
 };

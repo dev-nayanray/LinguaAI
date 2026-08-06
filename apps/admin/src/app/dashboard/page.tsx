@@ -65,7 +65,7 @@ export default function AdminDashboardPage() {
   if (loading || !user) {
     return (
       <main className="flex min-h-screen items-center justify-center p-8">
-        <p className="text-sm text-neutral-500">Loading…</p>
+        <p className="text-sm text-neutral-text">Loading…</p>
       </main>
     );
   }
@@ -74,7 +74,7 @@ export default function AdminDashboardPage() {
     <main className="flex min-h-screen flex-col items-center justify-center p-8">
       <div className="w-full max-w-sm space-y-6">
         <h1 className="text-2xl font-semibold">Admin dashboard</h1>
-        <p className="text-sm text-neutral-500">
+        <p className="text-sm text-neutral-text">
           Signed in as {user.email} ({user.role})
         </p>
         <Button

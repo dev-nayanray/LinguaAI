@@ -6,6 +6,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // E3 T3 (§6b) — a distinct resolver from packages/ui's own
+      // vitest.config.ts; this app's Vitest run needs its own copy since
+      // it resolves packages/ui's transpiled source independently.
+      '@ui': fileURLToPath(new URL('../../packages/ui/src', import.meta.url)),
     },
   },
   test: {
