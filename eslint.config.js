@@ -35,6 +35,17 @@ export default tseslint.config({
     globals: globals.node,
   },
 }, {
+  // E3 T18's token-export generator (`packages/ui/scripts/`) — a plain
+  // Node ESM build-time script, not `packages/ui/src`'s presentational
+  // component code, so none of that directory's browser-only/no-Node-
+  // globals restrictions (§13, the `no-restricted-globals` block below)
+  // apply to it; `process`/`console` are exactly what a CLI generator is
+  // expected to use.
+  files: ['packages/ui/scripts/**/*.mjs'],
+  languageOptions: {
+    globals: globals.node,
+  },
+}, {
   rules: {
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     '@typescript-eslint/explicit-function-return-type': 'off',

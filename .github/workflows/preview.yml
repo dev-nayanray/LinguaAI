@@ -156,10 +156,87 @@ jobs:
           SERVICE_ARN: ${{ steps.apprunner.outputs.service_arn }}
         run: aws apprunner describe-service --service-arn "$SERVICE_ARN" --query "Service.ServiceUrl" --output text
 
+  # E3 T17 / ADR-026 (docs/DECISIONS.md) — a per-PR Storybook preview of
+  # packages/ui, uploaded to the one shared, account-level bucket/
+  # distribution infrastructure/terraform/modules/storybook-hosting
+  # provisions (applied once, like modules/preview — see that module's
+  # own header comment). `vars.STORYBOOK_*` below are that module's
+  # outputs, copied in manually after `terraform apply` — the same
+  # pattern `vars.APPRUNNER_ECR_ACCESS_ROLE_ARN` already uses above for
+  # modules/preview's own output.
+  deploy-storybook:
+    name: Deploy Storybook preview
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    environment: preview
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Storybook
+        run: pnpm --filter @linguaai/ui build-storybook
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # This PR's own S3 key prefix — the shared bucket serves every open
+      # PR's build side by side (modules/storybook-hosting's own header
+      # comment explains why this is cheaper/faster than a CloudFront
+      # distribution per PR).
+      - name: Upload to this PR's S3 prefix
+        env:
+          BUCKET: ${{ vars.STORYBOOK_S3_BUCKET }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: aws s3 sync packages/ui/storybook-static "s3://$BUCKET/pr-$PR_NUMBER/" --delete
+
+      - name: Invalidate CloudFront cache for this PR's path
+        env:
+          DISTRIBUTION_ID: ${{ vars.STORYBOOK_CLOUDFRONT_DISTRIBUTION_ID }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/pr-$PR_NUMBER/*"
+
+      # T17 acceptance criterion (E3 §18): a deploy-time assertion that an
+      # unauthenticated request returns 401, failing the job otherwise.
+      # No credential is used here on purpose — this only needs to prove
+      # the *unauthenticated* path is blocked; the Basic-Auth credential
+      # itself never needs to reach CI (ADR-026's shared credential stays
+      # confined to Secrets Manager and the CloudFront KVS it's hashed
+      # into, per modules/storybook-hosting's own design).
+      - name: Deploy-time 401 assertion
+        env:
+          DOMAIN: ${{ vars.STORYBOOK_CLOUDFRONT_DOMAIN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" "https://$DOMAIN/pr-$PR_NUMBER/index.html")
+          if [ "$status" != "401" ]; then
+            echo "Expected 401 for an unauthenticated request to the Storybook preview, got $status"
+            exit 1
+          fi
+          echo "Confirmed: an unauthenticated request to the Storybook preview returns 401."
+
   comment:
     name: Comment preview URLs on PR
     if: github.event.action != 'closed'
-    needs: deploy
+    needs: [deploy, deploy-storybook]
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -181,6 +258,7 @@ jobs:
             --query "ServiceSummaryList[?ServiceName=='linguaai-preview-pr-$PR_NUMBER-web'].ServiceUrl | [0]" --output text)
           admin_url=$(aws apprunner list-services \
             --query "ServiceSummaryList[?ServiceName=='linguaai-preview-pr-$PR_NUMBER-admin'].ServiceUrl | [0]" --output text)
+          storybook_url="${{ vars.STORYBOOK_CLOUDFRONT_DOMAIN }}/pr-$PR_NUMBER/"
 
           gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --edit-last --create-if-none --body "$(cat <<COMMENT
           ### Preview environment
@@ -189,6 +267,7 @@ jobs:
           | --- | --- |
           | web | https://$web_url |
           | admin | https://$admin_url |
+          | Storybook (packages/ui) | https://$storybook_url (Basic-Auth gated — ADR-026) |
 
           Updated automatically on every push to this PR. Torn down when the PR closes.
           COMMENT
@@ -225,3 +304,28 @@ jobs:
             exit 0
           fi
           aws apprunner delete-service --service-arn "$service_arn"
+
+  # E3 T17 acceptance criterion: teardown-on-PR-close. Deletes this PR's
+  # S3 prefix only — the shared bucket/distribution/KVS/function
+  # themselves are account-level infrastructure (modules/storybook-
+  # hosting), never created or destroyed per PR.
+  teardown-storybook:
+    name: Tear down Storybook preview
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    environment: preview
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete this PR's Storybook S3 prefix (idempotent — no-op if already gone)
+        env:
+          BUCKET: ${{ vars.STORYBOOK_S3_BUCKET }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: aws s3 rm "s3://$BUCKET/pr-$PR_NUMBER/" --recursive
