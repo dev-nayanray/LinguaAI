@@ -2,25 +2,68 @@
 
 /*
  * Design tokens — DESIGN_SYSTEM.md §2 (color), §2.1 (spacing/elevation/
- * radius/z-index), §2.2 (motion), §3 (typography). This file is the single
- * source of truth for brand tokens; apps consume it via
+ * radius/z-index), §2.2 (motion), §3 (typography); E3 design document
+ * (docs/epics/E3-design-system-component-library.md) §12.1/§12.1a for the
+ * semantic/component tier and the typography architecture. This file is the
+ * single source of truth for brand tokens; apps consume it via
  * `@import "@linguaai/ui/styles.css"` rather than redeclaring values.
  *
  * Spacing intentionally has no override below: Tailwind v4's default
  * spacing scale (0, 1=4px, 2=8px, 3=12px, 4=16px, 6=24px, 8=32px, 12=48px,
  * 16=64px) already matches DESIGN_SYSTEM.md §2.1 exactly — verified against
  * Tailwind's own default theme, not reintroduced here.
+ *
+ * Theme-application mechanism (E3 §12.1): every token whose value differs
+ * between light and dark mode is declared ONCE, under one name, as a plain
+ * "raw" custom property in `:root` (light) and `[data-theme="dark"]` (dark),
+ * then surfaced to Tailwind via a paired `@theme inline` block. Plain
+ * `@theme` resolves custom properties into generated utility classes once,
+ * at build time — a later `[data-theme="dark"]` override would never be
+ * seen by classes already generated from a non-inline `@theme`.
+ * `@theme inline` instead makes the generated utility reference the custom
+ * property via `var()` at *runtime*, so a utility like `bg-surface-muted`
+ * correctly re-resolves whenever `[data-theme="dark"]` is toggled on an
+ * ancestor element. This is why every dual-valued token below has three
+ * parts: a `--raw-*` declaration in `:root`, the same name overridden in
+ * `[data-theme="dark"]`, and one line in the `@theme inline` block mapping
+ * the public token name to the raw variable.
  */
+
+/* Tailwind's built-in `dark:` variant defaults to `@media
+ * (prefers-color-scheme: dark)`. This package's dark mode is controlled by
+ * the `data-theme="dark"` attribute instead (set by Storybook's
+ * theme-switcher, and by whatever in-app theme toggle a later epic adds),
+ * independent of the OS preference — so `dark:` utilities (for anything not
+ * already expressed as a theme-aware token below) key off the same
+ * attribute, not a second, inconsistent switching mechanism. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
 @theme {
-  /* §2 Color system */
+  /* §2 Color system — brand identity anchors. Decorative/large-fill use
+   * only: never as a text or icon color, never as a white-text solid fill
+   * (see the `-solid`/`-text` variants below for functional/validated use;
+   * E3 §12.1 "Brand identity anchors"). Single value in both themes — a
+   * brand hue's own identity does not change with the surrounding theme. */
   --color-primary: #2563eb; /* Lingua Blue */
   --color-ai: #7c3aed; /* AI Purple — reserved for AI-originated content only */
   --color-accent: #06b6d4; /* Cyan — real-time communication contexts */
   --color-success: #22c55e;
   --color-warning: #f59e0b;
-  --color-bg: #f8fafc;
-  --color-bg-dark: #020617;
-  --color-text: #0f172a;
+
+  /* Solid-fill tokens (white text on a semantic-colored fill, ≥4.5:1,
+   * computed and validated in E3 §12.1 — same value both themes, since a
+   * fill color's own contrast against white doesn't change with theme).
+   * `--color-primary-solid`/`--color-ai-solid` are numerically identical to
+   * their brand anchors above (both already pass 4.5:1 white-on-fill); the
+   * other four are deliberately darker, separately-derived values, because
+   * their raw anchors fail white-on-fill badly (accent 2.428:1, success
+   * 2.279:1, warning 2.148:1 — computed in E3 §12.1). */
+  --color-primary-solid: #2563eb;
+  --color-ai-solid: #7c3aed;
+  --color-accent-solid: #0e7490;
+  --color-success-solid: #15803d;
+  --color-warning-solid: #b45309;
+  --color-danger-solid: #c81e1e;
 
   /* §2.1 Border radius — pill reserved for badges/tags/streak indicators */
   --radius-sm: 4px;
@@ -46,9 +89,51 @@
   --z-index-modal: 40;
   --z-index-toast: 50;
 
-  /* §3 Typography */
-  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  /* §3 Typography — font families. --font-sans's fallback stack corrected
+   * this pass to match E3 §12.1a's full documented value (the previously
+   * shipped value was missing -apple-system/Segoe UI/Roboto). */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-display: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+
+  /* E3 §12.1a Tier 1 — primitive type scale, matching DESIGN_SYSTEM.md §3's
+   * literal wording ("a fixed modular scale ... from xs ... through
+   * 4xl/5xl"). Line-height is its own named primitive per size, not a value
+   * that exists only in documentation — required so the Tier-2 `@utility
+   * type-*` blocks below have a real custom property to reference. */
+  --text-xs: 12px;
+  --text-xs-leading: 16px;
+  --text-sm: 14px;
+  --text-sm-leading: 20px;
+  --text-base: 16px;
+  --text-base-leading: 24px;
+  --text-lg: 18px;
+  --text-lg-leading: 28px;
+  --text-xl: 20px;
+  --text-xl-leading: 28px;
+  --text-2xl: 24px;
+  --text-2xl-leading: 32px;
+  --text-3xl: 30px;
+  --text-3xl-leading: 36px;
+  --text-4xl: 36px;
+  --text-4xl-leading: 40px;
+  --text-5xl: 48px;
+  --text-5xl-leading: 1; /* unitless, tight — matching Tailwind's own convention for display sizes */
+
+  /* E3 §12.1a font weight scale */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --font-weight-extrabold: 800;
+
+  /* E3 §12.1 breakpoints — matching DESIGN_SYSTEM.md §5's three-tier model
+   * exactly. `mobile` generates no meaningful Tailwind variant (mobile-first
+   * base/unprefixed styles already are the mobile styles) but is declared
+   * for completeness and as a defined value for downstream consumers
+   * (e.g. a future Flutter token export). */
+  --breakpoint-mobile: 0px;
+  --breakpoint-tablet: 768px;
+  --breakpoint-desktop: 1280px;
 
   /* §2.2 Motion — default easing curves (--ease-* is a real Tailwind v4
    * theme namespace, generating ease-entrance/ease-exit utilities
@@ -65,6 +150,98 @@
   --ease-exit: cubic-bezier(0.4, 0, 1, 1); /* ease-in, for exits */
 }
 
+/* ---- Dual-valued (light/dark) tokens — raw declarations ---- */
+
+:root {
+  /* Surfaces */
+  --raw-color-bg: #f8fafc;
+  --raw-color-surface: #ffffff;
+  --raw-color-surface-muted: #f1f5f9;
+  --raw-color-surface-elevated: #ffffff; /* same as surface — light-mode elevation is conveyed by shadow, not color */
+
+  /* Primary/default text — the single most-used text color in the library */
+  --raw-color-text: #0f172a;
+
+  /* Semantic hue-based text tokens (≥4.5:1 against every surface, computed
+   * in E3 §12.1). Also reused directly as the corresponding hue's
+   * border/UI-component color (≥3:1 is a strictly easier floor than the
+   * 4.5:1 these already clear) — there is no separate `-border` token per
+   * hue. */
+  --raw-color-primary-text: #2563eb;
+  --raw-color-ai-text: #7c3aed;
+  --raw-color-accent-text: #0e7490;
+  --raw-color-success-text: #15803d;
+  --raw-color-warning-text: #b45309;
+  --raw-color-danger-text: #c81e1e;
+  --raw-color-info-text: #0369a1;
+  --raw-color-neutral-text: #475569; /* muted/secondary body copy */
+
+  /* Default neutral border — every form input/card/table/unfocused control
+   * uses this by default, not a hue-specific color. Corrected in E3 §12.1
+   * (the original value failed WCAG 1.4.11's 3:1 floor by ~2.5–4x). */
+  --raw-color-border: #64748b;
+
+  /* Focus indicator — reuses --color-primary-text's values, formalized as
+   * its own token (E3 §12.1). */
+  --raw-color-focus-ring: #2563eb;
+
+  /* Disabled tokens — covered by WCAG's own stated exemption for inactive
+   * controls; recorded with concrete values rather than left undefined
+   * (E3 §12.1). */
+  --raw-color-disabled-bg: #e2e8f0;
+  --raw-color-disabled-text: #94a3b8;
+}
+
+[data-theme='dark'] {
+  --raw-color-bg: #020617;
+  --raw-color-surface: #0f172a;
+  --raw-color-surface-muted: #1e293b;
+  --raw-color-surface-elevated: #28324a;
+
+  --raw-color-text: #f1f5f9;
+
+  --raw-color-primary-text: #60a5fa;
+  --raw-color-ai-text: #a78bfa;
+  --raw-color-accent-text: #22d3ee;
+  --raw-color-success-text: #4ade80;
+  --raw-color-warning-text: #fbbf24;
+  --raw-color-danger-text: #f87171;
+  --raw-color-info-text: #38bdf8;
+  --raw-color-neutral-text: #94a3b8;
+
+  --raw-color-border: #94a3b8;
+  --raw-color-focus-ring: #60a5fa;
+
+  --raw-color-disabled-bg: #1e293b;
+  --raw-color-disabled-text: #64748b;
+}
+
+@theme inline {
+  --color-bg: var(--raw-color-bg);
+  --color-surface: var(--raw-color-surface);
+  --color-surface-muted: var(--raw-color-surface-muted);
+  --color-surface-elevated: var(--raw-color-surface-elevated);
+
+  --color-text: var(--raw-color-text);
+
+  --color-primary-text: var(--raw-color-primary-text);
+  --color-ai-text: var(--raw-color-ai-text);
+  --color-accent-text: var(--raw-color-accent-text);
+  --color-success-text: var(--raw-color-success-text);
+  --color-warning-text: var(--raw-color-warning-text);
+  --color-danger-text: var(--raw-color-danger-text);
+  --color-info-text: var(--raw-color-info-text);
+  --color-neutral-text: var(--raw-color-neutral-text);
+
+  --color-border: var(--raw-color-border);
+  --color-focus-ring: var(--raw-color-focus-ring);
+
+  --color-disabled-bg: var(--raw-color-disabled-bg);
+  --color-disabled-text: var(--raw-color-disabled-text);
+}
+
+/* ---- Motion utilities (Tailwind v4 has no --duration-* theme namespace) ---- */
+
 @utility duration-micro {
   transition-duration: var(--duration-micro);
 }
@@ -73,4 +250,85 @@
 }
 @utility duration-celebratory {
   transition-duration: var(--duration-celebratory);
+}
+
+/* `prefers-reduced-motion` support (E3 §12.1) — collapses every duration to
+ * near-zero (not literal 0, so transitionend/animationend still fire in
+ * browsers that treat a zero-duration transition as never starting) rather
+ * than removing the animation outright; celebratory feedback must still
+ * register, just without motion. Overriding the custom property here
+ * automatically cascades into every `@utility duration-*` class above via
+ * `var()`, with no separate override needed per utility. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-micro: 0.01ms;
+    --duration-standard: 0.01ms;
+    --duration-celebratory: 0.01ms;
+  }
+}
+
+/* ---- Tier 2 typography — semantic type tokens (E3 §12.1a) ----
+ * Tailwind v4 has no theme namespace that lets one custom property carry a
+ * font-size, line-height, weight, and family together, so each semantic
+ * token is a real, multi-declaration @utility block (the same construct
+ * already used for duration-* above) composing four Tier-1 primitives.
+ * Letter-spacing is deliberately omitted from every block below: every
+ * current token uses normal (default) tracking, and no requirement in
+ * DESIGN_SYSTEM.md §3 or the E3 design document calls for tighter/looser
+ * tracking on any of them — stated explicitly, not silently absent, per
+ * E3 §12.1a's own "not implemented" note. */
+
+@utility type-caption {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs-leading);
+  font-weight: var(--font-weight-regular);
+  font-family: var(--font-sans);
+}
+@utility type-body-sm {
+  font-size: var(--text-sm);
+  line-height: var(--text-sm-leading);
+  font-weight: var(--font-weight-regular);
+  font-family: var(--font-sans);
+}
+@utility type-body-md {
+  font-size: var(--text-base);
+  line-height: var(--text-base-leading);
+  font-weight: var(--font-weight-regular);
+  font-family: var(--font-sans);
+}
+@utility type-body-lg {
+  font-size: var(--text-lg);
+  line-height: var(--text-lg-leading);
+  font-weight: var(--font-weight-regular);
+  font-family: var(--font-sans);
+}
+@utility type-heading-md {
+  font-size: var(--text-xl);
+  line-height: var(--text-xl-leading);
+  font-weight: var(--font-weight-semibold);
+  font-family: var(--font-sans);
+}
+@utility type-heading-lg {
+  font-size: var(--text-2xl);
+  line-height: var(--text-2xl-leading);
+  font-weight: var(--font-weight-semibold);
+  font-family: var(--font-sans);
+}
+@utility type-heading-xl {
+  font-size: var(--text-3xl);
+  line-height: var(--text-3xl-leading);
+  font-weight: var(--font-weight-bold);
+  font-family: var(--font-sans);
+}
+@utility type-display-lg {
+  font-size: var(--text-4xl);
+  line-height: var(--text-4xl-leading);
+  font-weight: var(--font-weight-bold);
+  font-family: var(--font-display);
+}
+@utility type-display-xl {
+  font-size: var(--text-5xl);
+  line-height: var(--text-5xl-leading);
+  font-weight: var(--font-weight-extrabold);
+  font-family: var(--font-display);
 }

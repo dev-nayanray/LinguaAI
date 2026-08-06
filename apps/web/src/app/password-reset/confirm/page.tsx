@@ -4,8 +4,9 @@ import { Suspense, useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ApiError } from '@linguaai/auth-client';
 import { Button } from '@linguaai/ui';
+import { FormField, Input } from '@linguaai/ui/forms';
 
-import { FormError, FormField, TextInput } from '@/components/auth-form';
+import { FormError } from '@/components/auth-form';
 import { authClient } from '@/lib/auth-client';
 
 /** `POST /v1/auth/password-reset/confirm` (Part 6) — `token` arrives as a query param from the emailed reset link (not built here — no email delivery exists yet, T19's flagged gap). */
@@ -60,9 +61,8 @@ function PasswordResetConfirmForm() {
         <h1 className="text-2xl font-semibold">Choose a new password</h1>
 
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
-          <FormField label="New password" htmlFor="newPassword">
-            <TextInput
-              id="newPassword"
+          <FormField label="New password">
+            <Input
               name="newPassword"
               type="password"
               autoComplete="new-password"
@@ -73,9 +73,8 @@ function PasswordResetConfirmForm() {
             />
           </FormField>
 
-          <FormField label="Confirm new password" htmlFor="confirmPassword">
-            <TextInput
-              id="confirmPassword"
+          <FormField label="Confirm new password">
+            <Input
               name="confirmPassword"
               type="password"
               autoComplete="new-password"

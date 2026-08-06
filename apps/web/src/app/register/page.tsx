@@ -4,8 +4,9 @@ import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { ApiError } from '@linguaai/auth-client';
 import { Button } from '@linguaai/ui';
+import { FormField, Input } from '@linguaai/ui/forms';
 
-import { FormError, FormField, TextInput } from '@/components/auth-form';
+import { FormError } from '@/components/auth-form';
 import { authClient } from '@/lib/auth-client';
 
 /** `POST /v1/auth/register` (Part 6) — `locale`/`timezone` are captured from the browser rather than asked, matching CODING_STANDARDS.md's "don't ask the user for what the platform already knows" default. */
@@ -54,9 +55,8 @@ export default function RegisterPage() {
         <h1 className="text-2xl font-semibold">Create your account</h1>
 
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
-          <FormField label="Email" htmlFor="email">
-            <TextInput
-              id="email"
+          <FormField label="Email">
+            <Input
               name="email"
               type="email"
               autoComplete="email"
@@ -66,9 +66,8 @@ export default function RegisterPage() {
             />
           </FormField>
 
-          <FormField label="Display name" htmlFor="displayName">
-            <TextInput
-              id="displayName"
+          <FormField label="Display name">
+            <Input
               name="displayName"
               autoComplete="name"
               required
@@ -77,9 +76,8 @@ export default function RegisterPage() {
             />
           </FormField>
 
-          <FormField label="Password" htmlFor="password">
-            <TextInput
-              id="password"
+          <FormField label="Password">
+            <Input
               name="password"
               type="password"
               autoComplete="new-password"
@@ -90,7 +88,7 @@ export default function RegisterPage() {
             />
           </FormField>
 
-          <label className="flex items-start gap-2 text-sm text-text dark:text-neutral-50">
+          <label className="flex items-start gap-2 text-sm text-text">
             <input
               type="checkbox"
               className="mt-0.5"
@@ -100,7 +98,7 @@ export default function RegisterPage() {
             I agree to the Terms of Service and Privacy Policy
           </label>
 
-          <label className="flex items-start gap-2 text-sm text-text dark:text-neutral-50">
+          <label className="flex items-start gap-2 text-sm text-text">
             <input
               type="checkbox"
               className="mt-0.5"
@@ -117,7 +115,7 @@ export default function RegisterPage() {
           </Button>
         </form>
 
-        <p className="text-sm text-neutral-500">
+        <p className="text-sm text-neutral-text">
           Already have an account?{' '}
           <a href="/login" className="text-primary hover:underline">
             Log in

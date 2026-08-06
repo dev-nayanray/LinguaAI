@@ -63,11 +63,17 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
       }
 
       return (
+        // Re-themed onto E3's semantic token layer (E3 §12.1) — the
+        // hue-specific `-text` token doubles as its own border color (a
+        // strictly harder floor, 4.5:1, than the 3:1 a border needs), and
+        // the surrounding surface stays neutral: no danger-tinted
+        // *background* token is defined anywhere in the approved token
+        // set, so this does not invent one.
         <div
           role="alert"
-          className="flex flex-col items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-6 text-center dark:border-red-900 dark:bg-red-950"
+          className="flex flex-col items-center gap-3 rounded-lg border border-danger-text bg-surface p-6 text-center"
         >
-          <p className="text-sm font-medium text-red-900 dark:text-red-100">
+          <p className="text-sm font-medium text-danger-text">
             Something went wrong loading this section. Try again, or refresh the page if the problem
             continues.
           </p>

@@ -6,6 +6,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // E3 T3 (§6b) — see apps/web/vitest.config.ts for the same rationale.
+      '@ui': fileURLToPath(new URL('../../packages/ui/src', import.meta.url)),
     },
   },
   test: {

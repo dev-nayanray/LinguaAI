@@ -4,8 +4,9 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { ApiError, useSessionStore } from '@linguaai/auth-client';
 import { Button } from '@linguaai/ui';
+import { FormField, Input } from '@linguaai/ui/forms';
 
-import { FormError, FormField, TextInput } from '@/components/auth-form';
+import { FormError } from '@/components/auth-form';
 import { authClient } from '@/lib/auth-client';
 
 /**
@@ -81,7 +82,7 @@ export default function MfaEnrollPage() {
   if (loading || !user) {
     return (
       <main className="flex min-h-screen items-center justify-center p-8">
-        <p className="text-sm text-neutral-500">Loading…</p>
+        <p className="text-sm text-neutral-text">Loading…</p>
       </main>
     );
   }
@@ -89,7 +90,7 @@ export default function MfaEnrollPage() {
   if (done) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
-        <p className="text-sm text-green-700 dark:text-green-300">MFA enrollment complete.</p>
+        <p className="text-sm text-success-text">MFA enrollment complete.</p>
         <a href="/profile" className="text-sm text-primary hover:underline">
           Back to profile
         </a>
@@ -109,17 +110,16 @@ export default function MfaEnrollPage() {
         ) : (
           <form onSubmit={onVerify} className="space-y-4" noValidate>
             <div className="space-y-1 text-sm">
-              <p className="text-neutral-500">
+              <p className="text-neutral-text">
                 Add this secret to your authenticator app, then enter the 6-digit code it generates.
               </p>
-              <code className="block break-all rounded-md bg-neutral-100 p-2 text-xs dark:bg-neutral-800">
+              <code className="block break-all rounded-md bg-surface-muted p-2 text-xs">
                 {pending.secret}
               </code>
             </div>
 
-            <FormField label="6-digit code" htmlFor="code">
-              <TextInput
-                id="code"
+            <FormField label="6-digit code">
+              <Input
                 name="code"
                 inputMode="numeric"
                 pattern="\d{6}"

@@ -4,8 +4,9 @@ import { Suspense, useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ApiError, useSessionStore } from '@linguaai/auth-client';
 import { Button } from '@linguaai/ui';
+import { FormField, Input } from '@linguaai/ui/forms';
 
-import { FormError, FormField, FormSuccess, TextInput } from '@/components/auth-form';
+import { FormError, FormSuccess } from '@/components/auth-form';
 import { authClient } from '@/lib/auth-client';
 
 /**
@@ -62,9 +63,8 @@ function LoginForm() {
         )}
 
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
-          <FormField label="Email" htmlFor="email">
-            <TextInput
-              id="email"
+          <FormField label="Email">
+            <Input
               name="email"
               type="email"
               autoComplete="email"
@@ -74,9 +74,8 @@ function LoginForm() {
             />
           </FormField>
 
-          <FormField label="Password" htmlFor="password">
-            <TextInput
-              id="password"
+          <FormField label="Password">
+            <Input
               name="password"
               type="password"
               autoComplete="current-password"
@@ -93,7 +92,7 @@ function LoginForm() {
           </Button>
         </form>
 
-        <p className="flex justify-between text-sm text-neutral-500">
+        <p className="flex justify-between text-sm text-neutral-text">
           <a href="/register" className="text-primary hover:underline">
             Create account
           </a>

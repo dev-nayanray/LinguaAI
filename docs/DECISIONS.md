@@ -245,7 +245,7 @@ Format: Context → Decision → Consequences → Status.
 **Consequences:** One new runtime dependency; one consistent accessibility convention for every icon usage in the library instead of per-component invention; the re-export-indirection makes a future swap mechanical rather than architectural.
 **Security implications:** None beyond the existing Shadcn-CLI-adjacent supply-chain control (inherited from E1, unchanged).
 **Reversibility:** High, by design (the re-export module).
-**Status:** Proposed — pending Architecture Gate approval of E3's design, not self-approved.
+**Status:** Accepted (2026-08-05) — by explicit user direction to proceed with T4 rather than through an independent Architecture Gate review (§25 Q2's originally specified approval path). Recorded here as what actually happened, not as an Architecture Gate sign-off; see docs/epics/E3-design-system-component-library.md §25 Q2.
 
 ### ADR-026 — Storybook access control via CloudFront Function + CloudFront KeyValueStore, superseding the unbuildable Secrets-Manager-direct-read design
 
@@ -287,7 +287,7 @@ Format: Context → Decision → Consequences → Status.
 | ADR-022 | Narrow `BYPASSRLS` service role for cross-tenant operations                   | Accepted |
 | ADR-023 | Privileged-column protection: `REVOKE`/`GRANT` + `SECURITY DEFINER`           | Accepted |
 | ADR-024 | Flutter design-token export: build-only, never-committed artifact             | Proposed |
-| ADR-025 | `lucide-react` as the v1 icon library                                         | Proposed |
+| ADR-025 | `lucide-react` as the v1 icon library                                         | Accepted |
 | ADR-026 | Storybook access control: CloudFront Function + KeyValueStore                 | Proposed |
 
 New ADRs are appended, never renumbered or rewritten in place.

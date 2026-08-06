@@ -64,7 +64,7 @@ export default function ProfilePage() {
   if (loading || !user) {
     return (
       <main className="flex min-h-screen items-center justify-center p-8">
-        <p className="text-sm text-neutral-500">Loading your profile…</p>
+        <p className="text-sm text-neutral-text">Loading your profile…</p>
       </main>
     );
   }
@@ -76,19 +76,19 @@ export default function ProfilePage() {
 
         <dl className="space-y-2 text-sm">
           <div className="flex justify-between">
-            <dt className="text-neutral-500">Email</dt>
+            <dt className="text-neutral-text">Email</dt>
             <dd>{user.email}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-neutral-500">Display name</dt>
+            <dt className="text-neutral-text">Display name</dt>
             <dd>{user.displayName}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-neutral-500">Role</dt>
+            <dt className="text-neutral-text">Role</dt>
             <dd>{user.role}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-neutral-500">MFA enrolled</dt>
+            <dt className="text-neutral-text">MFA enrolled</dt>
             <dd>{user.mfaEnrolled ? 'Yes' : 'No'}</dd>
           </div>
         </dl>

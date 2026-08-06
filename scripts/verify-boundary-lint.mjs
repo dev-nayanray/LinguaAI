@@ -70,6 +70,21 @@ const checks = [
     command: 'pnpm exec eslint apps/web/src/features/__boundary_fixture_b__/index.ts --no-warn-ignored',
     expect: 'pass',
   },
+  {
+    // E3 T2 (docs/epics/E3-design-system-component-library.md §6a): the
+    // ui-package boundary — packages/* must never import packages/ui.
+    name: 'E3 ui-package: packages/* must not import packages/ui (violation)',
+    command: 'pnpm exec eslint packages/__boundary_fixture__/ui-violator.ts --no-warn-ignored',
+    expect: 'fail',
+    expectedText: 'boundaries/element-types',
+  },
+  {
+    // Control for the same rule, against a real, already-existing import —
+    // apps/* → packages/ui is the one direction this boundary must allow.
+    name: 'E3 ui-package: apps/* may import packages/ui (control, real import)',
+    command: 'pnpm exec eslint apps/web/src/app/login/page.tsx --no-warn-ignored',
+    expect: 'pass',
+  },
 ];
 
 let failures = 0;
