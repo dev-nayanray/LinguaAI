@@ -11,6 +11,7 @@ export {
   oauthEnvSchema,
   mfaEnvSchema,
   loginFailureEnvSchema,
+  aiGatewayEnvSchema,
   type NodeEnv,
   type ServerUrlEnv,
   type DatabaseEnv,
@@ -21,4 +22,5 @@ export {
   type OAuthEnv,
   type MfaEnv,
   type LoginFailureEnv,
+  type AiGatewayEnv,
 } from './schemas.js';
