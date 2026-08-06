@@ -1,0 +1,212 @@
+// E4 T10 — Analytics & platform domain (DATABASE.md §2.10, docs/epics/
+// E4-database-schema-core-data-layer.md §5/§9).
+//
+// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy of its own;
+// `LearningEvent.organizationId` is a plain FK into an already-RLS-
+// protected table (same reasoning as T9's `Subscription.organizationId`),
+// not a new tenant-isolation surface.
+//
+// Cross-domain references (`userId`, `organizationId`) are real Prisma
+// `@relation` fields, with matching back-relation arrays on
+// identity.prisma's `User`/`Organization` (ADR-030).
+//
+// `LearningEvent` and `AIUsageLog` reuse T5's partitioning mechanism
+// (native `PARTITION BY RANGE` + `pg_partman.create_parent()`, ADR-028)
+// per DATABASE.md §4's own instruction — decided once at T5, applied here
+// as a reuse, not re-decided (E4 §6.5). `NotificationLog`/
+// `NotificationPreference` are NOT partitioned — §4 names only
+// `LearningEvent`/`AIUsageLog` as high-write/append-only enough to need
+// it.
+//
+// RETROACTIVE FIX (not silently carried forward): DATABASE.md §6's
+// "append-only historical/event records" category explicitly names
+// `LearningEvent`, `AIUsageLog`, AND `ProficiencyLevelHistory` together
+// as anonymized-in-place via a **nulled** userId on account erasure — a
+// real mechanism requiring the column to be nullable, not just an
+// aspiration. `assessment.prisma`'s `ProficiencyLevelHistory.userId` was
+// built NOT NULL in T3, matching that domain's other (correctly NOT NULL)
+// tables instead of this specific stated category. Found while designing
+// this file's own `userId` columns against the same policy text; fixed
+// here via an `ALTER COLUMN ... DROP NOT NULL` in this domain's migration
+// — a safe, non-destructive relaxation, not a breaking change. `userId`
+// on `LearningEvent` and `AIUsageLog` is nullable from the start for the
+// same reason.
+//
+// JUDGMENT CALL (flagged, not silently assumed): `NotificationLog` is not
+// explicitly named in §6's "append-only historical" example list, but its
+// own delivery-analytics value plausibly outlives an erased user the same
+// way `LearningEvent` does, and it carries meaningfully less sensitive
+// content than raw PII — treated here as the same category (nullable
+// `userId`). `NotificationPreference` is treated as ordinary user-account
+// state instead (NOT NULL `userId`, cascades with the user like other
+// current-state PII) since a preference for an erased account has no
+// remaining purpose to preserve.
+//
+// `LearningEvent`'s columns mirror EVENT_ARCHITECTURE.md §2's fixed event
+// envelope (eventId/type/version/occurredAt/producedBy/tenantId/userId/
+// payload) directly — DATABASE.md §2.10 calls it "the persisted form of
+// the domain events cataloged in EVENT_ARCHITECTURE.md," not a
+// learning-specific-only log despite the table's name (its own examples —
+// "lesson completed, exercise answered, session started/ended" — are
+// given as examples, not an exhaustive type restriction).
+//
+// `AIUsageLog.agentPersona` uses a fresh `AgentPersona` enum here, not
+// `ai.prisma`'s `OrchestratorAgentPersona` — that enum is deliberately
+// restricted to the five personas capable of holding the Orchestrator
+// role (AI_SYSTEM.md §3); cost/latency/token metering must also cover
+// specialist-only personas (Grammar Coach, Pronunciation Coach) that can
+// never be an Orchestrator but still incur real model-call cost. This
+// `AgentPersona` is the full seven-persona superset.
+
+enum AgentPersona {
+  PERSONAL_LANGUAGE_TEACHER
+  CONVERSATION_PARTNER
+  GRAMMAR_COACH
+  PRONUNCIATION_COACH
+  VOCABULARY_COACH
+  WRITING_COACH
+  EXAM_COACH
+}
+
+enum NotificationChannel {
+  EMAIL
+  PUSH
+}
+
+enum NotificationType {
+  STREAK_REMINDER
+  MILESTONE
+  BILLING_RECEIPT
+  SECURITY_ALERT
+  MARKETING
+  SYSTEM
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  BOUNCED
+}
+
+/// Range-partitioned by month (createdAt) via pg_partman (ADR-028) — see
+/// this domain's migration for the hand-authored partitioning SQL, same
+/// mechanism T5 established for AIMessage, reused here per §6.5.
+/// `occurredAt` (the event's own semantic time, from the envelope) is
+/// deliberately NOT the partition key — `createdAt` (persistence time,
+/// always monotonic/current) avoids a late-arriving event needing to
+/// land in an old, possibly-archived partition.
+model LearningEvent {
+  id String @default(uuid()) @db.Uuid
+
+  /// Idempotency key (EVENT_ARCHITECTURE.md §2) for lookup/debugging only —
+  /// deliberately NOT unique. A `@@unique([eventId, createdAt])` was tried
+  /// first and found, via this domain's own verification script, not to
+  /// actually enforce eventId-level idempotency: `createdAt` defaults to
+  /// `now()` per insert, so a genuine retry of the same eventId lands at a
+  /// different `createdAt` and the composite constraint doesn't catch it
+  /// — Postgres correctly allowed two rows with the same eventId in a live
+  /// test. This isn't fixable by a differently-shaped DB constraint: a
+  /// partitioned table's unique constraints must include the partition
+  /// column (Postgres's own requirement), so no constraint on `eventId`
+  /// alone can span partitions. Real idempotent processing happens where
+  /// EVENT_ARCHITECTURE.md §1/§2 actually describe it — the Redis-backed
+  /// live event stream's consumer-side dedup — not this persisted
+  /// historical log's own insert path.
+  eventId String
+
+  /// `domain.entity.action` (EVENT_ARCHITECTURE.md §2), e.g. "learning.lesson.completed".
+  type       String
+  version    Int      @default(1)
+  occurredAt DateTime
+  producedBy String
+
+  userId         String? @db.Uuid
+  organizationId String? @db.Uuid
+
+  /// Event-specific fields (EVENT_ARCHITECTURE.md §2's payload) — structured, shape varies per event type.
+  payload Json
+
+  createdAt DateTime @default(now())
+
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([id, createdAt])
+  @@index([eventId])
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+  @@index([organizationId])
+  @@map("LearningEvent")
+}
+
+/// Range-partitioned by month (createdAt) via pg_partman — same reasoning
+/// as LearningEvent. Cost is stored as integer micro-USD (millionths of a
+/// dollar), never a float — AI per-call cost is often a fraction of a
+/// cent, finer-grained than Invoice's own minor-units-per-cent
+/// convention, same "never a float for money" principle.
+model AIUsageLog {
+  id String @default(uuid()) @db.Uuid
+
+  userId String? @db.Uuid
+
+  agentPersona  AgentPersona
+  modelId       String
+  promptVersion String?
+  inputTokens   Int
+  outputTokens  Int
+  costUsdMicros Int
+  latencyMs     Int
+
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([id, createdAt])
+  @@index([userId, createdAt])
+  @@index([agentPersona, createdAt])
+  @@map("AIUsageLog")
+}
+
+model NotificationLog {
+  id     String  @id @default(uuid()) @db.Uuid
+  userId String? @db.Uuid
+
+  channel       NotificationChannel
+  type          NotificationType
+  status        NotificationStatus  @default(PENDING)
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  failureReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@map("NotificationLog")
+}
+
+/// Per-user, per-channel, per-type opt-in/opt-out (DATABASE.md §2.10:
+/// "previously only delivery was modeled, not preference"). Ordinary
+/// current-state PII, not the append-only category — see this file's
+/// header comment.
+model NotificationPreference {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+
+  channel NotificationChannel
+  type    NotificationType
+  optedIn Boolean             @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([userId, channel, type])
+  @@map("NotificationPreference")
+}

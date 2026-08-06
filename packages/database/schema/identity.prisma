@@ -166,6 +166,10 @@ model User {
   certificates              Certificate[]
   subscriptions             Subscription[]
   entitlement               Entitlement?
+  learningEvents            LearningEvent[]
+  aiUsageLogs               AIUsageLog[]
+  notificationLogs          NotificationLog[]
+  notificationPreferences   NotificationPreference[]
 
   @@index([organizationId])
 }
@@ -408,10 +412,11 @@ model Organization {
   seatCount  Int      @default(0)
   createdAt  DateTime @default(now())
 
-  users         User[]
-  memberships   OrganizationMembership[]
-  auditLogs     AuditLog[]
-  subscriptions Subscription[]
+  users          User[]
+  memberships    OrganizationMembership[]
+  auditLogs      AuditLog[]
+  subscriptions  Subscription[]
+  learningEvents LearningEvent[]
 }
 
 model OrganizationMembership {

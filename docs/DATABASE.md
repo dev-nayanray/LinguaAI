@@ -42,7 +42,7 @@ The schema is organized into the following domains. Each maps to one or more Pri
 - `AssessmentAttempt` — one per placement/re-assessment run, status, started/completed timestamps.
 - `AssessmentResponse` — individual item responses within an attempt, per skill (reading/writing/listening/speaking/vocabulary/grammar).
 - `ProficiencyLevel` — **current** CEFR level per user, per language, per skill, with confidence score and last-updated source (assessment vs. inferred from ongoing performance).
-- `ProficiencyLevelHistory` _(added)_ — append-only record of every `ProficiencyLevel` change over time. `ProficiencyLevel` alone only holds current state and cannot answer "did this user's fluency actually improve" — the named MVP success metric (PRD.md §8) — so history is a required table, not an optimization.
+- `ProficiencyLevelHistory` _(added)_ — append-only record of every `ProficiencyLevel` change over time. `ProficiencyLevel` alone only holds current state and cannot answer "did this user's fluency actually improve" — the named MVP success metric (PRD.md §8) — so history is a required table, not an optimization. `userId` is nullable (§6's append-only-anonymized-in-place category — fixed in T10, see §2.10).
 - `LearningPlan` — the active personalized roadmap for a user/language: goal, target date, generated milestones.
 - `DailyGoal` — per-user, per-day target (XP, minutes, activities) and completion state.
 
@@ -125,11 +125,15 @@ Hierarchy: `Language → Course → Level → Unit → Lesson → Activity → E
 
 ### 2.10 Analytics & platform (modules 23, 30)
 
-- `LearningEvent` — append-only event log (lesson completed, exercise answered, session started/ended) — the source for analytics aggregation, partitioned by month given expected volume. Structurally, this table is the persisted form of the domain events cataloged in EVENT_ARCHITECTURE.md.
-- `AIUsageLog` — per-request AI cost/latency/token metering, keyed by user, agent, model, `promptVersion` — critical for the cost controls in AI_SYSTEM.md §8 / AI_GOVERNANCE.md §5.
+**Status: Implemented (schema only) — Epic E4 T10** (docs/epics/E4-database-schema-core-data-layer.md). Schema/migration exist in `packages/database`; the application logic (event publishing/consumption, cost dashboards, notification delivery) is separate, later epic scope (E16/E17).
+
+- `LearningEvent` — append-only event log (lesson completed, exercise answered, session started/ended) — the source for analytics aggregation, partitioned by month given expected volume. Structurally, this table is the persisted form of the domain events cataloged in EVENT_ARCHITECTURE.md — its columns mirror that document's §2 event envelope (`eventId`/`type`/`version`/`occurredAt`/`producedBy`/`tenantId`→`organizationId`/`userId`/`payload`) directly, not just the three named example event types. `eventId` is a plain (non-unique) index, not a uniqueness constraint — found via direct testing that a partitioned table's unique-constraint requirement (must include the partition column) makes a true cross-partition `eventId` uniqueness guarantee structurally impossible here; idempotent processing is EVENT_ARCHITECTURE.md §1/§2's Redis-backed live-stream consumer concern, not this historical log's insert path.
+- `AIUsageLog` — per-request AI cost/latency/token metering, keyed by user, agent, model, `promptVersion` — critical for the cost controls in AI_SYSTEM.md §8 / AI_GOVERNANCE.md §5. Cost stored as integer micro-USD, never a float.
 - `NotificationLog` — delivery record per notification (module 25), channel, status.
 - `NotificationPreference` _(added)_ — per-user, per-channel, per-notification-type opt-in/opt-out (previously only delivery was modeled, not preference) — required for the granular consent PRD.md and SECURITY.md commit to.
 - `AuditLog` — see §2.1, already implemented (E2). Listed here too since it's this domain's own action trail (modules 24, 26), not because it's separate new work.
+
+**Retroactive fix (T10):** §6's soft-delete policy explicitly names `LearningEvent`, `AIUsageLog`, and §2.2's `ProficiencyLevelHistory` together as anonymized-in-place via a **nulled** `userId` on account erasure — `ProficiencyLevelHistory.userId` was built `NOT NULL` in T3 (matching that domain's other tables instead of this specific stated policy); corrected to nullable here via a safe `ALTER COLUMN ... DROP NOT NULL`, confirmed working (not just schema-valid) by nulling a real row in the verification script.
 
 ### 2.11 Reserved for future phases (schema-planned, not built at MVP)
 

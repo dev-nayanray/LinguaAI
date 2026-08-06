@@ -114,8 +114,17 @@ model ProficiencyLevelHistory {
   // it) so a fluency-trend query never has to join through the mutable
   // ProficiencyLevel row — DATABASE.md §4's own (userId, languageId)
   // composite-index guidance, applied here.
-  userId     String @db.Uuid
-  languageId String @db.Uuid
+  //
+  // userId is nullable -- fixed in E4 T10 after discovering DATABASE.md
+  // §6 explicitly names this table (alongside LearningEvent/AIUsageLog)
+  // in the "append-only historical/event records... anonymized in place
+  // (userId nulled/pseudonymized)" category, which requires a nullable
+  // column to actually null on account erasure. Built NOT NULL here in
+  // T3, matching this domain's other tables instead of this specific
+  // stated policy; corrected via an ALTER COLUMN ... DROP NOT NULL in
+  // T10's migration (safe, non-destructive).
+  userId     String? @db.Uuid
+  languageId String  @db.Uuid
 
   skill      Skill
   cefrLevel  CefrLevel
@@ -124,7 +133,7 @@ model ProficiencyLevelHistory {
   recordedAt DateTime          @default(now())
 
   proficiencyLevel ProficiencyLevel @relation(fields: [proficiencyLevelId], references: [id])
-  user             User             @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  user             User?            @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   language         Language         @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@index([userId, languageId, skill])
