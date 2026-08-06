@@ -164,6 +164,8 @@ model User {
   moderationActions         ModerationAction[]
   mockTestAttempts          MockTestAttempt[]
   certificates              Certificate[]
+  subscriptions             Subscription[]
+  entitlement               Entitlement?
 
   @@index([organizationId])
 }
@@ -406,9 +408,10 @@ model Organization {
   seatCount  Int      @default(0)
   createdAt  DateTime @default(now())
 
-  users       User[]
-  memberships OrganizationMembership[]
-  auditLogs   AuditLog[]
+  users         User[]
+  memberships   OrganizationMembership[]
+  auditLogs     AuditLog[]
+  subscriptions Subscription[]
 }
 
 model OrganizationMembership {
