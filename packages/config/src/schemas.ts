@@ -114,6 +114,25 @@ export const loginFailureEnvSchema = z.object({
 });
 export type LoginFailureEnv = z.infer<typeof loginFailureEnvSchema>;
 
+/**
+ * Consumed by `services/ai-engine`'s gateway module (E5 T1 — the first
+ * epic to actually need this fragment; see this file's own header note
+ * on why AI/LLM config wasn't scaffolded speculatively ahead of E5).
+ * `AI_GATEWAY_DEFAULT_PROVIDER` picks the Router's primary generation
+ * provider; the other configured provider (whichever of Anthropic/OpenAI
+ * isn't primary) is the failover target (ARCHITECTURE.md §7.1). Both API
+ * keys are required even though only one provider is primary at a time —
+ * failover with no working secondary credential is not real failover.
+ */
+export const aiGatewayEnvSchema = z.object({
+  AI_GATEWAY_DEFAULT_PROVIDER: z.enum(['anthropic', 'openai']).default('anthropic'),
+  ANTHROPIC_API_KEY: z.string().min(1),
+  OPENAI_API_KEY: z.string().min(1),
+  AI_MODEL_TEACHER_DEFAULT: z.string().min(1),
+  AI_MODEL_ASSESSMENT_DEFAULT: z.string().min(1),
+});
+export type AiGatewayEnv = z.infer<typeof aiGatewayEnvSchema>;
+
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
 export type ServerUrlEnv = z.infer<typeof serverUrlEnvSchema>;
 export type DatabaseEnv = z.infer<typeof databaseEnvSchema>;

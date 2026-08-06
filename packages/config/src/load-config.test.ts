@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { ConfigValidationError } from './errors.js';
 import { loadConfig } from './load-config.js';
-import { databaseEnvSchema, nodeEnvSchema, redisEnvSchema } from './schemas.js';
+import { aiGatewayEnvSchema, databaseEnvSchema, nodeEnvSchema, redisEnvSchema } from './schemas.js';
 
 describe('loadConfig', () => {
   it('returns the parsed, typed config when all required vars are present and valid', () => {
@@ -78,6 +78,30 @@ describe('loadConfig', () => {
 
     it('redisEnvSchema requires a valid REDIS_URL', () => {
       expect(() => loadConfig(redisEnvSchema, {})).toThrow(/REDIS_URL/);
+    });
+
+    it('aiGatewayEnvSchema defaults AI_GATEWAY_DEFAULT_PROVIDER to "anthropic" but still requires both API keys and both model vars', () => {
+      expect(() => loadConfig(aiGatewayEnvSchema, {})).toThrow(ConfigValidationError);
+
+      const result = loadConfig(aiGatewayEnvSchema, {
+        ANTHROPIC_API_KEY: 'sk-ant-test',
+        OPENAI_API_KEY: 'sk-oai-test',
+        AI_MODEL_TEACHER_DEFAULT: 'claude-sonnet-5',
+        AI_MODEL_ASSESSMENT_DEFAULT: 'claude-sonnet-5',
+      });
+      expect(result.AI_GATEWAY_DEFAULT_PROVIDER).toBe('anthropic');
+    });
+
+    it('aiGatewayEnvSchema rejects an unrecognized provider value', () => {
+      expect(() =>
+        loadConfig(aiGatewayEnvSchema, {
+          AI_GATEWAY_DEFAULT_PROVIDER: 'someoneelse',
+          ANTHROPIC_API_KEY: 'sk-ant-test',
+          OPENAI_API_KEY: 'sk-oai-test',
+          AI_MODEL_TEACHER_DEFAULT: 'claude-sonnet-5',
+          AI_MODEL_ASSESSMENT_DEFAULT: 'claude-sonnet-5',
+        }),
+      ).toThrow(ConfigValidationError);
     });
 
     it('fragments merge together into one composite schema, as a consuming app would', () => {
