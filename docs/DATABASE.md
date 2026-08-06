@@ -63,6 +63,8 @@ Hierarchy: `Language → Course → Level → Unit → Lesson → Activity → E
 
 ### 2.4 Vocabulary intelligence (module 6)
 
+**Status: Implemented (schema only) — Epic E4 T4** (docs/epics/E4-database-schema-core-data-layer.md). Schema/migration exist in `packages/database`; the application logic that surfaces/reviews vocabulary is separate, later epic scope.
+
 - `VocabularyItem` — a word/phrase in a target language with translations, part of speech, audio, example sentences.
 - `UserVocabulary` — per-user SRS state for a `VocabularyItem`: ease factor, interval, repetitions, next review date (SM-2-derivative algorithm — see AI_SYSTEM.md for AI-assisted example generation).
 - `PersonalDictionary` — user-saved words/phrases sourced from any module (reading, camera translation, conversation).

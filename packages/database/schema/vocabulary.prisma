@@ -1,0 +1,115 @@
+// E4 T4 — Vocabulary intelligence domain (DATABASE.md §2.4, docs/epics/
+// E4-database-schema-core-data-layer.md §5/§9).
+//
+// Not tenant-scoped (E4 §3.3, confirmed) — no RLS policy, no
+// organizationId column on anything here.
+//
+// Same cross-domain-reference rule as T2/T3: `userId`/`languageId` are
+// plain scalars + a manual FK in this domain's companion raw-SQL
+// migration, never a Prisma `@relation` back-coupling another domain's
+// schema file. Relations within this file use normal Prisma `@relation`s.
+
+enum PartOfSpeech {
+  NOUN
+  VERB
+  ADJECTIVE
+  ADVERB
+  PRONOUN
+  PREPOSITION
+  CONJUNCTION
+  INTERJECTION
+  PHRASE
+  OTHER
+}
+
+enum VocabularySource {
+  READING
+  CAMERA_TRANSLATION
+  CONVERSATION
+  MANUAL
+  OTHER
+}
+
+/// Curated, shared vocabulary catalog — not per-user. DATABASE.md §2.4:
+/// "a word/phrase in a target language with translations, part of
+/// speech, audio, example sentences."
+model VocabularyItem {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Cross-domain — see this file's header comment. References content.prisma's Language.
+  languageId String @db.Uuid
+
+  term             String
+  partOfSpeech     PartOfSpeech
+  /// Keyed by target UI-language code (e.g. {"en": "hello", "fr": "bonjour"}) — a user may see this vocabulary item translated into whichever UI language they're using, not just one fixed language.
+  translations     Json
+  audioUrl         String?
+  /// Array of {sentence, translation?} objects — structured, never raw HTML.
+  exampleSentences Json?
+  deletedAt        DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  userVocabulary     UserVocabulary[]
+  personalDictionary PersonalDictionary[]
+
+  @@index([languageId])
+  @@map("VocabularyItem")
+}
+
+/// Per-user SRS (spaced-repetition) state for a VocabularyItem —
+/// SM-2-derivative algorithm fields (DATABASE.md §2.4). AI-assisted
+/// example generation referenced there is AI_SYSTEM.md's concern, not
+/// this schema's.
+model UserVocabulary {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String @db.Uuid
+
+  vocabularyItemId String @db.Uuid
+
+  /// SM-2 standard starting ease factor.
+  easeFactor     Float     @default(2.5)
+  intervalDays   Int       @default(0)
+  repetitions    Int       @default(0)
+  nextReviewAt   DateTime  @default(now())
+  lastReviewedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  vocabularyItem VocabularyItem @relation(fields: [vocabularyItemId], references: [id])
+
+  @@unique([userId, vocabularyItemId])
+  @@index([userId, nextReviewAt])
+  @@map("UserVocabulary")
+}
+
+/// User-saved words/phrases from any module (DATABASE.md §2.4) — a
+/// lightweight bookmark, not necessarily matching a curated
+/// VocabularyItem (camera translation or conversation can surface a term
+/// the catalog has never seen). `vocabularyItemId` links it when a match
+/// exists; the term/translation are always stored directly regardless,
+/// so this table never depends on a catalog entry existing.
+model PersonalDictionary {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String @db.Uuid
+
+  /// Cross-domain — see this file's header comment. References content.prisma's Language.
+  languageId String @db.Uuid
+
+  term        String
+  translation String?
+  source      VocabularySource
+  notes       String?
+
+  vocabularyItemId String?         @db.Uuid
+  vocabularyItem   VocabularyItem? @relation(fields: [vocabularyItemId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, languageId])
+  @@index([vocabularyItemId])
+  @@map("PersonalDictionary")
+}
