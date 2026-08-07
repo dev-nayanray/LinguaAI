@@ -2,6 +2,8 @@ import type { AIAgentSession, AIMessage, PrismaClient } from '@linguaai/database
 
 import type { GenerateResponse } from '../gateway/model-provider.interface.js';
 import type { RouterService } from '../gateway/router.service.js';
+import type { MemoryManagerService } from '../memory/memory-manager.service.js';
+import type { RetrievedMemory } from '../memory/memory-manager.types.js';
 import type { PromptManagerService } from '../prompts/prompt-manager.service.js';
 import { OrchestratorService } from './orchestrator.service.js';
 import { RollingSummaryCache } from './rolling-summary.cache.js';
@@ -18,6 +20,8 @@ function fakeSession(overrides: Partial<AIAgentSession> = {}): AIAgentSession {
     orchestratorAgent: 'CONVERSATION_PARTNER',
     specialistInvocations: null,
     status: 'ACTIVE',
+    rollingSummary: null,
+    summarizedThroughAt: null,
     startedAt: new Date('2026-01-01T00:00:00Z'),
     endedAt: null,
     createdAt: new Date('2026-01-01T00:00:00Z'),
@@ -82,6 +86,12 @@ function fakePromptManager(): jest.Mocked<Pick<PromptManagerService, 'getSystemP
   };
 }
 
+function fakeMemoryManager(
+  memories: RetrievedMemory[] = [],
+): jest.Mocked<Pick<MemoryManagerService, 'retrieveRelevantMemories'>> {
+  return { retrieveRelevantMemories: jest.fn().mockResolvedValue(memories) };
+}
+
 function fakeGenerateResponse(overrides: Partial<GenerateResponse> = {}): GenerateResponse {
   return {
     content: 'a reply',
@@ -101,6 +111,7 @@ describe('OrchestratorService', () => {
         prisma,
         fakeRouter() as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
         new RollingSummaryCache(),
       );
 
@@ -124,6 +135,7 @@ describe('OrchestratorService', () => {
         prisma,
         fakeRouter() as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
         new RollingSummaryCache(),
       );
 
@@ -147,6 +159,7 @@ describe('OrchestratorService', () => {
         prisma,
         router as unknown as RouterService,
         promptManager as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
         new RollingSummaryCache(),
       );
 
@@ -193,6 +206,7 @@ describe('OrchestratorService', () => {
         prisma,
         router as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
         new RollingSummaryCache(),
       );
 
@@ -204,7 +218,88 @@ describe('OrchestratorService', () => {
       expect(request.systemPrompt).toBe('You are the persona.');
     });
 
-    it('folds older turns into a rolling summary once the unsummarized tail exceeds the trigger, retaining only the most recent turns verbatim', async () => {
+    it("retrieves relevant memories query-texted against the learner's message and injects them into the system prompt", async () => {
+      const prisma = fakePrisma({ messages: buildMessages(1) });
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(fakeGenerateResponse());
+      const memoryManager = fakeMemoryManager([
+        { id: 'mem-1', category: 'MISTAKE', fact: 'confuses ser/estar', confidence: 0.9 },
+      ]);
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        memoryManager as unknown as MemoryManagerService,
+        new RollingSummaryCache(),
+      );
+
+      await service.sendMessage({
+        sessionId: 'session-1',
+        userMessage: 'how do I say...',
+        variables: {},
+      });
+
+      expect(memoryManager.retrieveRelevantMemories).toHaveBeenCalledWith({
+        userId: 'user-1',
+        languageId: 'lang-1',
+        queryText: 'how do I say...',
+      });
+      const request = router.generate.mock.calls[0]![1];
+      expect(request.systemPrompt).toContain('What you already know about this learner:');
+      expect(request.systemPrompt).toContain('confuses ser/estar');
+    });
+
+    it('does not add a memory section to the system prompt when no memories are retrieved', async () => {
+      const prisma = fakePrisma({ messages: buildMessages(1) });
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(fakeGenerateResponse());
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager([]) as unknown as MemoryManagerService,
+        new RollingSummaryCache(),
+      );
+
+      await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
+
+      const request = router.generate.mock.calls[0]![1];
+      expect(request.systemPrompt).toBe('You are the persona.');
+    });
+
+    it('falls back to the durable AIAgentSession.rollingSummary/summarizedThroughAt when the in-process cache misses', async () => {
+      const boundary = new Date('2026-01-01T00:00:10Z');
+      const messages = [
+        fakeMessage({ id: 'old', createdAt: new Date('2026-01-01T00:00:00Z') }),
+        fakeMessage({ id: 'recent', createdAt: new Date('2026-01-01T00:00:20Z') }),
+      ];
+      const prisma = fakePrisma({
+        session: { rollingSummary: 'durable prior summary', summarizedThroughAt: boundary },
+        messages,
+      });
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(fakeGenerateResponse());
+      const cache = new RollingSummaryCache();
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        cache,
+      );
+
+      await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
+
+      const request = router.generate.mock.calls[0]![1];
+      expect(request.systemPrompt).toContain('durable prior summary');
+      expect(request.messages).toHaveLength(1);
+      expect(cache.get('session-1')?.summary).toBe('durable prior summary');
+    });
+
+    it('folds older turns into a rolling summary once the unsummarized tail exceeds the trigger, retaining only the most recent turns verbatim, and persists it durably', async () => {
       const messages = buildMessages(ROLLING_SUMMARY_TRIGGER_MESSAGE_COUNT + 2);
       const prisma = fakePrisma({ messages });
       const router = fakeRouter();
@@ -217,6 +312,7 @@ describe('OrchestratorService', () => {
         prisma,
         router as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
         cache,
       );
 
@@ -240,6 +336,10 @@ describe('OrchestratorService', () => {
       expect(replyCall[1].systemPrompt).toContain('a fresh summary');
 
       expect(cache.get('session-1')?.summary).toBe('a fresh summary');
+      expect(prisma.aIAgentSession.update).toHaveBeenCalledWith({
+        where: { id: 'session-1' },
+        data: { rollingSummary: 'a fresh summary', summarizedThroughAt: expect.any(Date) },
+      });
       expect(result.assistantMessage).toBe('the real reply');
     });
 
@@ -255,6 +355,7 @@ describe('OrchestratorService', () => {
         prisma,
         router as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
         cache,
       );
 
@@ -283,6 +384,7 @@ describe('OrchestratorService', () => {
         prisma,
         router as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
         cache,
       );
 
@@ -305,6 +407,7 @@ describe('OrchestratorService', () => {
         prisma,
         fakeRouter() as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
         cache,
       );
 

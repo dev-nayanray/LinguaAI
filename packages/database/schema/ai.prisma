@@ -126,6 +126,10 @@ model AIAgentSession {
   /// Specialist tool invocations during this session (Grammar/Pronunciation Coach critiques) — AI_SYSTEM.md §3. Structured, auditable; not itself a relation since specialists don't own rows here, they return critique objects the Orchestrator consumes.
   specialistInvocations Json?
   status                AgentSessionStatus       @default(ACTIVE)
+  /// Durable rolling-summary persistence (AI_SYSTEM.md §5, E5 §3.5 finding #2 — closed here, T6). Null until a session's message count first crosses the Orchestrator's summarization trigger (T4); before that, full turn-by-turn history is short-term/in-process only, as AI_SYSTEM.md §5 already describes. Not itself encrypted — unlike AIMessage.content, a *summary* of a conversation carries materially less sensitive detail than the raw turns, and encrypting it would block the direct SQL consolidation queries a future scheduled hygiene job (AI_SYSTEM.md §5) would need; flagged here as a real, deliberate asymmetry, not an oversight.
+  rollingSummary        String?                  @db.Text
+  /// The createdAt of the last AIMessage folded into rollingSummary — mirrors OrchestratorService's own in-process RollingSummaryCacheEntry.summarizedThroughCreatedAt (T4) exactly, now durable across a process restart or a different Fargate replica handling the next turn.
+  summarizedThroughAt   DateTime?
   startedAt             DateTime                 @default(now())
   endedAt               DateTime?
   createdAt             DateTime                 @default(now())
@@ -196,10 +200,17 @@ model AIMemoryEntry {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
+  /// Memory hygiene (AI_SYSTEM.md §5, E5 §3.5 finding #1 — closed here, T6): "memory entries are versioned/superseded rather than unboundedly appended." Points forward to the entry that replaced this one (a correction, or a consolidation of several stale entries into one — the scheduled consolidation job AI_SYSTEM.md §5 names is a real, separate gap, not built by this task; flagged in RISK_REGISTER.md). Null means this entry is current/active. `onDelete: SetNull` — deleting a superseding entry (e.g. a further correction, or bulk pruning) clears old entries' forward pointer rather than being blocked by or cascading through them; GDPR account-deletion erases a user's entire chain atomically regardless, so this only matters for a single-entry deletion outside that path.
+  supersededByEntryId String? @db.Uuid
+
   user     User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   language Language @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
+  supersededByEntry AIMemoryEntry?  @relation("MemoryEntrySupersession", fields: [supersededByEntryId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  supersedesEntries AIMemoryEntry[] @relation("MemoryEntrySupersession")
+
   @@index([userId, languageId])
+  @@index([supersededByEntryId])
   @@map("AIMemoryEntry")
 }
 

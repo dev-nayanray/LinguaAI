@@ -4,6 +4,7 @@ import { ObservabilityModule, RequestLoggingMiddleware } from '@linguaai/observa
 import { RegistryModule } from './agents/registry/registry.module.js';
 import { GatewayModule } from './gateway/gateway.module.js';
 import { HealthController } from './health/health.controller.js';
+import { MemoryModule } from './memory/memory.module.js';
 import { OrchestratorModule } from './orchestrator/orchestrator.module.js';
 import { PromptModule } from './prompts/prompt.module.js';
 
@@ -13,6 +14,7 @@ import { PromptModule } from './prompts/prompt.module.js';
     GatewayModule,
     PromptModule,
     RegistryModule,
+    MemoryModule,
     OrchestratorModule,
   ],
   controllers: [HealthController],

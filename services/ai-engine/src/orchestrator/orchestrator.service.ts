@@ -4,6 +4,8 @@ import type { AIMessage, AIMessageRole, PrismaClient } from '@linguaai/database'
 import { AI_ENGINE_PRISMA_CLIENT } from '../database/database.config.js';
 import type { ChatMessage, ChatRole } from '../gateway/model-provider.interface.js';
 import { RouterService } from '../gateway/router.service.js';
+import { MemoryManagerService } from '../memory/memory-manager.service.js';
+import type { RetrievedMemory } from '../memory/memory-manager.types.js';
 import { PromptManagerService } from '../prompts/prompt-manager.service.js';
 import {
   ROLLING_SUMMARY_RETAIN_RECENT_COUNT,
@@ -42,9 +44,16 @@ function transcriptOf(messages: AIMessage[]): string {
  * structurally no code path for a second persona to post into the same
  * session.
  *
- * Does not write `AIUsageLog` (T9's Cost Meter) or read `AIMemoryEntry`
- * (T6's Memory Manager) — both real, named gaps this task does not close,
- * consistent with E5 §9's own task boundaries.
+ * Does not write `AIUsageLog` (T9's Cost Meter) — a real, named gap this
+ * task does not close, consistent with E5 §9's own task boundaries.
+ *
+ * Memory retrieval (T6, AI_MemoryManagerService) runs on every
+ * `sendMessage` call, query-texted against the learner's own message —
+ * a deliberate, flagged adaptation of AI_SYSTEM.md §5's literal "at
+ * session start" wording: a per-turn query is always at least as
+ * relevant as a one-time session-start snapshot (which would go stale
+ * the moment a session's topic shifts), and doesn't require inventing a
+ * second in-process cache layer purely to match that phrasing literally.
  */
 @Injectable()
 export class OrchestratorService {
@@ -52,6 +61,7 @@ export class OrchestratorService {
     @Inject(AI_ENGINE_PRISMA_CLIENT) private readonly prisma: PrismaClient,
     private readonly router: RouterService,
     private readonly promptManager: PromptManagerService,
+    private readonly memoryManager: MemoryManagerService,
     private readonly rollingSummaryCache: RollingSummaryCache,
   ) {}
 
@@ -88,14 +98,23 @@ export class OrchestratorService {
     const { contextMessages, summarySuffix } = await this.buildContext(
       input.sessionId,
       allMessages,
+      {
+        rollingSummary: session.rollingSummary,
+        summarizedThroughAt: session.summarizedThroughAt,
+      },
     );
+    const memories = await this.memoryManager.retrieveRelevantMemories({
+      userId: session.userId,
+      languageId: session.languageId,
+      queryText: input.userMessage,
+    });
     const { text: personaPrompt, promptVersion } = this.promptManager.getSystemPrompt(
       session.orchestratorAgent,
       input.variables,
     );
 
     const response = await this.router.generate('teacher', {
-      systemPrompt: summarySuffix ? `${personaPrompt}${summarySuffix}` : personaPrompt,
+      systemPrompt: `${personaPrompt}${memorySuffixFor(memories)}${summarySuffix}`,
       messages: contextMessages,
     });
 
@@ -129,12 +148,29 @@ export class OrchestratorService {
    * into a fresh summary via its own dedicated model call — this is the
    * one piece of real, if provisionally-thresholded, rolling
    * summarization logic AI_SYSTEM.md §5 requires.
+   *
+   * Read-through / write-through against `AIAgentSession.rollingSummary`/
+   * `summarizedThroughAt` (T6's own schema addition, closing T4's own
+   * flagged gap): an in-process cache miss (a restart, or a different
+   * Fargate replica handling this turn) first checks the durable row
+   * before falling all the way back to resummarizing full history: cheap,
+   * always correct, never a wasted model call when the durable value is
+   * already there.
    */
   private async buildContext(
     sessionId: string,
     allMessages: AIMessage[],
+    durable: { rollingSummary: string | null; summarizedThroughAt: Date | null },
   ): Promise<{ contextMessages: ChatMessage[]; summarySuffix: string }> {
-    const cached = this.rollingSummaryCache.get(sessionId);
+    let cached = this.rollingSummaryCache.get(sessionId);
+    if (!cached && durable.rollingSummary !== null && durable.summarizedThroughAt !== null) {
+      cached = {
+        summary: durable.rollingSummary,
+        summarizedThroughCreatedAt: durable.summarizedThroughAt,
+      };
+      this.rollingSummaryCache.set(sessionId, cached);
+    }
+
     const tail = cached
       ? allMessages.filter((m) => m.createdAt > cached.summarizedThroughCreatedAt)
       : allMessages;
@@ -154,6 +190,10 @@ export class OrchestratorService {
     this.rollingSummaryCache.set(sessionId, {
       summary: newSummary,
       summarizedThroughCreatedAt: boundary,
+    });
+    await this.prisma.aIAgentSession.update({
+      where: { id: sessionId },
+      data: { rollingSummary: newSummary, summarizedThroughAt: boundary },
     });
 
     return {
@@ -180,4 +220,12 @@ export class OrchestratorService {
 
 function summarySuffixFor(summary: string): string {
   return `\n\nSummary of the conversation so far:\n${summary}`;
+}
+
+function memorySuffixFor(memories: RetrievedMemory[]): string {
+  if (memories.length === 0) {
+    return '';
+  }
+  const lines = memories.map((m) => `- (${m.category}) ${m.fact}`).join('\n');
+  return `\n\nWhat you already know about this learner:\n${lines}`;
 }
