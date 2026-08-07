@@ -14,11 +14,11 @@ export interface ObjectiveScoreResult {
  * packages/database/scripts/seed.ts): `{ correctIndex }` for
  * MULTIPLE_CHOICE, `{ acceptable: string[] }` for FILL_IN_BLANK.
  *
- * WRITING (OPEN_RESPONSE) is AI-scored by ai-engine (E6 T4/T5), never
- * reaches this function in practice — `AdaptiveItemSelectionService`'s own
- * skill order (ADR-038) never serves a WRITING item in T2. The throw below
- * is a defensive guard against that invariant breaking, not a real runtime
- * path today.
+ * WRITING (OPEN_RESPONSE) is AI-scored by ai-engine (E6 T4/T5) — never
+ * reaches this function: `AssessmentService.submitResponse` (E6-T7)
+ * branches to `scoreWritingItem` before this is ever called for an
+ * OPEN_RESPONSE item. The throw below is a defensive guard against that
+ * branch itself breaking, not a real runtime path today.
  */
 export function scoreObjectiveResponse(
   item: Pick<AssessmentItem, 'itemType' | 'correctAnswer'>,

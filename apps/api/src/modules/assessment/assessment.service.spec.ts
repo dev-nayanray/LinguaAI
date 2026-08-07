@@ -14,6 +14,7 @@ import type {
 
 import type { DomainEventPublisher } from '../../events/index.js';
 import type { RequestUser } from '../auth/strategies/jwt.strategy.js';
+import type { AiEngineClientService } from '../ai-engine/ai-engine-client.service.js';
 import { AdaptiveItemSelectionService } from './adaptive-item-selection.service.js';
 import { AssessmentService } from './assessment.service.js';
 
@@ -70,7 +71,7 @@ function makeFakePrisma(items: AssessmentItem[]) {
   const appPrisma = {
     language: {
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) =>
-        where.id === LANGUAGE_ID ? { id: LANGUAGE_ID, code: 'es' } : null,
+        where.id === LANGUAGE_ID ? { id: LANGUAGE_ID, code: 'es', name: 'Spanish' } : null,
       ),
     },
     assessmentAttempt: {
@@ -224,6 +225,15 @@ function fakeEvents(): jest.Mocked<Pick<DomainEventPublisher, 'publish'>> {
   return { publish: jest.fn().mockResolvedValue(undefined) };
 }
 
+/** Defaults to a fixed, deterministic critique — individual tests override via `mockResolvedValueOnce`/`mockResolvedValue` where the specific cefrLevel/confidence matters. */
+function fakeAiEngineClient(): jest.Mocked<Pick<AiEngineClientService, 'scoreWriting'>> {
+  return {
+    scoreWriting: jest
+      .fn()
+      .mockResolvedValue({ cefrLevel: 'B2', confidence: 0.8, feedback: 'Well structured.' }),
+  };
+}
+
 /** Seeds a prior attempt directly into the fake's in-memory state — for tests whose only concern is a *prior* attempt's existence/status, not walking a full start->submit->complete flow to produce one. */
 function seedAttempt(
   attempts: Map<string, AssessmentAttempt>,
@@ -251,12 +261,22 @@ describe('AssessmentService', () => {
     const { appPrisma, attempts, proficiencyLevels, proficiencyLevelHistories } =
       makeFakePrisma(items);
     const events = fakeEvents();
+    const aiEngineClient = fakeAiEngineClient();
     const service = new AssessmentService(
       appPrisma as unknown as PrismaClient,
       new AdaptiveItemSelectionService(),
       events as unknown as DomainEventPublisher,
+      aiEngineClient as unknown as AiEngineClientService,
     );
-    return { service, appPrisma, attempts, proficiencyLevels, proficiencyLevelHistories, events };
+    return {
+      service,
+      appPrisma,
+      attempts,
+      proficiencyLevels,
+      proficiencyLevelHistories,
+      events,
+      aiEngineClient,
+    };
   }
 
   describe('startAttempt', () => {
@@ -348,12 +368,18 @@ describe('AssessmentService', () => {
 
   describe('submitResponse', () => {
     async function startWithItems(items: AssessmentItem[]) {
-      const { service, appPrisma } = buildService(items);
+      const { service, appPrisma, aiEngineClient } = buildService(items);
       const started = await service.startAttempt(CALLER, {
         languageId: LANGUAGE_ID,
         type: 'PLACEMENT',
       });
-      return { service, appPrisma, attemptId: started.attempt.id, firstItem: started.nextItem };
+      return {
+        service,
+        appPrisma,
+        aiEngineClient,
+        attemptId: started.attempt.id,
+        firstItem: started.nextItem,
+      };
     }
 
     it('throws NotFoundException for an attempt owned by a different user', async () => {
@@ -412,6 +438,63 @@ describe('AssessmentService', () => {
       // stabilize on its own — the algorithm moves on to the next skill in
       // SKILL_ORDER (Listening), matching ADR-038's fixed serving order.
       expect(result.nextItem?.id).toBe(listeningItem.id);
+    });
+
+    it('scores a WRITING (OPEN_RESPONSE) item via AiEngineClientService, storing the AI critique alongside the response (E6-T7)', async () => {
+      const writingItem = makeItem({
+        skill: 'WRITING',
+        itemType: 'OPEN_RESPONSE',
+        correctAnswer: null,
+      });
+      // No objective-skill items seeded — every skill ahead of WRITING in
+      // `SKILL_ORDER` has zero candidates, so `startAttempt` walks straight
+      // through to WRITING as the first (and only) servable item.
+      const { service, aiEngineClient, attemptId, firstItem } = await startWithItems([writingItem]);
+      expect(firstItem.id).toBe(writingItem.id);
+
+      aiEngineClient.scoreWriting.mockResolvedValueOnce({
+        cefrLevel: 'B2',
+        confidence: 0.85,
+        feedback: 'Good use of vocabulary.',
+      });
+
+      const result = await service.submitResponse(CALLER, attemptId, {
+        itemId: writingItem.id,
+        response: { text: 'Mi ciudad favorita es Madrid porque tiene mucha historia.' },
+      });
+
+      // `isCorrect` doesn't apply to an open-ended essay; `score` reuses the
+      // critique's own confidence (§6.3/§6.4).
+      expect(result.response.isCorrect).toBeNull();
+      expect(result.response.score).toBe(0.85);
+      // WRITING is served last and exactly once (T1's seed content) — no
+      // more items left once it's answered.
+      expect(result.nextItem).toBeNull();
+      expect(aiEngineClient.scoreWriting).toHaveBeenCalledWith({
+        languageId: LANGUAGE_ID,
+        targetLanguageName: 'Spanish',
+        prompt: writingItem.prompt,
+        learnerResponse: 'Mi ciudad favorita es Madrid porque tiene mucha historia.',
+      });
+    });
+
+    it('throws UnprocessableEntityException when a WRITING item is submitted without a text response', async () => {
+      const writingItem = makeItem({
+        skill: 'WRITING',
+        itemType: 'OPEN_RESPONSE',
+        correctAnswer: null,
+      });
+      const { service, aiEngineClient, attemptId, firstItem } = await startWithItems([writingItem]);
+      expect(firstItem.id).toBe(writingItem.id);
+
+      await expect(
+        service.submitResponse(CALLER, attemptId, {
+          itemId: writingItem.id,
+          response: { selectedIndex: 0 },
+        }),
+      ).rejects.toThrow(UnprocessableEntityException);
+      // Never reaches ai-engine with a malformed response.
+      expect(aiEngineClient.scoreWriting).not.toHaveBeenCalled();
     });
 
     it('throws ConflictException on a duplicate submission for the same item', async () => {
@@ -592,6 +675,82 @@ describe('AssessmentService', () => {
       // §6.4's retake-offer contract (E6-T6): true as soon as any single
       // skill is low-confidence, even though most skills here are not.
       expect(completed.retakeRecommended).toBe(true);
+    });
+
+    it('includes a WRITING result banded directly from the AI critique when all 5 skills are served (E6-T7)', async () => {
+      const objectiveItems = (['READING', 'LISTENING', 'VOCABULARY', 'GRAMMAR'] as Skill[]).map(
+        (skill) => makeItem({ skill, correctAnswer: { correctIndex: 0 } }),
+      );
+      const writingItem = makeItem({
+        skill: 'WRITING',
+        itemType: 'OPEN_RESPONSE',
+        correctAnswer: null,
+      });
+      const { service, proficiencyLevels, proficiencyLevelHistories, events } = buildService([
+        ...objectiveItems,
+        writingItem,
+      ]);
+      const started = await service.startAttempt(CALLER, {
+        languageId: LANGUAGE_ID,
+        type: 'PLACEMENT',
+      });
+
+      let nextItem: typeof started.nextItem | null = started.nextItem;
+      while (nextItem) {
+        const isWriting = nextItem.id === writingItem.id;
+        const res = await service.submitResponse(CALLER, started.attempt.id, {
+          itemId: nextItem.id,
+          response: isWriting ? { text: 'Mi ciudad favorita...' } : { selectedIndex: 0 },
+        });
+        nextItem = res.nextItem;
+      }
+
+      const completed = await service.completeAttempt(CALLER, started.attempt.id);
+      expect(completed.proficiencyLevels).toHaveLength(5);
+      expect(proficiencyLevels.size).toBe(5);
+      expect(proficiencyLevelHistories).toHaveLength(5);
+
+      // `fakeAiEngineClient`'s default critique: B2 / 0.8 confidence —
+      // banded straight through, not derived from isCorrect/difficulty.
+      const writing = completed.proficiencyLevels.find((r) => r.skill === 'WRITING')!;
+      expect(writing.cefrLevel).toBe('B2');
+      expect(writing.confidence).toBe(0.8);
+      expect(writing.lowConfidence).toBe(false);
+
+      expect(events.publish).toHaveBeenCalledWith('assessment.attempt.completed', {
+        userId: CALLER.userId,
+        payload: expect.objectContaining({
+          skillResults: expect.arrayContaining([
+            expect.objectContaining({ skill: 'WRITING', cefrLevel: 'B2', confidence: 0.8 }),
+          ]),
+        }) as unknown,
+      });
+    });
+
+    it('omits WRITING from proficiencyLevels, and does not force retakeRecommended, when the language has no seeded WRITING item', async () => {
+      // Already exercised implicitly by the 4-objective-skill tests above
+      // (none seed a WRITING item) — this test names the behavior
+      // explicitly as its own stated intent, matching `computeWritingBanding`'s
+      // own doc comment: a content gap is not the same as a low-confidence
+      // result, and must not spuriously trigger a retake offer.
+      const items: AssessmentItem[] = (
+        ['READING', 'LISTENING', 'VOCABULARY', 'GRAMMAR'] as Skill[]
+      ).map((skill) => makeItem({ skill, correctAnswer: { correctIndex: 0 } }));
+      const { service } = buildService(items);
+      const started = await service.startAttempt(CALLER, {
+        languageId: LANGUAGE_ID,
+        type: 'PLACEMENT',
+      });
+      for (const item of items) {
+        await service.submitResponse(CALLER, started.attempt.id, {
+          itemId: item.id,
+          response: { selectedIndex: 0 },
+        });
+      }
+
+      const completed = await service.completeAttempt(CALLER, started.attempt.id);
+      expect(completed.proficiencyLevels.some((r) => r.skill === 'WRITING')).toBe(false);
+      expect(completed.retakeRecommended).toBe(false);
     });
   });
 });

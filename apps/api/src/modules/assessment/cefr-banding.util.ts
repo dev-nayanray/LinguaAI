@@ -30,8 +30,8 @@ const BANDING_THRESHOLDS: ReadonlyArray<{ max: number; level: CefrLevel }> = [
   { max: Infinity, level: 'C2' },
 ];
 
-/** Below this, a result is flagged `lowConfidence` (PRD.md §5.1's "never presents as definitive" bar) — provisional, the same honesty class as the threshold table above and ADR-034's cost thresholds. */
-const CONFIDENCE_FLOOR = 0.5;
+/** Below this, a result is flagged `lowConfidence` (PRD.md §5.1's "never presents as definitive" bar) — provisional, the same honesty class as the threshold table above and ADR-034's cost thresholds. Exported so `computeWritingBanding` (E6-T7) applies the exact same floor to an AI-scored result, not a second, independently-chosen number. */
+export const CONFIDENCE_FLOOR = 0.5;
 
 /**
  * §6.4: "raw score = percentage of served items answered correctly,
@@ -75,4 +75,38 @@ export function computeSkillBanding(items: readonly ScoredItem[]): SkillBandingR
   const confidence = 0.5 * itemCountFactor + 0.5 * consistencyFactor;
 
   return { cefrLevel, confidence, lowConfidence: confidence < CONFIDENCE_FLOOR };
+}
+
+/**
+ * WRITING's own banding (E6-T7) — structurally different from
+ * `computeSkillBanding`'s multi-item, isCorrect/difficulty model: a single
+ * `ai-engine` call (`AssessmentScoringService.scoreWritingResponse`, T4)
+ * already returns a directly-usable `cefrLevel`/`confidence` pair for the
+ * whole response, so there is nothing here to weight or average — banding
+ * *is* the AI's own critique, reusing the same `CONFIDENCE_FLOOR` every
+ * other skill's `lowConfidence` bar is judged against rather than a second,
+ * independently-chosen threshold.
+ *
+ * Deliberately takes a required `critique`, not `| undefined` the way
+ * `computeSkillBanding([])` tolerates zero items: the caller
+ * (`AssessmentService.computeProficiencyResults`) omits a WRITING entry
+ * from `proficiencyLevels` entirely when no WRITING response exists for the
+ * attempt, rather than calling this with nothing to band. T1's seed content
+ * only covers 1 of the platform's many languages with a WRITING item at
+ * all (real, tracked future content-authoring work, §1) — a defaulted
+ * A1/0/`lowConfidence: true` WRITING result for every other language would
+ * misrepresent "this skill was never assessed" as "this skill was assessed
+ * and the learner did poorly," and would spuriously force
+ * `retakeRecommended: true` on every attempt for a content gap that has
+ * nothing to do with the learner's own performance.
+ */
+export function computeWritingBanding(critique: {
+  cefrLevel: CefrLevel;
+  confidence: number;
+}): SkillBandingResult {
+  return {
+    cefrLevel: critique.cefrLevel,
+    confidence: critique.confidence,
+    lowConfidence: critique.confidence < CONFIDENCE_FLOOR,
+  };
 }
