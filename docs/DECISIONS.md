@@ -340,12 +340,12 @@ Format: Context → Decision → Consequences → Status.
 ### ADR-035 — `AIMessage`/partitioned-table maintenance runs as a BullMQ job inside `ai-engine`
 
 **Context:** E4 ADR-028 established `pg_partman` for monthly partition maintenance on `AIMessage`, `LearningEvent`, and `AIUsageLog`, but explicitly left `partman.run_maintenance_proc()` unscheduled (E4 risk R-69: "not yet wired to any scheduler — open until a later epic adds that job"). `ai-engine` is the heaviest writer among the three partitioned tables and is the first epic to add real BullMQ usage to the AI Coaching bounded context.
-**Decision:** A BullMQ repeatable job (daily cadence) inside `ai-engine`, invoking `partman.run_maintenance_proc()`, with a monitored failure hook (OBSERVABILITY.md alerting) so a missed run is visible, not silent.
+**Decision:** A BullMQ repeatable job (daily cadence, `0 3 * * *` UTC — a provisional, low-traffic-hours choice, not derived from any doc) inside `ai-engine`, invoking `partman.run_maintenance_proc()` via `PartitionMaintenanceService.runMaintenance()` (`services/ai-engine/src/partition-maintenance/`), with a monitored failure hook (a structured ERROR-level log once BullMQ's own retry/backoff is exhausted, for OBSERVABILITY.md's alerting pipeline to page from — no paging provider is integrated directly, the same honestly-scoped precedent ADR-034's circuit breaker already set) so a missed run is visible, not silent. `run_maintenance_proc` is invoked via `CALL`, not `SELECT` — confirmed against the live database (`\df partman.run_maintenance_proc`, `pg_proc.prosecdef`) that it is a stored PROCEDURE, not a function, and is `SECURITY INVOKER` (runs with the calling role's — `app_role`'s — own privileges, not the extension owner's).
 **Alternatives considered:** A dedicated "platform jobs" service (rejected for now — no such service exists yet, module 30's "Internal Platform Services" has no current home for a single scheduled job, and standing one up for this alone is premature infrastructure ahead of a real second use case); a Postgres-native `pg_cron` job instead of BullMQ (rejected — BullMQ is already the platform's job-queue standard per ARCHITECTURE.md §7, and mixing scheduling mechanisms for no functional gain adds an unnecessary second operational pattern to monitor).
-**Consequences:** If a genuine shared "platform jobs" service is stood up later, this job is designed to be relocatable (a self-contained job definition, not entangled with `ai-engine`-specific state) rather than a permanent fixture there.
+**Consequences:** If a genuine shared "platform jobs" service is stood up later, this job is designed to be relocatable (a self-contained job definition, not entangled with `ai-engine`-specific state) rather than a permanent fixture there. **Real, previously-undiscovered grant gap found and fixed while implementing this ADR, not assumed away:** `app_role` (ADR-036) had neither `USAGE` on the `partman` schema nor any table-level grant on pg_partman's internal tracking tables (`part_config` etc.) — reproduced empirically as two distinct live `permission denied` errors before being fixed by `packages/database/migrations/20260807040000_grant_partman_schema_to_app_role/` (the same privilege-grant class E4's R-72 fix already closed for the `public` schema, here for `partman`). Without that migration, this job would have failed on every single real invocation.
 **Security implications:** None — an internal maintenance operation with no user-facing surface.
 **Reversibility:** High — a job definition move is low-cost.
-**Status:** Proposed.
+**Status:** Accepted (2026-08-07) — implemented in E5 T11 (`services/ai-engine/src/partition-maintenance/`), by the same explicit user direction covering T1–T10.
 
 ### ADR-036 — `services/*` microservices connect to Postgres as `app_role`, never the migration-owning `DATABASE_URL` role
 
@@ -397,7 +397,7 @@ Format: Context → Decision → Consequences → Status.
 | ADR-032 | Specialist trigger-condition catalog + tool-registry versioning scheme             | Accepted |
 | ADR-033 | `apps/api`↔`ai-engine` contract: REST + `@nestjs/swagger`, SSE streaming           | Accepted |
 | ADR-034 | AI cost circuit breaker: Redis sliding-window counter, 3-stage breach ladder       | Accepted |
-| ADR-035 | `AIMessage`/partitioned-table maintenance: BullMQ job inside `ai-engine`           | Proposed |
+| ADR-035 | `AIMessage`/partitioned-table maintenance: BullMQ job inside `ai-engine`           | Accepted |
 | ADR-036 | `services/*` microservices connect to Postgres as `app_role`, never `DATABASE_URL` | Accepted |
 
 New ADRs are appended, never renumbered or rewritten in place.
