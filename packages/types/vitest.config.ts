@@ -7,15 +7,20 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
-      // index.ts (root barrel) and the still-empty subpaths (learning,
-      // ai-coaching, commerce, community, enterprise — landing in later
-      // epics) have no logic to exercise yet; only identity/ carries real
-      // E2 content today.
+      // index.ts (root barrel) and every subpath carrying only hand-written
+      // wire-type interfaces + const enum arrays (no branching logic to
+      // meaningfully exercise) are excluded from this threshold — their
+      // real correctness is verified where they're actually consumed
+      // (e.g. apps/api's own Jest suites exercising the Zod schemas built
+      // from these types). commerce/community/enterprise remain genuinely
+      // empty placeholders (later epics); learning/ai-coaching/content
+      // have real content (E6/E8) but the same "no logic here" shape.
       exclude: [
         'src/**/*.test.ts',
         'src/index.ts',
         'src/learning/**',
         'src/ai-coaching/**',
+        'src/content/**',
         'src/commerce/**',
         'src/community/**',
         'src/enterprise/**',
