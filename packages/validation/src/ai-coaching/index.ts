@@ -1,20 +1,29 @@
-import { z } from 'zod';
+// AI Coaching bounded context (ARCHITECTURE.md §2.1). Two independent
+// pieces of real content, landed by separate tasks: the `AIAgentSession`
+// wire schemas + `apps/api`<->`ai-engine` contract payloads (E5 T10,
+// ADR-033: the `OrchestratorService` `startSession`/`sendMessage`/
+// `endSession` contract, REST + SSE), and the `writingCritiqueSchema`
+// (E6 T4, ADR-039) Writing-skill AI scoring returns.
 
+import { z } from 'zod';
+import { CEFR_LEVELS } from '@linguaai/types/learning';
 import {
   AGENT_SESSION_STATUSES,
   ORCHESTRATOR_AGENT_PERSONAS,
   type AIAgentSession,
+  type WritingCritique,
 } from '@linguaai/types/ai-coaching';
 
 /**
- * ADR-033: the `apps/api` <-> `ai-engine` contract for E5 T4's
- * `OrchestratorService` (`startSession`/`sendMessage`/`endSession`).
- * Compile-time-only drift guard, same pattern as identity/index.ts's
- * `assertExtends` — fails `tsc` if a schema's inferred shape stops
- * matching its canonical @linguaai/types/ai-coaching interface.
+ * Compile-time-only drift guard (identical pattern to
+ * @linguaai/validation/identity and /learning's own `assertExtends`):
+ * fails to compile if a schema's inferred shape stops matching its
+ * canonical @linguaai/types interface. Never invoked for any runtime
+ * effect.
  */
 function assertExtends<Expected, Actual extends Expected>(_witness?: Actual): void {
-  // no-op — see doc comment above.
+  // no-op — see doc comment above; `Actual` is referenced in `_witness`'s
+  // type so it isn't flagged as an unused type parameter.
 }
 
 export const orchestratorAgentPersonaSchema = z.enum(ORCHESTRATOR_AGENT_PERSONAS);
@@ -116,3 +125,40 @@ export const agentMessageStreamEventSchema = z.discriminatedUnion('type', [
   agentMessageErrorEventSchema,
 ]);
 export type AgentMessageStreamEvent = z.infer<typeof agentMessageStreamEventSchema>;
+
+export const cefrLevelSchema = z.enum(CEFR_LEVELS);
+
+/**
+ * What the model must return for `AssessmentScoringService.scoreWritingResponse()`
+ * (E6-T4, ADR-039, design doc §6.3 step 3) — validated before use; a
+ * malformed model response is a thrown error, never silently passed
+ * through as if valid (this epic's own "reproducible scoring" bar).
+ */
+export const writingCritiqueSchema = z.object({
+  cefrLevel: cefrLevelSchema,
+  confidence: z.number().min(0).max(1),
+  feedback: z.string().min(1),
+});
+assertExtends<WritingCritique, z.infer<typeof writingCritiqueSchema>>();
+export type WritingCritiqueSchema = z.infer<typeof writingCritiqueSchema>;
+
+/**
+ * `POST /v1/assessment-scoring/writing` request body (E6 T5, ADR-033's
+ * pattern applied to Writing-skill scoring). Shape matches
+ * `AssessmentScoringService.scoreWritingResponse()`'s own input exactly —
+ * one schema for both the wire contract and the service call, the same
+ * "no separate internal type" precedent `startAgentSessionRequestSchema`
+ * already set for `OrchestratorService.startSession()`.
+ * `learnerResponse`'s 10000-character cap is a flagged, undocumented-
+ * elsewhere defensive bound (an essay-length response is realistically
+ * longer than a single conversational turn's 8000-char cap
+ * (`sendAgentMessageRequestSchema`), but still needs *some* ceiling to
+ * bound worst-case cost/latency).
+ */
+export const scoreWritingRequestSchema = z.object({
+  languageId: z.string().uuid(),
+  targetLanguageName: z.string().min(1),
+  prompt: z.string().min(1),
+  learnerResponse: z.string().min(1).max(10000),
+});
+export type ScoreWritingRequest = z.infer<typeof scoreWritingRequestSchema>;

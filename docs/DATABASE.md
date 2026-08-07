@@ -37,10 +37,11 @@ The schema is organized into the following domains. Each maps to one or more Pri
 
 ### 2.2 Assessment & learning plan
 
-**Status: Implemented (schema only) — Epic E4 T3** (docs/epics/E4-database-schema-core-data-layer.md). Schema/migration exist in `packages/database`; the application logic that runs assessments and generates plans is separate, later epic scope (E6/E7).
+**Status: Implemented (schema only) — Epic E4 T3, extended in E6 T1** (docs/epics/E4-database-schema-core-data-layer.md, docs/epics/E6-ai-language-assessment-engine.md). Schema/migrations exist in `packages/database`; the application logic that runs assessments and generates plans is separate, epic scope (E6 for assessment scoring, E7 for `LearningPlan`/`DailyGoal` generation).
 
 - `AssessmentAttempt` — one per placement/re-assessment run, status, started/completed timestamps.
-- `AssessmentResponse` — individual item responses within an attempt, per skill (reading/writing/listening/speaking/vocabulary/grammar).
+- `AssessmentResponse` — individual item responses within an attempt, per skill (reading/writing/listening/speaking/vocabulary/grammar). `itemId` _(added, E6 T1)_ — nullable FK to `AssessmentItem`, the item this response answered.
+- `AssessmentItem` _(added, E6 T1, ADR-037)_ — the curated placement-test item bank: per `(language, skill, cefrLevel)`, a real, versioned, linguist-sign-off-tracked item with a relative `difficulty` (the adaptive algorithm's own selection input), a `prompt`, an optional `audioUrl` (Listening-skill items — real audio-file authoring/storage is separately-scoped future content work, not yet delivered), and `correctAnswer` (null for `OPEN_RESPONSE`/Writing items, scored by `ai-engine` instead of an answer key). Closes a real gap E6's design doc found: no reusable, standalone item bank existed anywhere in the schema before this — `AssessmentResponse.prompt` was free text, and §2.3's `Exercise` is bound to an authored curriculum `Activity`, structurally incompatible with a pre-course placement test.
 - `ProficiencyLevel` — **current** CEFR level per user, per language, per skill, with confidence score and last-updated source (assessment vs. inferred from ongoing performance).
 - `ProficiencyLevelHistory` _(added)_ — append-only record of every `ProficiencyLevel` change over time. `ProficiencyLevel` alone only holds current state and cannot answer "did this user's fluency actually improve" — the named MVP success metric (PRD.md §8) — so history is a required table, not an optimization. `userId` is nullable (§6's append-only-anonymized-in-place category — fixed in T10, see §2.10).
 - `LearningPlan` — the active personalized roadmap for a user/language: goal, target date, generated milestones.

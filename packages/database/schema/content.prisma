@@ -86,6 +86,7 @@ model Language {
   aiAgentSessions           AIAgentSession[]
   aiMemoryEntries           AIMemoryEntry[]
   knowledgeBaseEntries      KnowledgeBaseEntry[]
+  assessmentItems           AssessmentItem[]
 
   @@map("Language")
 }

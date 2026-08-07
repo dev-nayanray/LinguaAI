@@ -1,13 +1,17 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   agentMessageStreamEventSchema,
+  scoreWritingRequestSchema,
   sendAgentMessageRequestSchema,
   startAgentSessionRequestSchema,
   startAgentSessionResponseSchema,
+  writingCritiqueSchema,
   type AgentMessageStreamEvent,
+  type ScoreWritingRequest,
   type SendAgentMessageRequest,
   type StartAgentSessionRequest,
   type StartAgentSessionResponse,
+  type WritingCritiqueSchema,
 } from '@linguaai/validation/ai-coaching';
 
 import { AI_ENGINE_CLIENT_CONFIG } from './ai-engine-client.config.js';
@@ -49,10 +53,12 @@ async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncGenerator
 }
 
 /**
- * ADR-033 (T10): `apps/api`'s typed client for `ai-engine`'s
- * `AgentSessionsController` — internal-network-only (ADR-033's own
- * security-implications note; no auth header, since ai-engine has no auth
- * mechanism of its own and this is server-to-server on a private network).
+ * ADR-033 (T10, extended in E6 T5): `apps/api`'s typed client for
+ * `ai-engine`'s REST controllers — `AgentSessionsController` (T10) and
+ * `AssessmentScoringController` (E6 T5) — internal-network-only (ADR-033's
+ * own security-implications note; no auth header, since ai-engine has no
+ * auth mechanism of its own and this is server-to-server on a private
+ * network).
  * "Typed" here means every request/response is validated against the same
  * `@linguaai/validation/ai-coaching` Zod schemas the controller itself
  * validates against — the single source of truth ARCHITECTURE.md §4 names
@@ -114,6 +120,29 @@ export class AiEngineClientService {
     for await (const rawEvent of parseSseStream(response.body)) {
       yield agentMessageStreamEventSchema.parse(rawEvent);
     }
+  }
+
+  /**
+   * E6 T5 (ADR-033's pattern applied to Writing-skill scoring, §6.3) —
+   * `apps/api`'s `AssessmentModule` does not call this yet; wiring it into
+   * the attempt lifecycle is E6 T6/T7's own scope (this task's own
+   * dependency list is T2/T4, not T3's banding logic).
+   */
+  async scoreWriting(input: ScoreWritingRequest): Promise<WritingCritiqueSchema> {
+    const response = await fetch(`${this.config.AI_ENGINE_URL}/v1/assessment-scoring/writing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(scoreWritingRequestSchema.parse(input)),
+    });
+    if (!response.ok) {
+      const errorBody = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      throw new Error(
+        `ai-engine returned ${response.status} scoring a writing response: ${errorBody?.error?.message ?? 'unknown error'}`,
+      );
+    }
+    return writingCritiqueSchema.parse(await response.json());
   }
 
   async endSession(sessionId: string): Promise<void> {

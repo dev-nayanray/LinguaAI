@@ -4,6 +4,7 @@ import { ObservabilityModule, RequestLoggingMiddleware } from '@linguaai/observa
 
 import { AgentSessionsModule } from './agent-sessions/agent-sessions.module.js';
 import { RegistryModule } from './agents/registry/registry.module.js';
+import { AssessmentScoringModule } from './assessment-scoring/assessment-scoring.module.js';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter.js';
 import { GatewayModule } from './gateway/gateway.module.js';
 import { HealthController } from './health/health.controller.js';
@@ -24,6 +25,7 @@ import { SafetyModule } from './safety/safety.module.js';
     RagModule,
     SafetyModule,
     OrchestratorModule,
+    AssessmentScoringModule,
     AgentSessionsModule,
     PartitionMaintenanceModule,
   ],

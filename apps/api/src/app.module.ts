@@ -8,6 +8,7 @@ import { DatabaseModule } from './database/index.js';
 import { EventsModule } from './events/index.js';
 import { HealthController } from './health/health.controller.js';
 import { AiEngineClientModule } from './modules/ai-engine/ai-engine-client.module.js';
+import { AssessmentModule } from './modules/assessment/index.js';
 import { AuditModule } from './modules/audit/index.js';
 import { AuthModule } from './modules/auth/index.js';
 import { OrganizationsModule } from './modules/organizations/index.js';
@@ -22,6 +23,7 @@ import { UsersModule } from './modules/users/index.js';
     AuthModule,
     UsersModule,
     OrganizationsModule,
+    AssessmentModule,
     AuditModule,
     AiEngineClientModule,
   ],

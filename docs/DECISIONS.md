@@ -357,47 +357,80 @@ Format: Context → Decision → Consequences → Status.
 **Reversibility:** High — a connection-string/role change, no data-model impact.
 **Status:** Accepted (2026-08-07) — implemented in E5 T4, by the same explicit user direction covering T1–T3.
 
+### ADR-037 — A new, curated `AssessmentItem` model backs the placement test, not `Exercise` reuse or free-text prompts
+
+**Context:** E6 design doc §3.1 found that no reusable, standalone assessment item bank exists anywhere in the schema. `AssessmentResponse.prompt` (E4 T3) is a free-text `String` with no relation to any bank of pre-authored items and no (skill, CEFR level, difficulty) metadata to select from — confirmed by direct inspection, not assumed. `content.prisma`'s `Exercise` model is structurally unusable for this purpose: `Exercise.activityId` is a required, non-nullable relation into an authored `Course > Level > Unit > Lesson > Activity` hierarchy, but a placement assessment runs during onboarding, before the user (or the system) has selected any course at all. Without a real item bank, "adaptive testing" is not a buildable claim and PRD.md's own "reproducible scoring" acceptance bar (module 2) is unsatisfiable — no fixed item pool means no two placement runs are comparable.
+**Decision:** A new `AssessmentItem` model in `assessment.prisma`, mirroring `KnowledgeBaseEntry`'s own curated-content shape (versioned via `updatedAt`, linguist-sign-off metadata, an `isActive` flag) rather than `Exercise`'s course-bound shape: `(languageId, skill, cefrLevel, difficulty, prompt, audioUrl, correctAnswer, itemType, isActive, linguistSignOffBy, linguistSignOffAt)`. `AssessmentResponse` gains a nullable `itemId` FK (`onDelete: SetNull`) — nullable because it's added after the table already existed, so no historical row is orphaned, though none exist yet in production (this is greenfield application logic). `correctAnswer` is `null` for `OPEN_RESPONSE` (Writing-skill) items — scored by `ai-engine` (E6 T4), never an answer key. **Real, load-bearing addition found while drafting T1's own seed content, not in this ADR's original scope:** `audioUrl` (nullable `String`, mirroring `AIMessage.audioUrl`'s existing precedent) — Listening-skill items need a real audio reference to genuinely test listening comprehension rather than silently becoming a second reading-comprehension skill in disguise; real audio-file authoring/storage (S3, matching DATABASE.md's "Assessment/conversation raw audio: 90 days" retention policy) remains separately-scoped future content work, not delivered by this task's own seed pass.
+**Alternatives considered:** Reusing `Exercise`/`Quiz` (rejected — the required `Activity` relation is structurally incompatible with a pre-course placement test, and weakening that relation to serve this one new caller would erode a guarantee every other `Exercise` consumer, e.g. Course Management, relies on); treating `AssessmentResponse.prompt`'s existing free-text field as sufficient, generating items ad hoc per attempt (rejected outright — directly contradicts PRD.md's own "reproducible scoring" bar, and "adaptive" selection has nothing to select from without a real, stable item pool with known difficulty metadata).
+**Consequences:** A real, curated item bank now exists and is seeded with genuine (if intentionally small, ~1 item per skill per A1/B1/C1 band — 13 items total) Spanish-language content — `packages/database/scripts/seed.ts`'s own established idempotent-seed pattern, extended, not a new mechanism. The target ~10–15 items per skill per CEFR band per launch language (E6 design doc §6.1) is real, tracked future content-authoring work (RISK_REGISTER.md), not claimed complete by this task.
+**Security implications:** None beyond what any other curated-content table already carries — no PII, no tenant scoping (matching this whole domain's own "not tenant-scoped, E4 §3.3" precedent).
+**Reversibility:** Medium — a real content table; once real seed/production content exists, changing its shape is a real migration with real data to carry forward, the same class of cost every other schema change in this platform already documents honestly.
+**Status:** Accepted (2026-08-07) — implemented in E6 T1, by explicit user direction to proceed past the design phase, the same distinction E4/E5's own status lines draw.
+
+### ADR-038 — Adaptive item-selection algorithm lives in `apps/api`'s own Assessment module, not `recommendation-engine`
+
+**Context:** E6 design doc §3.3 found a real bounded-context ambiguity: ARCHITECTURE.md §2.1's own table lists "Assessment" as hosted in both `apps/api` and `recommendation-engine`, but EVENT_ARCHITECTURE.md's already-cataloged `assessment.attempt.completed` row names only `apps/api` as producer. `recommendation-engine` remains an unclaimed, empty E1 skeleton (confirmed by direct inspection) and is not a listed E6 dependency (ROADMAP.md). Per ARCHITECTURE.md §2.1's own service-boundary rule ("`recommendation-engine` owns deterministic/algorithmic decisions... not require a generative model call"), the algorithm could legitimately live in either place.
+**Decision:** The adaptive difficulty-stepping algorithm (E6 design doc §6.2) is implemented as `AdaptiveItemSelectionService`, a pure, stateless class inside `apps/api/src/modules/assessment/` — it takes a skill's candidate `AssessmentItem` rows and this attempt's prior responses for that skill as plain inputs and returns a selection decision; it performs no I/O itself (`AssessmentService` does the Prisma reads/writes and calls it). **Real, load-bearing detail decided during implementation, not fully specified by the design doc's own §6.2 text:** the seed item bank (E6 T1) is intentionally sparse (13 items spanning only A1/B1/C1, not all six CEFR bands) — a strict "select from the current band only" rule would dead-end the moment the running target steps into an unseeded band (e.g. A2, B2, C2). The selector therefore falls back to the nearest CEFR band (by band-index distance, either direction) that has an unserved item for that skill when the exact target band is empty, before concluding the skill has run out of content — this is a defensive extension the design doc didn't anticipate, needed because the algorithm must work against T1's real, deliberately-small seed data, not a hypothetical fully-populated bank. Skill serving order for this task is fixed: `READING`, `LISTENING`, `VOCABULARY`, `GRAMMAR` (E6 design doc §1's own listed order) — `WRITING` is deliberately excluded from T2's item-serving sequence (see this ADR's Consequences) and `SPEAKING` is out of scope entirely (§3.2).
+**Alternatives considered:** Building the algorithm as real code inside `recommendation-engine` (rejected for this epic specifically, not forever — stands up a second, entirely empty service's first-ever real code inside an epic with no other reason to touch it, when a self-contained, relocatable service class inside `apps/api` satisfies every current requirement); a full item-response-theory (IRT) calibrated model (rejected — needs real attempt-outcome data this platform doesn't have yet, a cold-start problem; the simplified difficulty-stepping approach is a real, working, honestly-flagged interim, matching this platform's other provisional-parameter precedents, e.g. ADR-034's cost thresholds).
+**Consequences:** `AssessmentService`'s `submitResponse` only serves `WRITING`-skill items once E6 T4/T5 land real AI scoring — serving one now with no way to score it would leave an attempt permanently unable to reach `COMPLETED` for that skill. `AssessmentModule`'s own `completeAttempt` therefore only requires the four objective skills' stop conditions to be met, not `WRITING`; wiring `WRITING` into the same lifecycle is real, tracked follow-up work for T4/T5, not silently deferred. If a future Architecture Gate review disagrees with this ADR's placement, `AdaptiveItemSelectionService`'s pure, I/O-free design makes relocating it to `recommendation-engine` a self-contained move, the same "designed to be relocatable" precedent ADR-035 already used.
+**Security implications:** None beyond ordinary per-request authorization (an attempt's own owner only, enforced in `AssessmentService`, 404 not 403 on mismatch — API_GUIDELINES.md §3's no-existence-leak rule).
+**Reversibility:** High — a pure service class with no `apps/api`-specific dependency; relocating it later is low-cost.
+**Status:** Accepted (2026-08-07) — implemented in E6 T2, by explicit user direction to proceed past the design phase, the same distinction E4/E5/E6-T1's own status lines draw.
+
+### ADR-039 — Writing-skill AI scoring is a new, narrow `ai-engine` capability outside `OrchestratorService`/`AIAgentSession`, not a specialist tool or a new conversational persona
+
+**Context:** E6 design doc §6.3 designed Writing-skill scoring as a one-shot, structured-output task: given a placement-test prompt and the learner's essay, return a CEFR level, a confidence score, and short feedback. Every existing `ai-engine` capability that talks to a model is either a full conversational persona (`OrchestratorService`/`AIAgentSession`/`AIMessage`, T3/T4 of E5 — session state, rolling summaries, multi-turn memory) or a specialist _tool_ invoked mid-conversation by the Orchestrator (`GRAMMAR_COACH`/`PRONUNCIATION_COACH`/etc., gated through `ToolRegistryService`'s per-persona trigger catalog, E5 T5). Writing-skill scoring fits neither: it has no session to belong to (a placement attempt is not a `AIAgentSession`), no learner-facing conversational turn to produce, and nothing for `ToolRegistryService`'s trigger-condition catalog to gate — it is called directly by `apps/api`'s own `AssessmentService`, once per Writing item, with no Orchestrator anywhere in the call path.
+**Decision:** A new, narrow `services/ai-engine/src/assessment-scoring/` module (`AssessmentScoringService.scoreWritingResponse()`) that composes three already-built E5 mechanisms directly — `RagRetrievalService.retrieveGroundingContext()` (T7, filtered to the `CEFR_DESCRIPTOR` category and the attempt's own language), `RouterService.generate()` (T1, the `'assessment'` request class E5 T1 already reserved for exactly this kind of call), and `SafetyLayerService` (T8, both `delimitUntrustedContent()` on the learner's own essay — the same prompt-injection discipline already applied to conversational summaries/memory, and `sanitizeOutput()` on the returned feedback text) — never reimplementing any of the three. The model's JSON response is validated against a new `writingCritiqueSchema` (`@linguaai/validation/ai-coaching`, this bounded context's first real content) before ever being returned; a malformed response is a thrown error, matching this epic's own "reproducible scoring" bar (ADR-037), never a silently-accepted guess. The scoring prompt is a new, standalone, versioned template — deliberately _not_ added to `PromptManagerService`'s `AgentPersona`-keyed store (`services/ai-engine/src/prompts/`), since that store's own type (`PromptTemplate.persona: AgentPersona`) is a closed seven-value union of conversational/specialist personas with no slot for a persona-less, one-shot task; forcing a new `AgentPersona` value in just to reuse `PromptManagerService.getSystemPrompt()` would misrepresent this capability as a conversational persona it structurally isn't. The template reuses `renderTemplate()` (T3's own generic `{{placeholder}}` renderer, not persona-coupled) and follows the same versioning discipline (a `version` field, bumped on any behavior-changing edit) without depending on `PromptManagerService` itself.
+**Alternatives considered:** Adding Writing scoring as a new specialist tool gated through `ToolRegistryService` (rejected — every existing specialist is triggered _within_ an ongoing Orchestrator-led conversation; a placement-test attempt has no Orchestrator session at all, so there is no trigger-condition context for the registry to evaluate); treating a placement attempt as a fabricated single-turn `AIAgentSession` so the existing Orchestrator/`AIMessage` pipeline could be reused as-is (rejected — `AIAgentSession`/`AIMessage`'s own schema and semantics model an ongoing coaching relationship with memory/summarization, none of which a one-shot scoring call has any use for; forcing the fit would be the same "category error" this ADR's own title names); adding an eighth `AgentPersona` value for this capability (rejected — `AgentPersona`'s own doc comment already frames it as "the full seven-persona superset... every persona that can incur a real model-call cost," a closed, conversational/specialist set this capability doesn't belong in).
+**Consequences:** This is the first real content in the `ai-coaching` bounded context (`packages/types/src/ai-coaching/`, `packages/validation/src/ai-coaching/`) — both were empty placeholders through E1–E5. `CefrLevel` is imported from `@linguaai/types/learning` rather than redefined, since it is a shared, platform-wide concept, not context-specific data (matching that file's own header comment inviting reuse). T4 builds the service only, no REST endpoint — the `apps/api`↔`ai-engine` wire contract for calling it is E6 T5's own scope, and (per RISK_REGISTER R-86) needs E5 T10's contract pattern, which is not yet merged onto this branch line.
+**Security implications:** The learner's own essay text is explicitly treated as untrusted input (`delimitUntrustedContent`) before ever reaching a system-level prompt position — the same prompt-injection discipline already applied to conversation summaries/memory (T4/T6 of E5), now extended to its first genuinely adversarial-input consumer (a test-taker has a direct, undisguised incentive to try to manipulate their own score).
+**Reversibility:** High — a narrow, self-contained service with no Orchestrator/session coupling; nothing else in the codebase depends on its internal shape yet.
+**Status:** Accepted (2026-08-07) — implemented in E6 T4, by explicit user direction to proceed past the design phase, the same distinction E4/E5/E6-T1–T3's own status lines draw.
+
 ---
 
 ## ADR index
 
-| ID      | Title                                                                              | Status   |
-| ------- | ---------------------------------------------------------------------------------- | -------- |
-| ADR-001 | Turborepo + pnpm monorepo                                                          | Accepted |
-| ADR-002 | Modular monolith + targeted microservices                                          | Accepted |
-| ADR-003 | REST over GraphQL                                                                  | Accepted |
-| ADR-004 | pgvector for MVP vector search                                                     | Accepted |
-| ADR-005 | Postgres RLS for tenant isolation                                                  | Accepted |
-| ADR-006 | AI Gateway pattern                                                                 | Accepted |
-| ADR-007 | Single Orchestrator + tool-calling agent handoff                                   | Accepted |
-| ADR-008 | RAG grounding required for factual AI output                                       | Accepted |
-| ADR-009 | ECS Fargate over Kubernetes                                                        | Accepted |
-| ADR-010 | Domain events over point-to-point queues                                           | Accepted |
-| ADR-011 | Mandatory MFA for privileged roles                                                 | Accepted |
-| ADR-012 | Platform-level AI cost circuit breaker                                             | Accepted |
-| ADR-013 | Family plan descoped from MVP                                                      | Accepted |
-| ADR-014 | Split test runner: Jest (NestJS) / Vitest (elsewhere)                              | Accepted |
-| ADR-015 | Dependency-boundary enforcement via ESLint                                         | Accepted |
-| ADR-016 | Observability stack: OTel + CloudWatch + X-Ray (ADOT) + Sentry + local Jaeger      | Accepted |
-| ADR-017 | Container supply chain: Syft + Trivy + cosign + GitHub attestation                 | Accepted |
-| ADR-018 | JWT Bearer access token + rotating refresh token, `jti` denylist                   | Accepted |
-| ADR-019 | TOTP as mandatory MFA mechanism for privileged roles                               | Accepted |
-| ADR-020 | OAuth provider set at MVP: Google + Apple only                                     | Accepted |
-| ADR-021 | Two-person approval for `ADMIN` role grants/revocations                            | Accepted |
-| ADR-022 | Narrow `BYPASSRLS` service role for cross-tenant operations                        | Accepted |
-| ADR-023 | Privileged-column protection: `REVOKE`/`GRANT` + `SECURITY DEFINER`                | Accepted |
-| ADR-024 | Flutter design-token export: build-only, never-committed artifact                  | Proposed |
-| ADR-025 | `lucide-react` as the v1 icon library                                              | Accepted |
-| ADR-026 | Storybook access control: CloudFront Function + KeyValueStore                      | Proposed |
-| ADR-027 | Prisma multi-file schema composition (`prismaSchemaFolder`)                        | Accepted |
-| ADR-028 | `pg_partman` for time-based partition maintenance                                  | Accepted |
-| ADR-029 | `AIMessage.content` field-level encryption via a Prisma Client Extension           | Accepted |
-| ADR-030 | Cross-domain FKs must be real Prisma `@relation`s, not plain scalars               | Accepted |
-| ADR-031 | Pin AI embedding model to OpenAI `text-embedding-3-small` (1536-dim)               | Accepted |
-| ADR-032 | Specialist trigger-condition catalog + tool-registry versioning scheme             | Accepted |
-| ADR-033 | `apps/api`↔`ai-engine` contract: REST + `@nestjs/swagger`, SSE streaming           | Accepted |
-| ADR-034 | AI cost circuit breaker: Redis sliding-window counter, 3-stage breach ladder       | Accepted |
-| ADR-035 | `AIMessage`/partitioned-table maintenance: BullMQ job inside `ai-engine`           | Accepted |
-| ADR-036 | `services/*` microservices connect to Postgres as `app_role`, never `DATABASE_URL` | Accepted |
+| ID      | Title                                                                                              | Status   |
+| ------- | -------------------------------------------------------------------------------------------------- | -------- |
+| ADR-001 | Turborepo + pnpm monorepo                                                                          | Accepted |
+| ADR-002 | Modular monolith + targeted microservices                                                          | Accepted |
+| ADR-003 | REST over GraphQL                                                                                  | Accepted |
+| ADR-004 | pgvector for MVP vector search                                                                     | Accepted |
+| ADR-005 | Postgres RLS for tenant isolation                                                                  | Accepted |
+| ADR-006 | AI Gateway pattern                                                                                 | Accepted |
+| ADR-007 | Single Orchestrator + tool-calling agent handoff                                                   | Accepted |
+| ADR-008 | RAG grounding required for factual AI output                                                       | Accepted |
+| ADR-009 | ECS Fargate over Kubernetes                                                                        | Accepted |
+| ADR-010 | Domain events over point-to-point queues                                                           | Accepted |
+| ADR-011 | Mandatory MFA for privileged roles                                                                 | Accepted |
+| ADR-012 | Platform-level AI cost circuit breaker                                                             | Accepted |
+| ADR-013 | Family plan descoped from MVP                                                                      | Accepted |
+| ADR-014 | Split test runner: Jest (NestJS) / Vitest (elsewhere)                                              | Accepted |
+| ADR-015 | Dependency-boundary enforcement via ESLint                                                         | Accepted |
+| ADR-016 | Observability stack: OTel + CloudWatch + X-Ray (ADOT) + Sentry + local Jaeger                      | Accepted |
+| ADR-017 | Container supply chain: Syft + Trivy + cosign + GitHub attestation                                 | Accepted |
+| ADR-018 | JWT Bearer access token + rotating refresh token, `jti` denylist                                   | Accepted |
+| ADR-019 | TOTP as mandatory MFA mechanism for privileged roles                                               | Accepted |
+| ADR-020 | OAuth provider set at MVP: Google + Apple only                                                     | Accepted |
+| ADR-021 | Two-person approval for `ADMIN` role grants/revocations                                            | Accepted |
+| ADR-022 | Narrow `BYPASSRLS` service role for cross-tenant operations                                        | Accepted |
+| ADR-023 | Privileged-column protection: `REVOKE`/`GRANT` + `SECURITY DEFINER`                                | Accepted |
+| ADR-024 | Flutter design-token export: build-only, never-committed artifact                                  | Proposed |
+| ADR-025 | `lucide-react` as the v1 icon library                                                              | Accepted |
+| ADR-026 | Storybook access control: CloudFront Function + KeyValueStore                                      | Proposed |
+| ADR-027 | Prisma multi-file schema composition (`prismaSchemaFolder`)                                        | Accepted |
+| ADR-028 | `pg_partman` for time-based partition maintenance                                                  | Accepted |
+| ADR-029 | `AIMessage.content` field-level encryption via a Prisma Client Extension                           | Accepted |
+| ADR-030 | Cross-domain FKs must be real Prisma `@relation`s, not plain scalars                               | Accepted |
+| ADR-031 | Pin AI embedding model to OpenAI `text-embedding-3-small` (1536-dim)                               | Accepted |
+| ADR-032 | Specialist trigger-condition catalog + tool-registry versioning scheme                             | Accepted |
+| ADR-033 | `apps/api`↔`ai-engine` contract: REST + `@nestjs/swagger`, SSE streaming                           | Accepted |
+| ADR-034 | AI cost circuit breaker: Redis sliding-window counter, 3-stage breach ladder                       | Accepted |
+| ADR-035 | `AIMessage`/partitioned-table maintenance: BullMQ job inside `ai-engine`                           | Accepted |
+| ADR-036 | `services/*` microservices connect to Postgres as `app_role`, never `DATABASE_URL`                 | Accepted |
+| ADR-037 | New curated `AssessmentItem` model backs the placement test (E6 T1)                                | Accepted |
+| ADR-038 | Adaptive item-selection algorithm lives in `apps/api`, not `recommendation-engine` (E6 T2)         | Accepted |
+| ADR-039 | Writing-skill AI scoring is a narrow `ai-engine` capability, not a specialist tool/persona (E6 T4) | Accepted |
 
 New ADRs are appended, never renumbered or rewritten in place.
