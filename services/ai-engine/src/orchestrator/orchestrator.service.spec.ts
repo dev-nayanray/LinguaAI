@@ -1,5 +1,7 @@
 import type { AIAgentSession, AIMessage, PrismaClient } from '@linguaai/database';
 
+import type { CircuitBreakerService } from '../cost/circuit-breaker.service.js';
+import type { CostMeterService } from '../cost/cost-meter.service.js';
 import type { GenerateResponse } from '../gateway/model-provider.interface.js';
 import type { RouterService } from '../gateway/router.service.js';
 import type { MemoryManagerService } from '../memory/memory-manager.service.js';
@@ -109,6 +111,15 @@ function realSafetyLayer(): SafetyLayerService {
   return new SafetyLayerService();
 }
 
+/** Defaults to NONE (no breach) everywhere except the dedicated "Cost Meter & Circuit Breaker integration" tests below. */
+function fakeCircuitBreaker(): jest.Mocked<Pick<CircuitBreakerService, 'checkBreachState'>> {
+  return { checkBreachState: jest.fn().mockResolvedValue('NONE') };
+}
+
+function fakeCostMeter(): jest.Mocked<Pick<CostMeterService, 'recordUsage'>> {
+  return { recordUsage: jest.fn().mockResolvedValue({ costUsdMicros: 0 }) };
+}
+
 describe('OrchestratorService', () => {
   describe('startSession', () => {
     it('creates a new AIAgentSession row and returns its id', async () => {
@@ -120,6 +131,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager() as unknown as MemoryManagerService,
         realSafetyLayer(),
         new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       const result = await service.startSession({
@@ -145,6 +158,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager() as unknown as MemoryManagerService,
         realSafetyLayer(),
         new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       await expect(
@@ -170,6 +185,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager() as unknown as MemoryManagerService,
         realSafetyLayer(),
         new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       const result = await service.sendMessage({
@@ -187,6 +204,7 @@ describe('OrchestratorService', () => {
       expect(router.generate).toHaveBeenCalledWith(
         'teacher',
         expect.objectContaining({ systemPrompt: 'You are the persona.' }),
+        'default',
       );
       expect(prisma.aIMessage.create).toHaveBeenNthCalledWith(2, {
         data: {
@@ -218,6 +236,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager() as unknown as MemoryManagerService,
         realSafetyLayer(),
         new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
@@ -243,6 +263,8 @@ describe('OrchestratorService', () => {
         memoryManager as unknown as MemoryManagerService,
         realSafetyLayer(),
         new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       await service.sendMessage({
@@ -274,6 +296,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager([]) as unknown as MemoryManagerService,
         realSafetyLayer(),
         new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
@@ -303,6 +327,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager() as unknown as MemoryManagerService,
         realSafetyLayer(),
         cache,
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
@@ -329,6 +355,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager() as unknown as MemoryManagerService,
         realSafetyLayer(),
         cache,
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       const result = await service.sendMessage({
@@ -376,6 +404,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager() as unknown as MemoryManagerService,
         realSafetyLayer(),
         cache,
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
@@ -406,6 +436,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager() as unknown as MemoryManagerService,
         realSafetyLayer(),
         cache,
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
@@ -430,6 +462,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager() as unknown as MemoryManagerService,
         realSafetyLayer(),
         cache,
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       await service.endSession({ sessionId: 'session-1' });
@@ -457,6 +491,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager() as unknown as MemoryManagerService,
         realSafetyLayer(),
         new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       const result = await service.sendMessage({
@@ -492,6 +528,8 @@ describe('OrchestratorService', () => {
         fakeMemoryManager() as unknown as MemoryManagerService,
         safetyLayer,
         new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
       );
 
       await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
@@ -499,6 +537,131 @@ describe('OrchestratorService', () => {
       expect(safetyLayer.recordSampleForReviewIfDue).toHaveBeenCalledWith({
         sessionId: 'session-1',
         messageId: 'assistant-msg-42',
+      });
+    });
+  });
+
+  describe('Cost Meter & Circuit Breaker integration (T9)', () => {
+    it('checks the circuit breaker before calling the Router, and records real usage via CostMeterService afterward', async () => {
+      const prisma = fakePrisma({
+        session: { orchestratorAgent: 'EXAM_COACH' },
+        messages: buildMessages(1),
+      });
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(
+        fakeGenerateResponse({ modelId: 'claude-teacher-model', inputTokens: 20, outputTokens: 8 }),
+      );
+      const circuitBreaker = fakeCircuitBreaker();
+      const costMeter = fakeCostMeter();
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        circuitBreaker as unknown as CircuitBreakerService,
+        costMeter as unknown as CostMeterService,
+      );
+
+      await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
+
+      expect(circuitBreaker.checkBreachState).toHaveBeenCalled();
+      expect(costMeter.recordUsage).toHaveBeenCalledWith({
+        userId: 'user-1',
+        agentPersona: 'EXAM_COACH',
+        modelId: 'claude-teacher-model',
+        promptVersion: 'v1',
+        inputTokens: 20,
+        outputTokens: 8,
+        latencyMs: 42,
+      });
+    });
+
+    it('passes tier="economy" to the Router when the circuit breaker reports DEGRADE', async () => {
+      const prisma = fakePrisma({ messages: buildMessages(1) });
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(fakeGenerateResponse());
+      const circuitBreaker = { checkBreachState: jest.fn().mockResolvedValue('DEGRADE') };
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        circuitBreaker as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
+
+      expect(router.generate).toHaveBeenCalledWith('teacher', expect.anything(), 'economy');
+    });
+
+    it('throws a graceful error and never reaches the Router when the circuit breaker reports HARD_STOP', async () => {
+      const prisma = fakePrisma({ messages: buildMessages(1) });
+      const router = fakeRouter();
+      const circuitBreaker = { checkBreachState: jest.fn().mockResolvedValue('HARD_STOP') };
+      const costMeter = fakeCostMeter();
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        circuitBreaker as unknown as CircuitBreakerService,
+        costMeter as unknown as CostMeterService,
+      );
+
+      await expect(
+        service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} }),
+      ).rejects.toThrow('cost circuit breaker threshold');
+      expect(router.generate).not.toHaveBeenCalled();
+      expect(costMeter.recordUsage).not.toHaveBeenCalled();
+    });
+
+    it('gates and records usage for the internal summarization sub-call too, not just the main reply', async () => {
+      const messages = buildMessages(ROLLING_SUMMARY_TRIGGER_MESSAGE_COUNT + 2);
+      const prisma = fakePrisma({
+        session: { orchestratorAgent: 'CONVERSATION_PARTNER' },
+        messages,
+      });
+      const router = fakeRouter();
+      router.generate
+        .mockResolvedValueOnce(
+          fakeGenerateResponse({ content: 'a fresh summary', inputTokens: 100, outputTokens: 30 }),
+        )
+        .mockResolvedValueOnce(fakeGenerateResponse());
+      const circuitBreaker = fakeCircuitBreaker();
+      const costMeter = fakeCostMeter();
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        circuitBreaker as unknown as CircuitBreakerService,
+        costMeter as unknown as CostMeterService,
+      );
+
+      await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
+
+      expect(circuitBreaker.checkBreachState).toHaveBeenCalledTimes(2);
+      expect(costMeter.recordUsage).toHaveBeenCalledTimes(2);
+      expect(costMeter.recordUsage).toHaveBeenNthCalledWith(1, {
+        userId: 'user-1',
+        agentPersona: 'CONVERSATION_PARTNER',
+        modelId: 'claude-teacher-model',
+        inputTokens: 100,
+        outputTokens: 30,
+        latencyMs: 42,
       });
     });
   });

@@ -1,9 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { AIMessage, AIMessageRole, PrismaClient } from '@linguaai/database';
+import type {
+  AIMessage,
+  AIMessageRole,
+  OrchestratorAgentPersona,
+  PrismaClient,
+} from '@linguaai/database';
 
+import { CircuitBreakerService } from '../cost/circuit-breaker.service.js';
+import { CostMeterService } from '../cost/cost-meter.service.js';
 import { AI_ENGINE_PRISMA_CLIENT } from '../database/database.config.js';
 import type { ChatMessage, ChatRole } from '../gateway/model-provider.interface.js';
-import { RouterService } from '../gateway/router.service.js';
+import { RouterService, type ModelTier } from '../gateway/router.service.js';
 import { MemoryManagerService } from '../memory/memory-manager.service.js';
 import type { RetrievedMemory } from '../memory/memory-manager.types.js';
 import { PromptManagerService } from '../prompts/prompt-manager.service.js';
@@ -45,8 +52,13 @@ function transcriptOf(messages: AIMessage[]): string {
  * structurally no code path for a second persona to post into the same
  * session.
  *
- * Does not write `AIUsageLog` (T9's Cost Meter) — a real, named gap this
- * task does not close, consistent with E5 §9's own task boundaries.
+ * Every AI-invoking Router call (the main reply and the internal
+ * summarization sub-call) is gated by `CircuitBreakerService.checkBreachState()`
+ * first (ADR-034: "checked before each new AI-invoking request reaches the
+ * Router") — HARD_STOP throws a graceful error before the Router is ever
+ * called; DEGRADE downgrades that one call to the `'economy'` model tier.
+ * `CostMeterService.recordUsage()` runs after each such call completes,
+ * writing the real `AIUsageLog` row T9 introduces.
  *
  * Memory retrieval (T6, AI_MemoryManagerService) runs on every
  * `sendMessage` call, query-texted against the learner's own message —
@@ -65,7 +77,20 @@ export class OrchestratorService {
     private readonly memoryManager: MemoryManagerService,
     private readonly safetyLayer: SafetyLayerService,
     private readonly rollingSummaryCache: RollingSummaryCache,
+    private readonly circuitBreaker: CircuitBreakerService,
+    private readonly costMeter: CostMeterService,
   ) {}
+
+  /** ADR-034: checked before every Router-invoking call this service makes. Throws a graceful, user-facing error on HARD_STOP rather than letting the request reach the Router at all. */
+  private async resolveTierOrThrow(): Promise<ModelTier> {
+    const state = await this.circuitBreaker.checkBreachState();
+    if (state === 'HARD_STOP') {
+      throw new Error(
+        'AI request volume has exceeded the cost circuit breaker threshold (ADR-034) — please try again in a moment.',
+      );
+    }
+    return state === 'DEGRADE' ? 'economy' : 'default';
+  }
 
   async startSession(input: StartSessionInput): Promise<StartSessionResult> {
     const session = await this.prisma.aIAgentSession.create({
@@ -104,6 +129,7 @@ export class OrchestratorService {
         rollingSummary: session.rollingSummary,
         summarizedThroughAt: session.summarizedThroughAt,
       },
+      { userId: session.userId, orchestratorAgent: session.orchestratorAgent },
     );
     const memories = await this.memoryManager.retrieveRelevantMemories({
       userId: session.userId,
@@ -115,9 +141,23 @@ export class OrchestratorService {
       input.variables,
     );
 
-    const response = await this.router.generate('teacher', {
-      systemPrompt: `${personaPrompt}${this.memorySuffixFor(memories)}${summarySuffix}`,
-      messages: contextMessages,
+    const tier = await this.resolveTierOrThrow();
+    const response = await this.router.generate(
+      'teacher',
+      {
+        systemPrompt: `${personaPrompt}${this.memorySuffixFor(memories)}${summarySuffix}`,
+        messages: contextMessages,
+      },
+      tier,
+    );
+    await this.costMeter.recordUsage({
+      userId: session.userId,
+      agentPersona: session.orchestratorAgent,
+      modelId: response.modelId,
+      promptVersion,
+      inputTokens: response.inputTokens,
+      outputTokens: response.outputTokens,
+      latencyMs: response.latencyMs,
     });
     const sanitizedContent = this.safetyLayer.sanitizeOutput(response.content);
 
@@ -168,6 +208,7 @@ export class OrchestratorService {
     sessionId: string,
     allMessages: AIMessage[],
     durable: { rollingSummary: string | null; summarizedThroughAt: Date | null },
+    session: { userId: string; orchestratorAgent: OrchestratorAgentPersona },
   ): Promise<{ contextMessages: ChatMessage[]; summarySuffix: string }> {
     let cached = this.rollingSummaryCache.get(sessionId);
     if (!cached && durable.rollingSummary !== null && durable.summarizedThroughAt !== null) {
@@ -191,7 +232,7 @@ export class OrchestratorService {
 
     const toSummarize = tail.slice(0, -ROLLING_SUMMARY_RETAIN_RECENT_COUNT);
     const stillRecent = tail.slice(-ROLLING_SUMMARY_RETAIN_RECENT_COUNT);
-    const newSummary = await this.summarize(cached?.summary, toSummarize);
+    const newSummary = await this.summarize(cached?.summary, toSummarize, session);
     const boundary = toSummarize[toSummarize.length - 1]!.createdAt;
 
     this.rollingSummaryCache.set(sessionId, {
@@ -226,14 +267,28 @@ export class OrchestratorService {
   private async summarize(
     previousSummary: string | undefined,
     messages: AIMessage[],
+    session: { userId: string; orchestratorAgent: OrchestratorAgentPersona },
   ): Promise<string> {
     const prompt = previousSummary
       ? `Existing summary of earlier turns:\n${previousSummary}\n\nNew turns to fold in:\n${transcriptOf(messages)}`
       : `Conversation turns to summarize:\n${transcriptOf(messages)}`;
 
-    const response = await this.router.generate('teacher', {
-      systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: prompt }],
+    const tier = await this.resolveTierOrThrow();
+    const response = await this.router.generate(
+      'teacher',
+      {
+        systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: prompt }],
+      },
+      tier,
+    );
+    await this.costMeter.recordUsage({
+      userId: session.userId,
+      agentPersona: session.orchestratorAgent,
+      modelId: response.modelId,
+      inputTokens: response.inputTokens,
+      outputTokens: response.outputTokens,
+      latencyMs: response.latencyMs,
     });
     return response.content;
   }
