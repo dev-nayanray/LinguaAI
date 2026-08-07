@@ -13,6 +13,8 @@ import {
   SKILLS,
   type AssessmentAttempt,
   type AssessmentResponse,
+  type DailyGoal,
+  type LearningPlan,
   type ProficiencyLevel,
 } from '@linguaai/types/learning';
 
@@ -231,3 +233,65 @@ export const recommendationDailyGoalReadyPayloadSchema = z.object({
 export type RecommendationDailyGoalReadyPayload = z.infer<
   typeof recommendationDailyGoalReadyPayloadSchema
 >;
+
+// --- apps/api REST contract (E7 T5, §6.6) — pure reads of recommendation-engine's own precomputed rows ---
+
+/**
+ * `GET /v1/learning-plans/current` / `GET /v1/daily-goals/today` response
+ * shapes. Both are wire views of a `recommendation-engine`-owned Prisma
+ * row, not the Prisma type itself — timestamps as ISO strings, matching
+ * every other wire type in this file (`assessmentAttemptSchema` etc.), not
+ * `packages/database`'s own `Date`-typed generated client.
+ */
+export const learningPlanResponseSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  languageId: z.string().uuid(),
+  goal: z.string(),
+  targetDate: z.string().datetime().nullable(),
+  milestones: z.record(z.string(), z.unknown()),
+  isActive: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+assertExtends<LearningPlan, z.infer<typeof learningPlanResponseSchema>>();
+export type LearningPlanResponse = z.infer<typeof learningPlanResponseSchema>;
+
+/**
+ * `LearningPlan` has no uniqueness constraint scoping "one active plan per
+ * user" — only `@@index([userId, languageId])` — because `UserProfile.
+ * targetLanguages` (identity.prisma) is a real array, so a genuinely
+ * multi-language learner can have more than one active `LearningPlan`
+ * simultaneously. §6.6's own design text names a single "current" plan
+ * without addressing this — a real, found scope gap, resolved here (not
+ * left silently underspecified): `languageId` is an optional filter; when
+ * given, `.../current` resolves that language's own active plan (404 if
+ * none); when omitted, it falls back to the caller's most-recently-updated
+ * active plan across every language, a documented, deliberate default for
+ * the common single-target-language case, not an arbitrary one.
+ */
+export const currentLearningPlanQuerySchema = z.object({
+  languageId: z.string().uuid().optional(),
+});
+export type CurrentLearningPlanQuery = z.infer<typeof currentLearningPlanQuerySchema>;
+
+/**
+ * `DailyGoal` carries no `languageId` at all (`@@unique([userId, date])`
+ * only) — one goal per user per day platform-wide, regardless of how many
+ * languages they're learning — so unlike `LearningPlan`, `.../today` needs
+ * no equivalent query-param disambiguation.
+ */
+export const dailyGoalResponseSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  learningPlanId: z.string().uuid().nullable(),
+  date: z.string().date(),
+  targetXp: z.number().int(),
+  targetMinutes: z.number().int(),
+  targetActivities: z.number().int(),
+  completed: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+assertExtends<DailyGoal, z.infer<typeof dailyGoalResponseSchema>>();
+export type DailyGoalResponse = z.infer<typeof dailyGoalResponseSchema>;

@@ -87,3 +87,43 @@ export interface ProficiencyLevel {
   confidence: number;
   source: ProficiencySource;
 }
+
+/**
+ * The active roadmap `recommendation-engine` generates/maintains (E7 T2/T5)
+ * — mirrors `assessment.prisma`'s `LearningPlan` field-for-field.
+ * `milestones` is structured, producer-defined JSON (generation metadata,
+ * `weakSkills`, ...) — typed as an open record here, not a fixed shape,
+ * since its own concrete fields are an internal `recommendation-engine`
+ * concern (§6.2/§6.3), not a wire contract this type pins down.
+ */
+export interface LearningPlan {
+  id: string;
+  userId: string;
+  languageId: string;
+  goal: string;
+  targetDate: string | null;
+  milestones: Record<string, unknown>;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Today's target `recommendation-engine`'s nightly job generates (E7 T3/T5)
+ * — mirrors `assessment.prisma`'s `DailyGoal` field-for-field. `date` is a
+ * plain `YYYY-MM-DD` calendar-date string (the user's own local date the
+ * goal was generated for, `toLocalCalendarDate`'s own output shape,
+ * `packages/utils`), not a UTC instant.
+ */
+export interface DailyGoal {
+  id: string;
+  userId: string;
+  learningPlanId: string | null;
+  date: string;
+  targetXp: number;
+  targetMinutes: number;
+  targetActivities: number;
+  completed: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
