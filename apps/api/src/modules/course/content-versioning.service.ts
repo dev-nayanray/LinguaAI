@@ -55,6 +55,29 @@ export class ContentVersioningService {
     return activity?.lesson.unit.level.courseId ?? null;
   }
 
+  /**
+   * `ExerciseAttemptsService` (E8 T2, §6.2) calls this to pin a new
+   * attempt to the exercise's own current version at attempt time —
+   * `ExerciseAttempt.contentVersionId`'s own stated purpose (DATABASE.md
+   * §2.3). `null` only for the edge case of an exercise whose course was
+   * never actually published through this mechanism (should not occur
+   * for any content this epic's own authoring flow creates, since publish
+   * is what creates version 1 — §6.1).
+   */
+  async getCurrentVersionId(
+    entityType: ContentEntityType,
+    entityId: string,
+    tx?: Client,
+  ): Promise<string | null> {
+    const client = tx ?? this.appPrisma;
+    const latest = await client.contentVersion.findFirst({
+      where: { entityType, entityId },
+      orderBy: { versionNumber: 'desc' },
+      select: { id: true },
+    });
+    return latest?.id ?? null;
+  }
+
   /** Only creates a new version when the owning course is already live — a draft-content edit never accumulates version history it will never need. */
   async snapshotIfPublished(
     entityType: ContentEntityType,

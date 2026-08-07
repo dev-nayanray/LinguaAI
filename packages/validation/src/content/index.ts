@@ -243,3 +243,98 @@ export const updateExerciseRequestSchema = z.object({
   quizId: z.string().uuid().nullable().optional(),
 });
 export type UpdateExerciseRequest = z.infer<typeof updateExerciseRequestSchema>;
+
+// --- Learner-facing read + exercise-attempt contract (E8-T2, §6.2) ---
+
+/**
+ * The shape served to a learner browsing a lesson — deliberately omits
+ * `correctAnswer` (the answer key), the same scoring-integrity discipline
+ * `assessmentItemPublicViewSchema` (@linguaai/validation/learning, E6 T2)
+ * already established. Kept as its own independent literal shape, not
+ * `.omit()`'d from `exerciseSchema` (which itself carries `correctAnswer`),
+ * so a future careless `.extend()` on this schema can't accidentally leak
+ * the answer key through — that file's own doc comment states this exact
+ * reasoning verbatim.
+ */
+export const exercisePublicViewSchema = z.object({
+  id: z.string().uuid(),
+  activityId: z.string().uuid(),
+  quizId: z.string().uuid().nullable(),
+  type: exerciseTypeSchema,
+  prompt: z.string(),
+  order: z.number().int(),
+});
+export type ExercisePublicView = z.infer<typeof exercisePublicViewSchema>;
+
+/** `GET /v1/courses` query params — offset-paginated (API_GUIDELINES.md §4's own named "bounded, rarely-changing admin list" case applies equally to a learner-facing course catalog: bounded per language, not a high-churn feed). */
+export const courseListQuerySchema = z.object({
+  languageId: z.string().uuid().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type CourseListQuery = z.infer<typeof courseListQuerySchema>;
+
+export const courseListResponseSchema = z.object({
+  data: z.array(courseSchema),
+  meta: z.object({
+    page: z.number().int(),
+    pageSize: z.number().int(),
+    total: z.number().int(),
+  }),
+});
+export type CourseListResponse = z.infer<typeof courseListResponseSchema>;
+
+/** `GET /v1/courses/:id` — the outline a learner browses to pick a lesson: Course -> Levels -> Units -> Lessons, shallow (no Activity/Exercise content — that's `GET /v1/lessons/:id`'s own lazy-loaded payload, §6.2). */
+export const courseDetailResponseSchema = courseSchema.extend({
+  levels: z.array(
+    levelSchema.extend({
+      units: z.array(
+        unitSchema.extend({
+          lessons: z.array(lessonSchema),
+        }),
+      ),
+    }),
+  ),
+});
+export type CourseDetailResponse = z.infer<typeof courseDetailResponseSchema>;
+
+/** `GET /v1/lessons/:id` — the real payload a learner needs to take a lesson: its own Activities, each with its own servable Exercises (public view, no answer key) and Quizzes. */
+export const lessonDetailResponseSchema = lessonSchema.extend({
+  activities: z.array(
+    activitySchema.extend({
+      exercises: z.array(exercisePublicViewSchema),
+      quizzes: z.array(quizSchema),
+    }),
+  ),
+});
+export type LessonDetailResponse = z.infer<typeof lessonDetailResponseSchema>;
+
+/**
+ * `POST /v1/exercises/:id/attempts` request body — `response`'s shape is
+ * keyed by the *exercise's own* `type`, looked up server-side, never a
+ * client-supplied discriminant (the same scoring-integrity discipline
+ * `submitAssessmentResponseValueSchema`, E6 T2, already established).
+ * `{ selectedIndex }` for MULTIPLE_CHOICE/LISTENING_COMPREHENSION,
+ * `{ text }` for FILL_BLANK/TRANSLATION, `{ matches }` for MATCHING.
+ * `SPEAKING_PROMPT` has no response shape here at all — rejected before
+ * this union is ever consulted (§1's own scoping boundary: needs
+ * `services/speech-service`, not yet built until E10).
+ */
+export const submitExerciseAttemptResponseValueSchema = z.union([
+  z.object({ selectedIndex: z.number().int().min(0) }),
+  z.object({ text: z.string().min(1).max(5000) }),
+  z.object({
+    matches: z.array(z.object({ left: z.string().min(1), right: z.string().min(1) })),
+  }),
+]);
+export const submitExerciseAttemptRequestSchema = z.object({
+  response: submitExerciseAttemptResponseValueSchema,
+});
+export type SubmitExerciseAttemptRequest = z.infer<typeof submitExerciseAttemptRequestSchema>;
+
+export const exerciseAttemptResultResponseSchema = z.object({
+  id: z.string().uuid(),
+  isCorrect: z.boolean(),
+  score: z.number().nullable(),
+});
+export type ExerciseAttemptResultResponse = z.infer<typeof exerciseAttemptResultResponseSchema>;

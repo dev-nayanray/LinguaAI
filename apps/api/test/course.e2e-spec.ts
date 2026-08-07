@@ -11,17 +11,18 @@ import { AppModule } from '../src/app.module.js';
 import { registerAndLogin, TEST_PASSWORD, type RegisteredSession } from './helpers/auth-flow.js';
 
 /**
- * Real integration tests against live Postgres (E8 T1, §6.1). Proves the
- * design doc's own T1 evidence bar end to end: an ADMIN can author a full
- * Course -> Level -> Unit -> Lesson -> Activity -> Exercise chain, publish
- * it (backfilling a real ContentVersion snapshot for every leaf entity),
- * and a subsequent edit to a *published* entity creates a new version
- * without retroactively changing what an already-recorded ExerciseAttempt
- * was pinned to — `ContentVersion`'s own stated purpose (DATABASE.md
- * §2.3). `ExerciseAttempt` creation itself is simulated via a direct
- * Prisma write (the real submission endpoint is E8 T2's own scope, not
- * yet built) — this suite's own scope is T1's authoring/versioning
- * contract, not re-proving a not-yet-built endpoint.
+ * Real integration tests against live Postgres (E8 T1/T2, §6.1/§6.2).
+ * T1's own evidence bar: an ADMIN can author a full Course -> Level ->
+ * Unit -> Lesson -> Activity -> Exercise chain, publish it (backfilling a
+ * real ContentVersion snapshot for every leaf entity), and a subsequent
+ * edit to a *published* entity creates a new version without
+ * retroactively changing an already-recorded ExerciseAttempt's own pin —
+ * `ContentVersion`'s own stated purpose (DATABASE.md §2.3). T2's own
+ * evidence bar: an authored-and-published course is fully browsable
+ * (published-only reads, never leaking a draft course or an Exercise's
+ * own `correctAnswer`) and completable end to end via the real
+ * `POST /v1/exercises/:id/attempts` endpoint, which really does pin each
+ * attempt to the exercise's own current `ContentVersion`.
  */
 describe('CourseModule (e2e)', () => {
   let app: INestApplication;
@@ -131,6 +132,117 @@ describe('CourseModule (e2e)', () => {
       .post('/v1/auth/mfa/challenge')
       .send({ challengeToken: loginRes.body.challengeToken, code: authenticator.generate(secret) });
     return { ...session, accessToken: challengeRes.body.accessToken as string };
+  }
+
+  /**
+   * Authors and publishes a real Course -> Level -> Unit -> Lesson ->
+   * Activity chain with one Exercise of each objective type, for T2's own
+   * learner-facing/attempt tests. Returns every id a test needs plus the
+   * `admin`/`languageId` used, so callers can extend the chain further
+   * (e.g. adding a second draft course) without re-deriving them.
+   */
+  async function authorAndPublishCourse(): Promise<{
+    admin: RegisteredSession;
+    languageId: string;
+    courseId: string;
+    lessonId: string;
+    activityId: string;
+    exerciseIds: Record<
+      | 'MULTIPLE_CHOICE'
+      | 'FILL_BLANK'
+      | 'TRANSLATION'
+      | 'MATCHING'
+      | 'LISTENING_COMPREHENSION'
+      | 'SPEAKING_PROMPT',
+      string
+    >;
+  }> {
+    const admin = await freshAdminSession();
+    const languageId = await freshLanguage();
+    const auth = (req: request.Test) => req.set('Authorization', `Bearer ${admin.accessToken}`);
+
+    const courseRes = await auth(request(app.getHttpServer()).post('/v1/admin/courses')).send({
+      languageId,
+      title: 'Spanish for Travel',
+      slug: `spanish-for-travel-${randomUUID().slice(0, 8)}`,
+    });
+    const courseId = courseRes.body.id as string;
+    createdCourseIds.push(courseId);
+
+    const levelRes = await auth(
+      request(app.getHttpServer()).post(`/v1/admin/courses/${courseId}/levels`),
+    ).send({ cefrLevel: 'A1', title: 'Beginner', order: 1 });
+    const unitRes = await auth(
+      request(app.getHttpServer()).post(`/v1/admin/levels/${levelRes.body.id as string}/units`),
+    ).send({ title: 'Greetings', order: 1 });
+    const lessonRes = await auth(
+      request(app.getHttpServer()).post(`/v1/admin/units/${unitRes.body.id as string}/lessons`),
+    ).send({ title: 'Saying Hello', order: 1, estimatedMinutes: 5 });
+    const lessonId = lessonRes.body.id as string;
+    const activityRes = await auth(
+      request(app.getHttpServer()).post(`/v1/admin/lessons/${lessonId}/activities`),
+    ).send({ type: 'READING', title: 'Basic Greetings', content: { text: 'Hola' }, order: 1 });
+    const activityId = activityRes.body.id as string;
+
+    async function createExercise(
+      type: string,
+      prompt: string,
+      correctAnswer: Record<string, unknown>,
+      order: number,
+    ): Promise<string> {
+      const res = await auth(
+        request(app.getHttpServer()).post(`/v1/admin/activities/${activityId}/exercises`),
+      ).send({ type, prompt, correctAnswer, order });
+      return res.body.id as string;
+    }
+
+    const exerciseIds = {
+      MULTIPLE_CHOICE: await createExercise(
+        'MULTIPLE_CHOICE',
+        'How do you say hello in Spanish?',
+        { correctIndex: 0 },
+        1,
+      ),
+      FILL_BLANK: await createExercise(
+        'FILL_BLANK',
+        'Complete: ___, como estas?',
+        { acceptable: ['Hola'] },
+        2,
+      ),
+      TRANSLATION: await createExercise(
+        'TRANSLATION',
+        'Translate "goodbye" to Spanish',
+        { acceptable: ['Adios', 'adios'] },
+        3,
+      ),
+      MATCHING: await createExercise(
+        'MATCHING',
+        'Match the Spanish word to its English meaning',
+        {
+          pairs: [
+            { left: 'Hola', right: 'Hello' },
+            { left: 'Adios', right: 'Goodbye' },
+          ],
+        },
+        4,
+      ),
+      LISTENING_COMPREHENSION: await createExercise(
+        'LISTENING_COMPREHENSION',
+        'Listen and choose what was said',
+        { correctIndex: 1 },
+        5,
+      ),
+      SPEAKING_PROMPT: await createExercise(
+        'SPEAKING_PROMPT',
+        'Say "hello" out loud',
+        { transcript: 'hola' },
+        6,
+      ),
+    };
+
+    await auth(request(app.getHttpServer()).post(`/v1/admin/courses/${courseId}/publish`)).send({});
+
+    return { admin, languageId, courseId, lessonId, activityId, exerciseIds };
   }
 
   describe('authorization', () => {
@@ -331,5 +443,205 @@ describe('CourseModule (e2e)', () => {
         .send({});
       expect(res.status).toBe(404);
     });
+  });
+
+  describe('learner-facing catalog reads (E8 T2, §6.2)', () => {
+    it('rejects unauthenticated requests to every read route with 401', async () => {
+      const listRes = await request(app.getHttpServer()).get('/v1/courses');
+      const detailRes = await request(app.getHttpServer()).get(`/v1/courses/${randomUUID()}`);
+      const lessonRes = await request(app.getHttpServer()).get(`/v1/lessons/${randomUUID()}`);
+      expect(listRes.status).toBe(401);
+      expect(detailRes.status).toBe(401);
+      expect(lessonRes.status).toBe(401);
+    });
+
+    it('GET /v1/courses only ever lists published courses, filterable by languageId', async () => {
+      const { admin, languageId, courseId } = await authorAndPublishCourse();
+      const auth = (req: request.Test) => req.set('Authorization', `Bearer ${admin.accessToken}`);
+
+      // A second, never-published course for the same language must never
+      // appear in the catalog a learner sees.
+      const draftRes = await auth(request(app.getHttpServer()).post('/v1/admin/courses')).send({
+        languageId,
+        title: 'Never Published',
+        slug: `never-published-${randomUUID().slice(0, 8)}`,
+      });
+      createdCourseIds.push(draftRes.body.id as string);
+
+      const learner = await freshSession();
+      const listRes = await request(app.getHttpServer())
+        .get(`/v1/courses?languageId=${languageId}`)
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+
+      expect(listRes.status).toBe(200);
+      const ids = (listRes.body.data as Array<{ id: string }>).map((c) => c.id);
+      expect(ids).toContain(courseId);
+      expect(ids).not.toContain(draftRes.body.id);
+      expect(listRes.body.meta).toEqual(
+        expect.objectContaining({ page: 1, pageSize: 20 }) as unknown,
+      );
+    }, 30000);
+
+    it('GET /v1/courses/:id returns the Level -> Unit -> Lesson outline for a published course, and 404s for a draft one', async () => {
+      const { admin, languageId, courseId, lessonId } = await authorAndPublishCourse();
+      const learner = await freshSession();
+
+      const detailRes = await request(app.getHttpServer())
+        .get(`/v1/courses/${courseId}`)
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+      expect(detailRes.status).toBe(200);
+      const lessonIds = (
+        detailRes.body.levels as Array<{ units: Array<{ lessons: Array<{ id: string }> }> }>
+      ).flatMap((l) => l.units.flatMap((u) => u.lessons.map((les) => les.id)));
+      expect(lessonIds).toContain(lessonId);
+
+      const draftRes = await request(app.getHttpServer())
+        .post('/v1/admin/courses')
+        .set('Authorization', `Bearer ${admin.accessToken}`)
+        .send({ languageId, title: 'Draft', slug: `draft-${randomUUID().slice(0, 8)}` });
+      createdCourseIds.push(draftRes.body.id as string);
+
+      const draftDetailRes = await request(app.getHttpServer())
+        .get(`/v1/courses/${draftRes.body.id as string}`)
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+      expect(draftDetailRes.status).toBe(404);
+    }, 30000);
+
+    it("GET /v1/lessons/:id serves the lesson's own Activities/Exercises without ever leaking correctAnswer", async () => {
+      const { lessonId } = await authorAndPublishCourse();
+      const learner = await freshSession();
+
+      const res = await request(app.getHttpServer())
+        .get(`/v1/lessons/${lessonId}`)
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.activities).toHaveLength(1);
+      const exercises = res.body.activities[0].exercises as Array<Record<string, unknown>>;
+      expect(exercises.length).toBeGreaterThan(0);
+      for (const exercise of exercises) {
+        expect(exercise.correctAnswer).toBeUndefined();
+        expect(exercise.prompt).toEqual(expect.any(String));
+      }
+    }, 30000);
+  });
+
+  describe('exercise-attempt submission (E8 T2, §6.2)', () => {
+    it('rejects an unauthenticated attempt with 401', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/v1/exercises/${randomUUID()}/attempts`)
+        .send({ response: { selectedIndex: 0 } });
+      expect(res.status).toBe(401);
+    });
+
+    it("scores every objective ExerciseType correctly and pins each attempt to the exercise's own current ContentVersion", async () => {
+      const { exerciseIds } = await authorAndPublishCourse();
+      const learner = await freshSession();
+      const auth = (req: request.Test) => req.set('Authorization', `Bearer ${learner.accessToken}`);
+
+      const cases: Array<{ id: string; response: Record<string, unknown>; expected: boolean }> = [
+        { id: exerciseIds.MULTIPLE_CHOICE, response: { selectedIndex: 0 }, expected: true },
+        { id: exerciseIds.MULTIPLE_CHOICE, response: { selectedIndex: 1 }, expected: false },
+        { id: exerciseIds.FILL_BLANK, response: { text: 'hola' }, expected: true },
+        { id: exerciseIds.FILL_BLANK, response: { text: 'nope' }, expected: false },
+        { id: exerciseIds.TRANSLATION, response: { text: 'Adios' }, expected: true },
+        {
+          id: exerciseIds.MATCHING,
+          response: {
+            matches: [
+              { left: 'Hola', right: 'Hello' },
+              { left: 'Adios', right: 'Goodbye' },
+            ],
+          },
+          expected: true,
+        },
+        { id: exerciseIds.LISTENING_COMPREHENSION, response: { selectedIndex: 1 }, expected: true },
+      ];
+
+      for (const testCase of cases) {
+        const res = await auth(
+          request(app.getHttpServer()).post(`/v1/exercises/${testCase.id}/attempts`),
+        ).send({ response: testCase.response });
+        expect(res.status).toBe(201);
+        expect(res.body.isCorrect).toBe(testCase.expected);
+        expect(res.body.score).toBe(testCase.expected ? 1 : 0);
+
+        const attempt = await setupPrisma.exerciseAttempt.findUnique({
+          where: { id: res.body.id as string },
+        });
+        const currentVersion = await setupPrisma.contentVersion.findFirst({
+          where: { entityType: 'EXERCISE', entityId: testCase.id },
+          orderBy: { versionNumber: 'desc' },
+        });
+        expect(attempt?.contentVersionId).toBe(currentVersion!.id);
+      }
+
+      await setupPrisma.exerciseAttempt.deleteMany({ where: { userId: learner.userId } });
+    }, 30000);
+
+    it("rejects a SPEAKING_PROMPT attempt with 422 — out of this epic's own scope until services/speech-service (E10)", async () => {
+      const { exerciseIds } = await authorAndPublishCourse();
+      const learner = await freshSession();
+
+      const res = await request(app.getHttpServer())
+        .post(`/v1/exercises/${exerciseIds.SPEAKING_PROMPT}/attempts`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ response: { text: 'hola' } });
+
+      expect(res.status).toBe(422);
+    }, 30000);
+
+    it('returns 404 for an attempt against a non-existent exercise', async () => {
+      const learner = await freshSession();
+      const res = await request(app.getHttpServer())
+        .post(`/v1/exercises/${randomUUID()}/attempts`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ response: { selectedIndex: 0 } });
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 (not leaking existence) for an attempt against a draft course's exercise", async () => {
+      const admin = await freshAdminSession();
+      const languageId = await freshLanguage();
+      const auth = (req: request.Test) => req.set('Authorization', `Bearer ${admin.accessToken}`);
+      const courseRes = await auth(request(app.getHttpServer()).post('/v1/admin/courses')).send({
+        languageId,
+        title: 'Draft Course',
+        slug: `draft-course-${randomUUID().slice(0, 8)}`,
+      });
+      const courseId = courseRes.body.id as string;
+      createdCourseIds.push(courseId);
+      const levelRes = await auth(
+        request(app.getHttpServer()).post(`/v1/admin/courses/${courseId}/levels`),
+      ).send({ cefrLevel: 'A1', title: 'Beginner', order: 1 });
+      const unitRes = await auth(
+        request(app.getHttpServer()).post(`/v1/admin/levels/${levelRes.body.id as string}/units`),
+      ).send({ title: 'Unit 1', order: 1 });
+      const lessonRes = await auth(
+        request(app.getHttpServer()).post(`/v1/admin/units/${unitRes.body.id as string}/lessons`),
+      ).send({ title: 'Lesson 1', order: 1 });
+      const activityRes = await auth(
+        request(app.getHttpServer()).post(
+          `/v1/admin/lessons/${lessonRes.body.id as string}/activities`,
+        ),
+      ).send({ type: 'READING', title: 'Activity 1', content: {}, order: 1 });
+      const exerciseRes = await auth(
+        request(app.getHttpServer()).post(
+          `/v1/admin/activities/${activityRes.body.id as string}/exercises`,
+        ),
+      ).send({
+        type: 'MULTIPLE_CHOICE',
+        prompt: 'p',
+        correctAnswer: { correctIndex: 0 },
+        order: 1,
+      });
+
+      const learner = await freshSession();
+      const res = await request(app.getHttpServer())
+        .post(`/v1/exercises/${exerciseRes.body.id as string}/attempts`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ response: { selectedIndex: 0 } });
+      expect(res.status).toBe(404);
+    }, 30000);
   });
 });
