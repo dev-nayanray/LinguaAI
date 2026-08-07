@@ -3,13 +3,12 @@ import type { MemoryCategory, PrismaClient } from '@linguaai/database';
 
 import { AI_ENGINE_PRISMA_CLIENT } from '../database/database.config.js';
 import { RouterService } from '../gateway/router.service.js';
+import { estimateTokens, toVectorLiteral } from '../shared/vector-search.util.js';
 import {
   MEMORY_CONFIDENCE_FLOOR,
   MEMORY_RETRIEVAL_CANDIDATE_POOL_SIZE,
   MEMORY_RETRIEVAL_TOKEN_BUDGET,
   decayedConfidence,
-  estimateTokens,
-  toVectorLiteral,
 } from './memory-retrieval.util.js';
 import type {
   RetrievedMemory,

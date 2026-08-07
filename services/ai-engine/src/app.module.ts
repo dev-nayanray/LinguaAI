@@ -7,6 +7,7 @@ import { HealthController } from './health/health.controller.js';
 import { MemoryModule } from './memory/memory.module.js';
 import { OrchestratorModule } from './orchestrator/orchestrator.module.js';
 import { PromptModule } from './prompts/prompt.module.js';
+import { RagModule } from './rag/rag.module.js';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { PromptModule } from './prompts/prompt.module.js';
     PromptModule,
     RegistryModule,
     MemoryModule,
+    RagModule,
     OrchestratorModule,
   ],
   controllers: [HealthController],
