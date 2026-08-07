@@ -1,0 +1,198 @@
+# Epic E7 — Personalized Learning Engine
+
+**Epic ID:** E7 (ROADMAP.md)
+**Status:** Design (not yet accepted for implementation)
+**Tech lead:** AI/Backend Engineering (TBD)
+**Gate owners assigned:** Architecture, Security, Database, API, Performance, Testing, Documentation (AI gate is N/A — see §4; Frontend/Accessibility/Deployment gates apply to the later feature epic that builds the actual dashboard UI, not this backend-engine epic — see §3.6)
+
+## 0. Why this document exists now, and what it is not
+
+E6 (AI Language Assessment Engine) is implementation-complete (T1–T8, 2026-08-07). Per ROADMAP.md, E7 is the next epic whose dependencies (E4, E6) are both satisfied. This is the **first, single-pass design** for the Personalized Learning Engine (PRD.md module 3) — following the same process E4, E5, and E6 each went through (CLAUDE.md's own workflow rule: "Architecture and planning precede feature development... do not scaffold or implement application features until the corresponding module has an approved design"). This document does not write any application code; it designs the module, surfaces real gaps found while doing so (§3), and proposes the ADR implementation will need (§7). Once a direction accepts this document (explicitly, or by the same "proceed by direct instruction" pattern E4/E5/E6's own status lines record), implementation follows IMPLEMENTATION_GUIDE.md's 20-phase lifecycle per task, exactly as E4/E5/E6 did.
+
+## 1. Epic Definition
+
+The Personalized Learning Engine generates and maintains each user's `LearningPlan` (the active roadmap) and `DailyGoal` (today's target), reacting to assessment and lesson/exercise activity to keep both adaptive — PRD.md Journey A step 4 ("User lands on their dashboard with a Day 1 lesson plan already generated") and Journey B ("dashboard showing today's goal, streak, and recommended activities... weakness detection silently adjusts tomorrow's plan"). It is the first epic to give `recommendation-engine` (an empty E1 skeleton — 4 files, no domain code, confirmed by direct inspection) its first real Prisma access, first real BullMQ job, and first real `apps/api`-facing contract — E6's own ADR-038 already named this epic as `recommendation-engine`'s "more natural first claim," not a decision reopened here.
+
+**In scope:**
+
+- `LearningPlan` generation triggered by `assessment.attempt.completed` (already cataloged, `EVENT_ARCHITECTURE.md`; real and emitting since E6 T6) — the Day-1 roadmap Journey A step 4 promises, previously undeliverable since nothing consumed that event.
+- Nightly `DailyGoal` (re)generation — a real batch job implementing the exact mechanism `ARCHITECTURE.md`'s own §6 data-flow example already narrates ("Nightly job (BullMQ, scheduled) in `recommendation-engine` reads each active user's recent progress and weakness signals... produces/updates the next day's personalized lesson plan").
+- Deterministic weakness-detection scoring, from real signals that already exist: `ProficiencyLevel`/`ProficiencyLevelHistory` (E6) and `ExerciseAttempt` (E4, content.prisma) — no generative model call, per `ARCHITECTURE.md`'s own explicit `recommendation-engine`/`ai-engine` boundary rule (§4).
+- A new domain event this epic must both design and add to `EVENT_ARCHITECTURE.md`'s catalog — closing a real, found gap: `ARCHITECTURE.md` §6 narrates `notification-service` consuming a "plan ready" event, but no such row exists in the actual event catalog today (§3.4).
+- The `apps/api` REST surface a frontend consumes to read "today's goal" / "current plan" — `recommendation-engine` itself has no public HTTP surface to end users, matching `ai-engine`'s own internal-only trust model (ADR-033).
+- Real consumption of three events that already name `recommendation-engine` as a consumer in `EVENT_ARCHITECTURE.md`'s catalog: `assessment.attempt.completed`, `learning.lesson.completed`, `learning.exercise.answered`.
+- `recommendation-engine`'s first real Postgres connection, following ADR-036 exactly (`app_role` via `APP_DATABASE_URL`, never the migration-owning role).
+
+**Explicitly out of scope** (cited against ROADMAP.md/PRD.md's own classification, not silently absorbed):
+
+- **Actual XP/streak awarding** — `DailyGoal.targetXp`/`completed` are targets this epic _sets_, never XP this epic _grants_; awarding XP against a completed goal is Gamification Engine's own scope (module 15, E14 per ROADMAP.md). Note: `DECISIONS.md`'s own ADR-036 Consequences text separately mislabels _this_ epic's own number as "E14" ("`E10 speech-service, E14 recommendation-engine`") when `recommendation-engine`'s real epic is E7 per ROADMAP.md — a real, unrelated doc-drift found while researching this epic, flagged here rather than silently propagated, not a blocker for this document.
+- **Real curriculum/content authoring** — `packages/database/scripts/seed.ts`'s own `seedSampleCourse()` seeds exactly one representative `Course → Level → Unit → Lesson → Activity → Exercise` chain, its own comment stating plainly: _"a representative course chain proving the full content hierarchy seeds correctly — not a real content catalog (E8)."_ This epic recommends from whatever content exists; authoring real content is Course Management System's own scope (module 5, E8), not reopened here (§3.2).
+- **Vocabulary/SRS-specific weakness signals** — Vocabulary Intelligence (module 6, E9) has not shipped (ROADMAP.md does not list it as an E7 dependency); this epic's weakness detection uses only signals that already exist for real today (§3.7).
+- **The actual dashboard UI** — matching E4/E5/E6's own precedent (backend/engine epics, not UI epics), this epic designs the data model and API contract, not `apps/web`'s real dashboard screens (§3.6).
+- **Adaptive item selection during an assessment attempt** — E6/ADR-038's own resolved scope, already shipped inside `apps/api`'s `AssessmentModule`; not rebuilt, moved, or touched here.
+- **Explaining _why_ a plan/goal was generated in natural language** — `ARCHITECTURE.md`'s own boundary rule names this as the one case that _would_ need `ai-engine` ("explain why this lesson was recommended... calls `recommendation-engine` for the decision and `ai-engine` to generate the explanation"); PRD.md's own Journey B acceptance bar does not require this at MVP, so it is named here as real, deferred future work, not silently folded in.
+
+**Depends on:** E4 (Database Schema & Core Data Layer — `LearningPlan`/`DailyGoal`/`ExerciseAttempt` schemas already exist), E6 (AI Language Assessment Engine — `assessment.attempt.completed` is real and emitting, `ProficiencyLevel`/`ProficiencyLevelHistory` are real and populated).
+
+## 2. Business Objective
+
+PRD.md's module 3 acceptance bar (line 131): _"Curriculum changes measurably in response to performance."_ Journey B's own acceptance criteria: dashboard loads in <2s p95; lesson completion updates progress without a page reload; streak logic is timezone-correct; weakness detection silently adjusts tomorrow's plan. PRD.md §7's named business metrics include the streak survival curve and CEFR-level progression rate — the latter already measurable since E6 T3/T6 made `ProficiencyLevelHistory` real; this epic is what makes that data actually _act_ on the learner's own plan, not just get recorded.
+
+**Success looks like:**
+
+- Every completed assessment attempt produces a real `LearningPlan` within a bounded, documented latency (§6.2) — Journey A step 4's "Day 1 lesson plan already generated" promise, previously undeliverable since `recommendation-engine` had zero real code to consume the event with.
+- A `DailyGoal` row exists for every user with an active `LearningPlan`, refreshed nightly, reflecting that user's own recent performance signals — not a static, one-size-fits-all default.
+- A documented, testable weakness-detection signal exists, real enough that a future recommendation-quality metric could be measured against it (the module's own "curriculum changes measurably" bar).
+- `<2s p95` dashboard-read latency (Journey B) is achievable by construction — `apps/api`'s own read endpoints serve a precomputed row, never a live recompute on the request path (§6.6/§8).
+
+## 3. Scoping boundary and conflicts found
+
+### 3.1 `recommendation-engine`'s first real code — a genuinely new kind of task for this platform
+
+Every prior `services/*` epic built on an existing base: E5 stood up `ai-engine`'s first real code, but E6 only _extended_ it (T4/T5); E6 itself never touched `recommendation-engine`. This epic is the first to give `recommendation-engine` its first Prisma access, first BullMQ job, first `apps/api`-facing contract, and first published domain event — a materially larger first step than E6's own "extend an existing service" shape. **Resolved here:** ADR-036 (already Accepted, E5's own decision) already specifies the exact Postgres connection pattern every future `services/*` epic must follow (`app_role` via `APP_DATABASE_URL`, mirroring `ai-engine`'s own `createAiEnginePrismaClient` factory) — this epic applies that existing decision for real, for the first time outside `ai-engine`, rather than reopening it (§6.1).
+
+### 3.2 No real curriculum content exists yet — recommend against a near-empty catalog, don't fabricate one
+
+`content.prisma`'s full `Course → Level → Unit → Lesson → Activity → Exercise` hierarchy is real schema (E4), but `seed.ts`'s `seedSampleCourse()` seeds exactly **one** representative chain end-to-end, with its own comment stating this directly: _"not a real content catalog (E8)."_ A "next-best-activity" recommendation engine has almost nothing real to recommend from today. **Resolved here, the same "build the real mechanism against sparse content, flag the content gap as separately-scoped work" pattern E6 T1/T2 already established** for the assessment item bank: this epic's own algorithms (§6.3/§6.4) are built to be structurally correct against however much real content exists — one chain or ten thousand — never assuming a rich catalog. Real content authoring at scale remains Course Management System's (E8) own tracked future work, named in RISK_REGISTER (§11), not silently assumed complete.
+
+### 3.3 `ActivityType` and `Skill` are two independently-defined, non-1:1 enums
+
+Weakness detection (§6.4) needs a per-skill signal from lesson/exercise activity, but `content.prisma`'s `Exercise` model carries no `skill` field of its own — the closest available signal is `Activity.type` (`ActivityType`: `VOCABULARY_DRILL, GRAMMAR_EXPLANATION, LISTENING, SPEAKING, READING, WRITING, CONVERSATION`), a _different_, independently-defined enum from the one `ProficiencyLevel`/`AssessmentItem` use (`Skill`: `READING, LISTENING, VOCABULARY, GRAMMAR, WRITING, SPEAKING`). They don't line up 1:1 (`VOCABULARY_DRILL` vs. `VOCABULARY`, `GRAMMAR_EXPLANATION` vs. `GRAMMAR`, and `CONVERSATION` has no `Skill` equivalent at all) — confirmed by direct inspection of both enums, not assumed compatible. **Resolved here:** §6.4 defines an explicit, documented `ActivityType → Skill` mapping table (with `CONVERSATION` mapped to no single skill, excluded from per-skill weakness scoring rather than silently miscounted against one), so a future content-authoring change to either enum has one place, not scattered inline conditionals, that would need updating.
+
+### 3.4 `EVENT_ARCHITECTURE.md`'s catalog has no "plan/goal ready" event, despite `ARCHITECTURE.md` §6 narratively describing one
+
+`ARCHITECTURE.md`'s own "Daily curriculum generation (async/batch)" data-flow example states step 3 as: _"`notification-service` picks up a 'plan ready' event to optionally send a reminder push."_ But `EVENT_ARCHITECTURE.md`'s actual catalog table has no row for any such event — confirmed by a full-file search, not assumed missing. This is a real, pre-existing doc/reality gap (the narrative text describes a mechanism the catalog never formalized), not something this epic introduces. **Resolved here:** §6.5 names the real event (`recommendation.daily_goal.ready`), defines its payload, and this epic's own implementation phase adds the missing catalog row — closing the gap for real, not just narrating around it a second time.
+
+### 3.5 A citation drift found while researching this epic, worth flagging even though it doesn't block this document
+
+PRD.md line 131 cites _"owned by `recommendation-engine` per its documented boundary with `ai-engine` (ARCHITECTURE.md §3)"_ — but `ARCHITECTURE.md` has no section literally numbered `§3` covering that boundary today; the actual boundary rule lives in what is currently numbered §2.1 ("Domain boundary map"). Confirmed by direct inspection of `ARCHITECTURE.md`'s own current section numbering, not assumed. This is almost certainly section-renumbering drift from an earlier doc revision, not a fabricated citation — flagged here (and worth a small, separate documentation fix outside this epic's own scope) rather than silently propagated as if `§3` were correct.
+
+### 3.6 This epic is backend/engine only, not the actual dashboard UI
+
+Matching E4/E5/E6's own precedent (backend/gateway epics, not UI epics), this document designs the data model, generation algorithms, and API contract — not `apps/web`'s real dashboard screens (Journey B's "dashboard showing today's goal, streak, and recommended activities"). A future feature epic (plausibly bundled with the epic that builds E6's own deferred assessment-taking UI, per E6 §3.6, or its own small epic) owns the Frontend/Accessibility gates for the real UI; this epic's own Gate sign-off log (§12) marks those N/A here, not silently skipped.
+
+### 3.7 Weakness-detection MVP scope: real signals only, no invented dependency on unbuilt epics
+
+A richer weakness-detection signal could plausibly draw on Vocabulary Intelligence/SRS data (module 6, E9) or live conversation transcripts (module 4, E5's own `AIMessage` history) — but E9 doesn't exist yet (ROADMAP.md doesn't list it as an E7 dependency), and mining `AIMessage` content for weakness signals is a materially different, larger scope PRD.md's own Journey B text doesn't ask for. **Resolved here:** §6.4's weakness-detection algorithm draws only on `ProficiencyLevel`/`ProficiencyLevelHistory` (E6, real) and `ExerciseAttempt` (E4, real) — signals that already exist today, not a speculative interface against a system that doesn't.
+
+## 4. Bounded context & ownership
+
+Per `ARCHITECTURE.md`'s domain boundary map (currently numbered §2.1 — see §3.5's own citation-drift finding): the **Learning** bounded context, hosted in `apps/api` _and_ `recommendation-engine`. Per `ARCHITECTURE.md`'s own explicit service-boundary rule: _"`recommendation-engine` owns deterministic/algorithmic decisions — SRS scheduling, next-best-activity ranking, weakness-detection scoring — content that does not require a generative model call."_ Every T-task this document scopes (§9) is exactly that class of decision — plan/goal generation and weakness scoring are arithmetic over already-persisted rows, never an LLM call — so this epic has **no real dependency on `ai-engine`** (the AI Gate is marked N/A in this document's own header, not TBD, for that reason). The one case `ARCHITECTURE.md` names as needing both services ("explain why this lesson was recommended") is explicitly out of scope (§1) — not required by PRD.md's own Journey B acceptance bar, and a real, separately-scoped future capability if a product decision later wants it.
+
+## 5. Component-by-component design summary
+
+| Component                         | What T-tasks (§9) actually build                                                                                                      | Real gap closed (§3) |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| `recommendation-engine` DB access | `createRecommendationEnginePrismaClient` (mirrors `ai-engine`'s own factory exactly, ADR-036), `DatabaseModule`                       | §3.1                 |
+| `LearningPlan` generation         | Event-driven: an `assessment.attempt.completed` consumer creates/refreshes a user's active `LearningPlan`                             | —                    |
+| `DailyGoal` generation            | Nightly BullMQ job, mirroring ADR-035's own partition-maintenance job pattern exactly                                                 | —                    |
+| Weakness-detection scoring        | Deterministic scoring service reading `ProficiencyLevel`/History + `ExerciseAttempt`, with an explicit `ActivityType → Skill` mapping | §3.3, §3.7           |
+| Event publication                 | New `recommendation.daily_goal.ready` — defined, cataloged, and emitted                                                               | §3.4                 |
+| Event consumption                 | Real BullMQ consumers for `assessment.attempt.completed` / `learning.lesson.completed` / `learning.exercise.answered`                 | —                    |
+| `apps/api` REST contract          | Read-only endpoints: current `LearningPlan`, today's `DailyGoal`                                                                      | —                    |
+
+## 6. Cross-cutting mechanics
+
+### 6.1 `recommendation-engine`'s first real Prisma access (ADR-036 applied)
+
+A new `createRecommendationEnginePrismaClient(databaseUrl)` in `services/recommendation-engine/src/database/`, structurally identical to `ai-engine`'s own `createAiEnginePrismaClient` (`services/ai-engine/src/database/create-ai-engine-prisma-client.ts`): connects via `APP_DATABASE_URL` as `app_role`, never `packages/database`'s `getPrismaClient()` (wired to the migration-owning `DATABASE_URL`). No field-level encryption composition is needed here (unlike `ai-engine`'s own `withAiMessageEncryption`) — `LearningPlan`/`DailyGoal` carry no PII-equivalent free-text column the way `AIMessage.content` does; `milestones: Json` is structured, non-conversational data. The same `onModuleDestroy` composition technique applies for graceful shutdown.
+
+### 6.2 `LearningPlan` generation trigger and shape
+
+A new `recommendation-engine` BullMQ consumer subscribes to `assessment.attempt.completed` (already real and emitting, E6 T6). On a `PLACEMENT`-type completion with no existing active `LearningPlan` for that user+language, creates one (`goal`: carried over from the user's own onboarding-selected `UserProfile.goalType` — a real, existing field per `identity.prisma`, not invented here; `milestones`: a structured, versioned JSON shape this task's own implementation phase defines concretely, seeded from the attempt's own `proficiencyResults` skill/band breakdown). On a `REASSESSMENT`-type completion, updates the existing active plan's `milestones` rather than creating a duplicate — mirroring E6 T6's own "re-assessment doesn't disturb prior history, it extends it" precedent, applied here to `LearningPlan` instead of `ProficiencyLevelHistory`. Latency budget: this consumer runs asynchronously off the event bus, not on `completeAttempt`'s own request path — Journey A's own "Day 1 lesson plan already generated" bar is about what's on the dashboard _when the user next loads it_, not about `POST .../complete`'s own response time, so no new pressure is added to E6's own 15-minute-attempt/response-time budgets.
+
+### 6.3 `DailyGoal` nightly generation algorithm (deterministic, provisional)
+
+A new BullMQ scheduled (cron-style) job, mirroring ADR-035's own established "partitioned-table maintenance runs as a BullMQ job inside a `services/*` app" pattern exactly, applied here to a different job's own logic. For every user with an active `LearningPlan`, computes tomorrow's `targetXp`/`targetMinutes`/`targetActivities` from a provisional, documented formula (this task's own implementation phase picks concrete numbers, flagged provisional — the same honesty class E6's own CEFR-banding threshold table and confidence formula already carry, RISK_REGISTER §11) informed by the user's own recent `DailyGoal.completed` history (a simple "did they hit or miss their last N goals" adjustment, not a calibrated model) and the weakness-detection signal (§6.4) — a detected weak skill biases which `ActivityType`s next get recommended, via `LearningPlan.milestones`, not a separate field. Upserts (never duplicates) the `(userId, date)`-unique `DailyGoal` row (schema's own existing `@@unique([userId, date])` constraint already enforces this at the database level).
+
+### 6.4 Weakness-detection scoring — deterministic, from real signals only
+
+A pure, I/O-free scoring function (the same "relocatable, no service-specific dependency" design ADR-038 already established for E6's own adaptive-selection algorithm) taking two already-real inputs: (a) each skill's own `ProficiencyLevel.confidence`/`cefrLevel` trend across `ProficiencyLevelHistory` rows (a skill that hasn't improved, or has regressed, across re-assessments is a real, measurable weakness signal — the exact "CEFR-level progression rate" data PRD.md §7 already names), and (b) recent `ExerciseAttempt.isCorrect`/`score` rows, joined through `Exercise → Activity` and mapped via this task's own explicit `ActivityType → Skill` table (§3.3):
+
+| `ActivityType`        | Mapped `Skill`                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| `VOCABULARY_DRILL`    | `VOCABULARY`                                                                        |
+| `GRAMMAR_EXPLANATION` | `GRAMMAR`                                                                           |
+| `LISTENING`           | `LISTENING`                                                                         |
+| `SPEAKING`            | `SPEAKING`                                                                          |
+| `READING`             | `READING`                                                                           |
+| `WRITING`             | `WRITING`                                                                           |
+| `CONVERSATION`        | _(none — excluded from per-skill weakness scoring, not silently attributed to one)_ |
+
+A skill is flagged "weak" below a provisional threshold on either signal (concrete numbers are this task's own implementation-phase decision, flagged provisional, RISK_REGISTER §11 — the same honesty class every other provisional numeric parameter this platform ships already carries, e.g. E6's own `CONFIDENCE_FLOOR`). Zero data for a skill (a genuinely possible outcome against §3.2's sparse content) is _not_ flagged weak by default — mirroring `computeWritingBanding`'s own "omit, don't fabricate a negative result from an absence of data" precedent (E6 T7), rather than `computeSkillBanding`'s own zero-items default (which was correct there specifically because the four objective skills are always expected to have content; that assumption does not hold for arbitrary `Activity` content today, §3.2).
+
+### 6.5 New event: `recommendation.daily_goal.ready`
+
+Published by the §6.3 nightly job after a user's `DailyGoal` row is (re)computed — closes §3.4's own found gap. Payload: `userId`, `date`, `targetXp`, `targetMinutes`, `targetActivities`. Added to `EVENT_ARCHITECTURE.md`'s catalog with `notification-service` as its real, documented consumer (matching `ARCHITECTURE.md` §6's own already-narrated intent) and `analytics-service` (mirroring every other learning-domain event's own consumer list). Following E6 T6's own now-established convention, an event-catalog conformance test (asserting the type string is still cataloged, and a representative payload satisfies the same schema the publisher constructs it from) ships in the same task.
+
+### 6.6 `apps/api` REST contract (read-only from the frontend's perspective at MVP)
+
+Two new endpoints on a new `apps/api` module (mirrors `AssessmentModule`'s own shape, not a new microservice-facing pattern — `recommendation-engine` itself is never called directly by a frontend, the same internal-only trust model `ai-engine` already established): `GET /v1/learning-plans/current` (the caller's own active `LearningPlan`, 404 if none exists yet — e.g. before any assessment has ever completed) and `GET /v1/daily-goals/today` (the caller's own `DailyGoal` for the current date in their own locale — timezone-correctness, Journey B's own named acceptance criterion, is this task's own concrete design decision to make, not resolved here). Both are pure reads against `recommendation-engine`'s own precomputed rows — no live computation on the request path, satisfying the `<2s p95` dashboard-load budget (§2) by construction, not by optimization.
+
+## 7. New ADR proposed (status `Proposed` — full text added to DECISIONS.md at implementation time, starting at ADR-040)
+
+| ADR     | Decision                                                                                                                                                                                                                                              | Why it's needed now                                                                                                                                                                                     |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ADR-040 | `recommendation-engine` gets its first real domain build here — deterministic plan/goal generation and weakness scoring, applying ADR-036's own Postgres-access pattern for the first time outside `ai-engine`, with zero `ai-engine` dependency (§4) | Closes the real §3.1 gap; is the concrete, load-bearing precedent every future task that touches `recommendation-engine` (E9's own SRS scheduling, a future explanation-generation feature) will follow |
+
+## 8. Alternatives considered
+
+- **Building plan/goal generation inside `apps/api`, the same way E6's own adaptive-selection algorithm lives there (ADR-038)** — rejected: unlike E6's algorithm (a self-contained class with no service-specific dependency, deliberately built relocatable), `recommendation-engine` already has an explicit PRD/ARCHITECTURE charter for exactly this "adaptive curriculum" domain, and ADR-038's own Consequences text already names this epic as `recommendation-engine`'s "more natural first claim" — building it a second time inside `apps/api` would leave `recommendation-engine` permanently unclaimed, directly contradicting the reservation E6 already made.
+- **Routing weakness-detection or plan-generation decisions through `ai-engine`'s `RouterService`** — rejected: `ARCHITECTURE.md`'s own boundary rule is explicit that deterministic/algorithmic decisions never require a generative call; scoring from `ProficiencyLevel` deltas and `ExerciseAttempt` correctness is arithmetic, not generation (§4).
+- **Real-time (request-time) `DailyGoal` computation instead of a nightly batch job** — rejected for MVP: `ARCHITECTURE.md` §6's own data-flow example already specifies the nightly-job mechanism; a live per-request computation would also need to fit inside the same `<2s p95` dashboard-load budget Journey B sets, which a precomputed row trivially satisfies by construction and a live computation might not, especially once real content volume (§3.2, currently near-zero) grows.
+- **Depending on Vocabulary Intelligence/SRS (E9) for a richer weakness signal** — rejected: E9 doesn't exist yet and isn't a listed E7 dependency (§3.7); depending on unbuilt work would either block this epic indefinitely or require speculative interface-guessing against a system that doesn't exist, the same reasoning E6's own §3.2 used to defer Speaking-skill scoring rather than block on `speech-service`.
+- **A single, combined `ActivityType`/`Skill` enum instead of an explicit mapping table** — rejected: unifying two independently-owned enums (one belongs to Course Management's own content domain, one to Assessment's own scoring domain) is a real, cross-epic schema change with its own migration/backward-compatibility cost, well outside this epic's own scope; a documented mapping table (§6.4) closes the practical gap today without forcing that larger decision.
+
+## 9. Task sequence
+
+| Task   | Deliverable                                                                                                                                                                                                                                                                                                                                | Depends on | Evidence (design-phase)                                                                                                                                                        |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **T1** | ADR-040 Accepted. `recommendation-engine`'s first real Prisma access (§6.1) — `createRecommendationEnginePrismaClient`, `DatabaseModule`, config wiring reusing `@linguaai/config`'s existing `appRoleDatabaseEnvSchema`/`AppRoleDatabaseEnv` (the same narrow fragment `ai-engine`'s own `resolveDatabaseConfig()` already uses, ADR-036) | E4         | Real connection verified against local Postgres as `app_role`, not the migration-owning role — the same class of verification E5 T4 did for `ai-engine`'s own first connection |
+| **T2** | `LearningPlan` generation (§6.2) — real `assessment.attempt.completed` BullMQ consumer, create-on-PLACEMENT / update-on-REASSESSMENT logic                                                                                                                                                                                                 | T1         | Unit tests covering both branches; a real integration test proving a REASSESSMENT does not create a duplicate active plan                                                      |
+| **T3** | `DailyGoal` nightly generation job (§6.3) + weakness-detection scoring service (§6.4, including the `ActivityType → Skill` mapping table)                                                                                                                                                                                                  | T2         | Unit tests for the scoring function (pure, I/O-free, mirroring `AdaptiveItemSelectionService`'s own testability); a real BullMQ job execution test                             |
+| **T4** | New `recommendation.daily_goal.ready` event (§6.5) — defined, cataloged in `EVENT_ARCHITECTURE.md`, emitted by T3's own job, with an event-catalog conformance test (E6 T6's own established convention)                                                                                                                                   | T3         | Conformance test passing; `EVENT_ARCHITECTURE.md`'s own gap (§3.4) closed for real                                                                                             |
+| **T5** | `apps/api` REST contract (§6.6) — `GET /v1/learning-plans/current`, `GET /v1/daily-goals/today`, OpenAPI-documented, API_SPEC_TEMPLATE.md instance                                                                                                                                                                                         | T2, T3     | New spec doc, matching E6 T7's own precedent; e2e tests against real Postgres                                                                                                  |
+
+## 10. Open questions
+
+Genuinely unresolved as of this draft — not silently decided, and not yet put to the user for a resolution decision the way E4 §10/E5 §10/E6 §10 recorded theirs.
+
+1. **`DailyGoal` generation timing across timezones** — §6.3 assumes one nightly batch run, but Journey B's own acceptance criterion ("streak logic is timezone-correct for the user's locale") raises the question of whether goal generation itself also needs per-user-timezone scheduling (e.g., batched by timezone offset) rather than a single global UTC run. Not yet decided; flagged as a real design choice T3's own implementation phase must make explicitly, not by default.
+2. **Concrete weakness-detection thresholds** (§6.4) — no document specifies what confidence delta or `ExerciseAttempt` accuracy rate counts as "weak enough to adjust tomorrow's plan." Left as a provisional, implementation-time decision (the same class of choice E6's own `CONFIDENCE_FLOOR`/banding thresholds were), not resolved here.
+3. **Whether `apps/api`'s new read endpoints need history, not just "current"** (§6.6) — Journey B only describes "today's goal" and the active plan, not a past-plans/goals history view. Left undecided since no document specifies this is required at MVP; a straightforward additive extension later if a product decision wants it.
+
+## 11. Risks
+
+New rows for RISK_REGISTER.md (added in the same PR as implementation begins, matching E4/E5/E6's own precedent; numbered starting at R-89, the next available ID at this document's own time of writing):
+
+| Risk                                                                                                                                                                                                | Mitigation                                                                                                                                                                                    | Owner                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| Weakness-detection scoring and `DailyGoal` targets (§6.3/§6.4) are provisional deterministic heuristics, not calibrated against real learning-outcome data                                          | Flagged as provisional (§6.3/§6.4), the same honesty precedent E6's own CEFR-banding table/confidence formula already carry; real calibration is tracked future work once attempt data exists | AI Engineering + Pedagogy (TBD) |
+| Near-empty curriculum content (§3.2 — one seeded chain) means recommendation quality is only meaningfully testable against trivial content today                                                    | Named explicitly in §3.2/Open Questions; real content authoring at scale is Course Management System's (E8) own tracked, separately-scoped work, not assumed complete                         | Content/Pedagogy (TBD)          |
+| `ActivityType`/`Skill` enum mismatch (§3.3), if the mapping table (§6.4) is ever edited inconsistently with either enum's own evolution, could silently misattribute weakness signals across skills | A single, documented mapping table is the only place this translation happens (§3.3's own resolution) — a future enum change must update it explicitly, not rely on implicit inference        | AI Engineering (TBD)            |
+| `recommendation-engine`'s own first real Prisma connection/BullMQ job is unverified in this environment the same way `ai-engine`'s first connection was until it actually ran (E5 T4)               | Real connection/job-execution verification is this epic's own T1/T3 evidence bar, not assumed to work by analogy to `ai-engine`'s own precedent alone                                         | Backend Platform (TBD)          |
+
+## 12. Gate sign-off log
+
+Per EPIC_TEMPLATE.md §5 — filled in as each gate passes. Every row below is unchecked; this document does not self-certify any of them.
+
+| Gate          | Owner                                                                                                              | Status        | Evidence link | Date |
+| ------------- | ------------------------------------------------------------------------------------------------------------------ | ------------- | ------------- | ---- |
+| Architecture  | TBD                                                                                                                | ☐ Not started | —             | —    |
+| Security      | TBD                                                                                                                | ☐ Not started | —             | —    |
+| Database      | TBD — `recommendation-engine`'s first real access (T1), no schema migration (LearningPlan/DailyGoal already exist) | ☐ Not started | —             | —    |
+| API           | TBD — applicable for T5's contract                                                                                 | ☐ Not started | —             | —    |
+| Frontend      | N/A — this epic is backend/engine only (§3.6)                                                                      | —             | —             | —    |
+| AI            | N/A — no generative model call anywhere in this epic's own scope (§4)                                              | —             | —             | —    |
+| Performance   | TBD — the `<2s p95` dashboard-read budget (§2/§6.6)                                                                | ☐ Not started | —             | —    |
+| Accessibility | N/A — no UI in this epic (§3.6)                                                                                    | —             | —             | —    |
+| Testing       | TBD                                                                                                                | ☐ Not started | —             | —    |
+| Documentation | TBD                                                                                                                | ☐ Not started | —             | —    |
+| Deployment    | TBD                                                                                                                | ☐ Not started | —             | —    |
+
+## 13. Epic Approval
+
+**All gates passed:** ☐ Yes
+**DEFINITION_OF_DONE.md satisfied:** ☐ Yes
+**Approved by:** [pending]
+**Date:** [pending]
