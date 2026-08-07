@@ -27,6 +27,11 @@ import {
   AdaptiveItemSelectionService,
   type SelectionHistoryEntry,
 } from './adaptive-item-selection.service.js';
+import {
+  computeSkillBanding,
+  type ScoredItem,
+  type SkillBandingResult,
+} from './cefr-banding.util.js';
 import { scoreObjectiveResponse } from './objective-scoring.util.js';
 
 /**
@@ -208,31 +213,117 @@ export class AssessmentService {
     // anywhere (RISK_REGISTER.md). `startAttempt`/`submitResponse` are not
     // similarly safe under a duplicate retry — a real, separately-flagged
     // gap, not solved by this one endpoint's own idempotent shape.
-    if (attempt.status === 'COMPLETED') {
-      const responses = await this.appPrisma.assessmentResponse.findMany({
-        where: { attemptId: attempt.id },
-        orderBy: { createdAt: 'asc' },
-      });
-      return { attempt: toWireAttempt(attempt), responses: responses.map(toWireResponse) };
+    const alreadyCompleted = attempt.status === 'COMPLETED';
+
+    if (!alreadyCompleted) {
+      const nextServable = await this.computeNextServableItem(attempt.id, attempt.languageId, 0);
+      if (nextServable) {
+        throw new ConflictException(
+          'Attempt is not ready to complete — at least one skill still has items to serve',
+        );
+      }
     }
 
-    const nextServable = await this.computeNextServableItem(attempt.id, attempt.languageId, 0);
-    if (nextServable) {
-      throw new ConflictException(
-        'Attempt is not ready to complete — at least one skill still has items to serve',
-      );
-    }
-
-    const completed = await this.appPrisma.assessmentAttempt.update({
-      where: { id: attempt.id },
-      data: { status: 'COMPLETED', completedAt: new Date() },
-    });
     const responses = await this.appPrisma.assessmentResponse.findMany({
       where: { attemptId: attempt.id },
       orderBy: { createdAt: 'asc' },
+      include: { item: true },
     });
 
-    return { attempt: toWireAttempt(completed), responses: responses.map(toWireResponse) };
+    // §6.4's banding/confidence are a pure function of already-persisted,
+    // immutable AssessmentResponse rows — always recomputed fresh (cheap,
+    // deterministic), so an idempotent replay returns the exact same
+    // numbers without needing a second table to remember them, and without
+    // an AssessmentAttempt-keyed FK on ProficiencyLevelHistory that E4/E6
+    // T1's schema never defined.
+    const proficiencyResults = this.computeProficiencyResults(responses);
+
+    let finalAttempt = attempt;
+    if (!alreadyCompleted) {
+      finalAttempt = await this.appPrisma.assessmentAttempt.update({
+        where: { id: attempt.id },
+        data: { status: 'COMPLETED', completedAt: new Date() },
+      });
+
+      // Writes happen only on the real IN_PROGRESS -> COMPLETED transition
+      // — never on an idempotent replay, or every retried `complete` call
+      // would append a spurious ProficiencyLevelHistory row for an event
+      // that only actually happened once.
+      for (const result of proficiencyResults) {
+        const proficiencyLevel = await this.appPrisma.proficiencyLevel.upsert({
+          where: {
+            userId_languageId_skill: {
+              userId: caller.userId,
+              languageId: attempt.languageId,
+              skill: result.skill,
+            },
+          },
+          create: {
+            userId: caller.userId,
+            languageId: attempt.languageId,
+            skill: result.skill,
+            cefrLevel: result.cefrLevel,
+            confidence: result.confidence,
+            source: 'ASSESSMENT',
+          },
+          update: {
+            cefrLevel: result.cefrLevel,
+            confidence: result.confidence,
+            source: 'ASSESSMENT',
+          },
+        });
+        await this.appPrisma.proficiencyLevelHistory.create({
+          data: {
+            proficiencyLevelId: proficiencyLevel.id,
+            userId: caller.userId,
+            languageId: attempt.languageId,
+            skill: result.skill,
+            cefrLevel: result.cefrLevel,
+            confidence: result.confidence,
+            source: 'ASSESSMENT',
+          },
+        });
+      }
+    }
+
+    return {
+      attempt: toWireAttempt(finalAttempt),
+      responses: responses.map(toWireResponse),
+      proficiencyLevels: proficiencyResults.map(
+        ({ skill, cefrLevel, confidence, lowConfidence }) => ({
+          skill,
+          cefrLevel,
+          confidence,
+          lowConfidence,
+        }),
+      ),
+    };
+  }
+
+  /**
+   * Groups this attempt's responses by skill and bands each group (§6.4).
+   * `WRITING`/`SPEAKING` never appear (ADR-038's skill order excludes
+   * them) — only the 4 objective skills this attempt actually served.
+   */
+  private computeProficiencyResults(
+    responses: ReadonlyArray<AssessmentResponse & { item: AssessmentItem | null }>,
+  ): Array<{ skill: Skill } & SkillBandingResult> {
+    const bySkill = new Map<Skill, ScoredItem[]>();
+    for (const response of responses) {
+      if (!response.item) {
+        throw new Error(
+          `AssessmentResponse ${response.id} has no linked AssessmentItem — data integrity violation`,
+        );
+      }
+      const scored = bySkill.get(response.skill) ?? [];
+      scored.push({ isCorrect: response.isCorrect, difficulty: response.item.difficulty });
+      bySkill.set(response.skill, scored);
+    }
+
+    return SKILL_ORDER.map((skill) => ({
+      skill,
+      ...computeSkillBanding(bySkill.get(skill) ?? []),
+    }));
   }
 
   /**

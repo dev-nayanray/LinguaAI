@@ -9,9 +9,11 @@ import {
   ASSESSMENT_STATUSES,
   ASSESSMENT_TYPES,
   CEFR_LEVELS,
+  PROFICIENCY_SOURCES,
   SKILLS,
   type AssessmentAttempt,
   type AssessmentResponse,
+  type ProficiencyLevel,
 } from '@linguaai/types/learning';
 
 /**
@@ -30,6 +32,7 @@ export const cefrLevelSchema = z.enum(CEFR_LEVELS);
 export const assessmentTypeSchema = z.enum(ASSESSMENT_TYPES);
 export const assessmentStatusSchema = z.enum(ASSESSMENT_STATUSES);
 export const assessmentItemTypeSchema = z.enum(ASSESSMENT_ITEM_TYPES);
+export const proficiencySourceSchema = z.enum(PROFICIENCY_SOURCES);
 
 export const assessmentAttemptSchema = z.object({
   id: z.string().uuid(),
@@ -54,6 +57,17 @@ export const assessmentResponseSchema = z.object({
   createdAt: z.string().datetime(),
 });
 assertExtends<AssessmentResponse, z.infer<typeof assessmentResponseSchema>>();
+
+export const proficiencyLevelSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  languageId: z.string().uuid(),
+  skill: skillSchema,
+  cefrLevel: cefrLevelSchema,
+  confidence: z.number().min(0).max(1),
+  source: proficiencySourceSchema,
+});
+assertExtends<ProficiencyLevel, z.infer<typeof proficiencyLevelSchema>>();
 
 // --- Endpoint request/response payloads (E6-T2, ADR-038) ---
 
@@ -122,14 +136,32 @@ export type SubmitAssessmentResponseResponse = z.infer<
 >;
 
 /**
- * `POST /v1/assessment-attempts/:id/complete` response body. CEFR banding
- * and confidence (E6-T3) are not computed yet — `responses` is the raw
- * per-item scoring record T3's own banding pass will consume, not a final
- * placement result.
+ * Per-skill result of `POST /v1/assessment-attempts/:id/complete` (E6-T3,
+ * §6.4) — a computed view, not a mirror of the `ProficiencyLevel` entity
+ * (no `id`/`userId`/`languageId`, redundant with the attempt's own).
+ * `lowConfidence` structurally distinguishes "confident" from
+ * "needs retake" results (PRD.md §5.1) — a client must not present a
+ * `lowConfidence: true` result as definitive.
+ */
+export const skillBandingResultSchema = z.object({
+  skill: skillSchema,
+  cefrLevel: cefrLevelSchema,
+  confidence: z.number().min(0).max(1),
+  lowConfidence: z.boolean(),
+});
+export type SkillBandingResult = z.infer<typeof skillBandingResultSchema>;
+
+/**
+ * `POST /v1/assessment-attempts/:id/complete` response body. `responses`
+ * is the raw per-item scoring record; `proficiencyLevels` (E6-T3) is the
+ * banded, confidence-scored placement result computed from it — one entry
+ * per objective skill served (§6.4's provisional threshold table/confidence
+ * formula, not yet a validated psychometric result, RISK_REGISTER R-05).
  */
 export const completeAssessmentAttemptResponseSchema = z.object({
   attempt: assessmentAttemptSchema,
   responses: z.array(assessmentResponseSchema),
+  proficiencyLevels: z.array(skillBandingResultSchema),
 });
 export type CompleteAssessmentAttemptResponse = z.infer<
   typeof completeAssessmentAttemptResponseSchema

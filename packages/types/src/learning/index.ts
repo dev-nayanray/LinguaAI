@@ -73,3 +73,17 @@ export interface AssessmentResponse {
   score: number | null;
   createdAt: string;
 }
+
+export const PROFICIENCY_SOURCES = ['ASSESSMENT', 'INFERRED'] as const;
+export type ProficiencySource = (typeof PROFICIENCY_SOURCES)[number];
+
+/** Current-state row (E6 T3) — one per (userId, languageId, skill). `ProficiencyLevelHistory` is the append-only trend this same write always also produces. */
+export interface ProficiencyLevel {
+  id: string;
+  userId: string;
+  languageId: string;
+  skill: Skill;
+  cefrLevel: CefrLevel;
+  confidence: number;
+  source: ProficiencySource;
+}

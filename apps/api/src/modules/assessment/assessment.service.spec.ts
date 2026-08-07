@@ -7,6 +7,8 @@ import type {
   AssessmentResponse,
   CefrLevel,
   PrismaClient,
+  ProficiencyLevel,
+  ProficiencyLevelHistory,
   Skill,
 } from '@linguaai/database';
 
@@ -55,6 +57,8 @@ function makeItem(overrides: Partial<AssessmentItem> = {}): AssessmentItem {
 function makeFakePrisma(items: AssessmentItem[]) {
   const attempts = new Map<string, AssessmentAttempt>();
   const responses: AssessmentResponse[] = [];
+  const proficiencyLevels = new Map<string, ProficiencyLevel>();
+  const proficiencyLevelHistories: ProficiencyLevelHistory[] = [];
 
   const appPrisma = {
     language: {
@@ -148,19 +152,53 @@ function makeFakePrisma(items: AssessmentItem[]) {
         },
       ),
     },
+    proficiencyLevel: {
+      upsert: jest.fn(
+        async ({
+          where,
+          create,
+          update,
+        }: {
+          where: { userId_languageId_skill: { userId: string; languageId: string; skill: Skill } };
+          create: Omit<ProficiencyLevel, 'id'>;
+          update: Partial<ProficiencyLevel>;
+        }) => {
+          const key = JSON.stringify(where.userId_languageId_skill);
+          const existing = proficiencyLevels.get(key);
+          const row: ProficiencyLevel = existing
+            ? { ...existing, ...update }
+            : { id: randomUUID(), ...create };
+          proficiencyLevels.set(key, row);
+          return row;
+        },
+      ),
+    },
+    proficiencyLevelHistory: {
+      create: jest.fn(
+        async ({ data }: { data: Omit<ProficiencyLevelHistory, 'id' | 'recordedAt'> }) => {
+          const row: ProficiencyLevelHistory = {
+            id: randomUUID(),
+            recordedAt: new Date(),
+            ...data,
+          };
+          proficiencyLevelHistories.push(row);
+          return row;
+        },
+      ),
+    },
   };
 
-  return { appPrisma, attempts, responses };
+  return { appPrisma, attempts, responses, proficiencyLevels, proficiencyLevelHistories };
 }
 
 describe('AssessmentService', () => {
   function buildService(items: AssessmentItem[]) {
-    const { appPrisma } = makeFakePrisma(items);
+    const { appPrisma, proficiencyLevels, proficiencyLevelHistories } = makeFakePrisma(items);
     const service = new AssessmentService(
       appPrisma as unknown as PrismaClient,
       new AdaptiveItemSelectionService(),
     );
-    return { service, appPrisma };
+    return { service, appPrisma, proficiencyLevels, proficiencyLevelHistories };
   }
 
   describe('startAttempt', () => {
@@ -340,7 +378,7 @@ describe('AssessmentService', () => {
       const items: AssessmentItem[] = (
         ['READING', 'LISTENING', 'VOCABULARY', 'GRAMMAR'] as Skill[]
       ).map((skill) => makeItem({ skill, correctAnswer: { correctIndex: 0 } }));
-      const { service } = buildService(items);
+      const { service, proficiencyLevels, proficiencyLevelHistories } = buildService(items);
       const started = await service.startAttempt(CALLER, {
         languageId: LANGUAGE_ID,
         type: 'PLACEMENT',
@@ -357,9 +395,66 @@ describe('AssessmentService', () => {
       expect(completed.attempt.status).toBe('COMPLETED');
       expect(completed.responses).toHaveLength(4);
 
+      // Every served item was answered correctly at the default difficulty
+      // (0.5) -> raw score 100% for each skill -> C2, per §6.4's
+      // threshold table; a single served item gives confidence
+      // 0.5*(1/5) + 0.5*1 = 0.6 (>= the 0.5 floor, not flagged low).
+      expect(completed.proficiencyLevels).toHaveLength(4);
+      for (const result of completed.proficiencyLevels) {
+        expect(result.cefrLevel).toBe('C2');
+        expect(result.confidence).toBeCloseTo(0.6, 5);
+        expect(result.lowConfidence).toBe(false);
+      }
+      expect(proficiencyLevels.size).toBe(4);
+      expect(proficiencyLevelHistories).toHaveLength(4);
+
+      // Idempotent re-completion: same computed result, but no duplicate
+      // ProficiencyLevel/History writes — the real event only happened once.
       const secondCall = await service.completeAttempt(CALLER, started.attempt.id);
       expect(secondCall.attempt.status).toBe('COMPLETED');
       expect(secondCall.responses).toHaveLength(4);
+      expect(secondCall.proficiencyLevels).toEqual(completed.proficiencyLevels);
+      expect(proficiencyLevels.size).toBe(4);
+      expect(proficiencyLevelHistories).toHaveLength(4);
+    });
+
+    it('flags a skill lowConfidence when responses are inconsistent, independent of the other skills', async () => {
+      const readingItems = [
+        makeItem({ skill: 'READING', difficulty: 1, correctAnswer: { correctIndex: 0 } }),
+        makeItem({ skill: 'READING', difficulty: 1, correctAnswer: { correctIndex: 0 } }),
+      ];
+      const otherItems = (['LISTENING', 'VOCABULARY', 'GRAMMAR'] as Skill[]).map((skill) =>
+        makeItem({ skill, correctAnswer: { correctIndex: 0 } }),
+      );
+      const { service } = buildService([...readingItems, ...otherItems]);
+      const started = await service.startAttempt(CALLER, {
+        languageId: LANGUAGE_ID,
+        type: 'PLACEMENT',
+      });
+
+      // Reading: first correct, second incorrect — inconsistent (50/50).
+      await service.submitResponse(CALLER, started.attempt.id, {
+        itemId: readingItems[0]!.id,
+        response: { selectedIndex: 0 },
+      });
+      const afterFirstReading = await service.submitResponse(CALLER, started.attempt.id, {
+        itemId: readingItems[1]!.id,
+        response: { selectedIndex: 1 },
+      });
+      let nextItem = afterFirstReading.nextItem;
+      while (nextItem) {
+        const res = await service.submitResponse(CALLER, started.attempt.id, {
+          itemId: nextItem.id,
+          response: { selectedIndex: 0 },
+        });
+        nextItem = res.nextItem;
+      }
+
+      const completed = await service.completeAttempt(CALLER, started.attempt.id);
+      const reading = completed.proficiencyLevels.find((r) => r.skill === 'READING')!;
+      expect(reading.lowConfidence).toBe(true);
+      const listening = completed.proficiencyLevels.find((r) => r.skill === 'LISTENING')!;
+      expect(listening.lowConfidence).toBe(false);
     });
   });
 });

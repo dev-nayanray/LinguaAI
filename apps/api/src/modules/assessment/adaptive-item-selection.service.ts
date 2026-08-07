@@ -10,7 +10,8 @@ import type { AssessmentItem, CefrLevel } from '@linguaai/database';
  */
 const BAND_ORDER: readonly CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 const START_BAND_INDEX = BAND_ORDER.indexOf('B1');
-const MAX_ITEMS_PER_SKILL = 5;
+/** Exported for `cefr-banding.util.ts`'s own confidence formula (§6.4) — "more items narrow the ability estimate" is scaled against the same per-skill ceiling this selector itself enforces, not a second, independently-chosen number. */
+export const MAX_ITEMS_PER_SKILL = 5;
 /** At least this many *post-response* band values must agree before the estimate counts as stabilized (§6.2). */
 const STABILIZE_STREAK = 2;
 const DIFFICULTY_STEP = 0.25;

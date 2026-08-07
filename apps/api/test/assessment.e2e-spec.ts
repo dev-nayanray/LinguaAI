@@ -68,6 +68,8 @@ describe('AssessmentModule (e2e)', () => {
     // `languageId` unset. Guarding here avoids a confusing secondary
     // Prisma validation error masking the real, original failure.
     if (languageId) {
+      await setupPrisma.proficiencyLevelHistory.deleteMany({ where: { languageId } });
+      await setupPrisma.proficiencyLevel.deleteMany({ where: { languageId } });
       await setupPrisma.assessmentResponse.deleteMany({ where: { item: { languageId } } });
       await setupPrisma.assessmentAttempt.deleteMany({ where: { languageId } });
       await setupPrisma.assessmentItem.deleteMany({ where: { languageId } });
@@ -164,15 +166,33 @@ describe('AssessmentModule (e2e)', () => {
       expect(completeRes.body.attempt.completedAt).not.toBeNull();
       expect(completeRes.body.responses).toHaveLength(4);
 
+      // Every skill served exactly 1 item, answered correctly, at the
+      // fixture's default difficulty (0.5) — E6-T3's §6.4 banding: raw
+      // score 100% -> C2; confidence 0.5*(1/5) + 0.5*1 = 0.6, above the
+      // 0.5 floor, so not flagged lowConfidence.
+      expect(completeRes.body.proficiencyLevels).toHaveLength(4);
+      for (const result of completeRes.body.proficiencyLevels) {
+        expect(result.cefrLevel).toBe('C2');
+        expect(result.confidence).toBeCloseTo(0.6, 5);
+        expect(result.lowConfidence).toBe(false);
+      }
+
       // Idempotent re-completion (a real, partial mitigation for the
       // Idempotency-Key infrastructure this platform doesn't build yet,
       // RISK_REGISTER.md) — a retried complete call returns the same
-      // result, not an error.
+      // result, not an error, and does not write a second
+      // ProficiencyLevelHistory row for the same completion event.
       const secondCompleteRes = await request(app.getHttpServer())
         .post(`/v1/assessment-attempts/${attemptId}/complete`)
         .set('Authorization', `Bearer ${session.accessToken}`);
       expect(secondCompleteRes.status).toBe(200);
       expect(secondCompleteRes.body.attempt.status).toBe('COMPLETED');
+      expect(secondCompleteRes.body.proficiencyLevels).toEqual(completeRes.body.proficiencyLevels);
+
+      const historyRows = await setupPrisma.proficiencyLevelHistory.findMany({
+        where: { userId: session.userId, languageId },
+      });
+      expect(historyRows).toHaveLength(4);
     });
   });
 

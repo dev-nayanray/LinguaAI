@@ -80,6 +80,7 @@ describe('AssessmentController', () => {
         completedAt: '2026-01-01T00:10:00.000Z',
       },
       responses: [],
+      proficiencyLevels: [],
     };
     const service = {
       completeAttempt: jest.fn().mockResolvedValue(response),
