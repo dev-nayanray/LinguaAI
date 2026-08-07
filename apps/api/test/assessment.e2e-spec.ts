@@ -176,6 +176,8 @@ describe('AssessmentModule (e2e)', () => {
         expect(result.confidence).toBeCloseTo(0.6, 5);
         expect(result.lowConfidence).toBe(false);
       }
+      // §6.4's retake-offer contract (E6-T6) — every skill confident here.
+      expect(completeRes.body.retakeRecommended).toBe(false);
 
       // Idempotent re-completion (a real, partial mitigation for the
       // Idempotency-Key infrastructure this platform doesn't build yet,
@@ -193,6 +195,112 @@ describe('AssessmentModule (e2e)', () => {
         where: { userId: session.userId, languageId },
       });
       expect(historyRows).toHaveLength(4);
+    });
+  });
+
+  /**
+   * Walks a full start -> answer every objective skill -> complete cycle
+   * for the given session/attempt type, answering every item correctly.
+   * Shared by the re-assessment flow tests below so each one only has to
+   * assert what's actually specific to it, not re-derive the same
+   * item-by-item walk the lifecycle test above already covers in detail.
+   */
+  async function completeFullAttempt(
+    session: RegisteredSession,
+    type: 'PLACEMENT' | 'REASSESSMENT',
+  ): Promise<{ attemptId: string; completeRes: request.Response }> {
+    const startRes = await request(app.getHttpServer())
+      .post('/v1/assessment-attempts')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({ languageId, type });
+    const attemptId = startRes.body.attempt.id as string;
+
+    const expectedOrder: Skill[] = ['READING', 'LISTENING', 'VOCABULARY', 'GRAMMAR'];
+    let currentItemId = startRes.body.nextItem.id as string;
+    for (let i = 0; i < expectedOrder.length; i++) {
+      const submitRes = await request(app.getHttpServer())
+        .post(`/v1/assessment-attempts/${attemptId}/responses`)
+        .set('Authorization', `Bearer ${session.accessToken}`)
+        .send({ itemId: currentItemId, response: { selectedIndex: 1 } });
+      const nextItem = submitRes.body.nextItem as { id: string } | null;
+      if (nextItem) {
+        currentItemId = nextItem.id;
+      }
+    }
+
+    const completeRes = await request(app.getHttpServer())
+      .post(`/v1/assessment-attempts/${attemptId}/complete`)
+      .set('Authorization', `Bearer ${session.accessToken}`);
+    return { attemptId, completeRes };
+  }
+
+  describe('concurrent attempt guard', () => {
+    it('returns 409 when starting a second attempt while one is already IN_PROGRESS for the same language', async () => {
+      const session = await freshSession();
+      const firstRes = await request(app.getHttpServer())
+        .post('/v1/assessment-attempts')
+        .set('Authorization', `Bearer ${session.accessToken}`)
+        .send({ languageId, type: 'PLACEMENT' });
+      expect(firstRes.status).toBe(201);
+
+      const secondRes = await request(app.getHttpServer())
+        .post('/v1/assessment-attempts')
+        .set('Authorization', `Bearer ${session.accessToken}`)
+        .send({ languageId, type: 'PLACEMENT' });
+      expect(secondRes.status).toBe(409);
+    });
+  });
+
+  describe('user-initiated re-assessment flow (T6, §6.4)', () => {
+    it('returns 422 for a REASSESSMENT with no prior completed assessment for this language', async () => {
+      const session = await freshSession();
+      const res = await request(app.getHttpServer())
+        .post('/v1/assessment-attempts')
+        .set('Authorization', `Bearer ${session.accessToken}`)
+        .send({ languageId, type: 'REASSESSMENT' });
+      expect(res.status).toBe(422);
+    });
+
+    it("creates a new AssessmentAttempt without disturbing the prior one's ProficiencyLevelHistory row", async () => {
+      const session = await freshSession();
+
+      const first = await completeFullAttempt(session, 'PLACEMENT');
+      expect(first.completeRes.status).toBe(200);
+
+      const historyAfterFirst = await setupPrisma.proficiencyLevelHistory.findMany({
+        where: { userId: session.userId, languageId },
+        orderBy: { recordedAt: 'asc' },
+      });
+      expect(historyAfterFirst).toHaveLength(4);
+      const firstHistoryIds = historyAfterFirst.map((row) => row.id).sort();
+
+      const second = await completeFullAttempt(session, 'REASSESSMENT');
+      expect(second.completeRes.status).toBe(200);
+      expect(second.attemptId).not.toBe(first.attemptId);
+      expect(second.completeRes.body.attempt.type).toBe('REASSESSMENT');
+
+      // The re-assessment created its own new attempt and its own new
+      // history rows — the first attempt's own rows are untouched, not
+      // overwritten or deleted.
+      const historyAfterSecond = await setupPrisma.proficiencyLevelHistory.findMany({
+        where: { userId: session.userId, languageId },
+        orderBy: { recordedAt: 'asc' },
+      });
+      expect(historyAfterSecond).toHaveLength(8);
+      const idsStillPresent = historyAfterSecond.map((row) => row.id);
+      for (const id of firstHistoryIds) {
+        expect(idsStillPresent).toContain(id);
+      }
+
+      // ProficiencyLevel itself is a current-state snapshot, unique per
+      // (userId, languageId, skill) — the re-assessment's writes upsert
+      // the same 4 rows rather than creating duplicates; it's
+      // ProficiencyLevelHistory alone that accumulates one row per
+      // completion.
+      const currentLevels = await setupPrisma.proficiencyLevel.findMany({
+        where: { userId: session.userId, languageId },
+      });
+      expect(currentLevels).toHaveLength(4);
     });
   });
 

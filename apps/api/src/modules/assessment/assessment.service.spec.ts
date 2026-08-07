@@ -12,11 +12,18 @@ import type {
   Skill,
 } from '@linguaai/database';
 
+import type { DomainEventPublisher } from '../../events/index.js';
 import type { RequestUser } from '../auth/strategies/jwt.strategy.js';
 import { AdaptiveItemSelectionService } from './adaptive-item-selection.service.js';
 import { AssessmentService } from './assessment.service.js';
 
-const LANGUAGE_ID = 'lang-es';
+// A real UUID, not a readable slug like 'lang-es' — E6-T6's event-payload
+// schema validates `languageId` as a genuine UUID (matching every other
+// languageId field in @linguaai/validation/learning), the same shape a real
+// `ZodValidationPipe`-validated request always has by the time it reaches
+// this service; a readable fixture would silently bypass that real
+// constraint rather than exercise it.
+const LANGUAGE_ID = '99999999-9999-4999-8999-999999999999';
 const CALLER: RequestUser = { userId: 'user-1', role: 'USER', organizationId: null, orgRole: null };
 const OTHER_USER: RequestUser = {
   userId: 'user-2',
@@ -85,6 +92,19 @@ function makeFakePrisma(items: AssessmentItem[]) {
       }),
       findUnique: jest.fn(
         async ({ where }: { where: { id: string } }) => attempts.get(where.id) ?? null,
+      ),
+      findFirst: jest.fn(
+        async ({
+          where,
+        }: {
+          where: { userId: string; languageId: string; status: AssessmentAttempt['status'] };
+        }) =>
+          [...attempts.values()].find(
+            (a) =>
+              a.userId === where.userId &&
+              a.languageId === where.languageId &&
+              a.status === where.status,
+          ) ?? null,
       ),
       update: jest.fn(
         async ({ where, data }: { where: { id: string }; data: Partial<AssessmentAttempt> }) => {
@@ -188,17 +208,55 @@ function makeFakePrisma(items: AssessmentItem[]) {
     },
   };
 
+  // `completeAttempt`'s writes run inside `$transaction` (T6) — this fake
+  // just invokes the callback with the same `appPrisma` double, since every
+  // one of its methods already closes over the same shared in-memory state
+  // (`attempts`/`proficiencyLevels`/`proficiencyLevelHistories`) regardless
+  // of whether it's called "inside a transaction" or not.
+  (appPrisma as unknown as { $transaction: jest.Mock }).$transaction = jest.fn(
+    async (fn: (tx: typeof appPrisma) => Promise<unknown>) => fn(appPrisma),
+  );
+
   return { appPrisma, attempts, responses, proficiencyLevels, proficiencyLevelHistories };
+}
+
+function fakeEvents(): jest.Mocked<Pick<DomainEventPublisher, 'publish'>> {
+  return { publish: jest.fn().mockResolvedValue(undefined) };
+}
+
+/** Seeds a prior attempt directly into the fake's in-memory state — for tests whose only concern is a *prior* attempt's existence/status, not walking a full start->submit->complete flow to produce one. */
+function seedAttempt(
+  attempts: Map<string, AssessmentAttempt>,
+  overrides: Partial<AssessmentAttempt> = {},
+): AssessmentAttempt {
+  const now = new Date();
+  const attempt: AssessmentAttempt = {
+    id: randomUUID(),
+    userId: CALLER.userId,
+    languageId: LANGUAGE_ID,
+    type: 'PLACEMENT',
+    status: 'COMPLETED',
+    startedAt: now,
+    completedAt: now,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+  attempts.set(attempt.id, attempt);
+  return attempt;
 }
 
 describe('AssessmentService', () => {
   function buildService(items: AssessmentItem[]) {
-    const { appPrisma, proficiencyLevels, proficiencyLevelHistories } = makeFakePrisma(items);
+    const { appPrisma, attempts, proficiencyLevels, proficiencyLevelHistories } =
+      makeFakePrisma(items);
+    const events = fakeEvents();
     const service = new AssessmentService(
       appPrisma as unknown as PrismaClient,
       new AdaptiveItemSelectionService(),
+      events as unknown as DomainEventPublisher,
     );
-    return { service, appPrisma, proficiencyLevels, proficiencyLevelHistories };
+    return { service, appPrisma, attempts, proficiencyLevels, proficiencyLevelHistories, events };
   }
 
   describe('startAttempt', () => {
@@ -229,6 +287,62 @@ describe('AssessmentService', () => {
       expect(result.attempt.userId).toBe(CALLER.userId);
       expect(result.nextItem.id).toBe(readingItem.id);
       expect(result.nextItem).not.toHaveProperty('correctAnswer');
+    });
+
+    it('throws ConflictException when the caller already has an IN_PROGRESS attempt for this language', async () => {
+      const readingItem = makeItem({ skill: 'READING' });
+      const { service, attempts } = buildService([readingItem]);
+      seedAttempt(attempts, { status: 'IN_PROGRESS' });
+
+      await expect(
+        service.startAttempt(CALLER, { languageId: LANGUAGE_ID, type: 'PLACEMENT' }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it("does not block a different user's own concurrent IN_PROGRESS attempt for the same language", async () => {
+      const readingItem = makeItem({ skill: 'READING' });
+      const { service, attempts } = buildService([readingItem]);
+      seedAttempt(attempts, { userId: OTHER_USER.userId, status: 'IN_PROGRESS' });
+
+      const result = await service.startAttempt(CALLER, {
+        languageId: LANGUAGE_ID,
+        type: 'PLACEMENT',
+      });
+
+      expect(result.attempt.status).toBe('IN_PROGRESS');
+    });
+
+    it('throws UnprocessableEntityException for a REASSESSMENT with no prior completed assessment', async () => {
+      const readingItem = makeItem({ skill: 'READING' });
+      const { service } = buildService([readingItem]);
+
+      await expect(
+        service.startAttempt(CALLER, { languageId: LANGUAGE_ID, type: 'REASSESSMENT' }),
+      ).rejects.toThrow(UnprocessableEntityException);
+    });
+
+    it('allows a REASSESSMENT once a prior completed assessment exists for this language', async () => {
+      const readingItem = makeItem({ skill: 'READING' });
+      const { service, attempts } = buildService([readingItem]);
+      seedAttempt(attempts, { type: 'PLACEMENT', status: 'COMPLETED' });
+
+      const result = await service.startAttempt(CALLER, {
+        languageId: LANGUAGE_ID,
+        type: 'REASSESSMENT',
+      });
+
+      expect(result.attempt.status).toBe('IN_PROGRESS');
+      expect(result.attempt.type).toBe('REASSESSMENT');
+    });
+
+    it("a REASSESSMENT precondition check only considers the caller's own completed attempts, not another user's", async () => {
+      const readingItem = makeItem({ skill: 'READING' });
+      const { service, attempts } = buildService([readingItem]);
+      seedAttempt(attempts, { userId: OTHER_USER.userId, status: 'COMPLETED' });
+
+      await expect(
+        service.startAttempt(CALLER, { languageId: LANGUAGE_ID, type: 'REASSESSMENT' }),
+      ).rejects.toThrow(UnprocessableEntityException);
     });
   });
 
@@ -378,7 +492,7 @@ describe('AssessmentService', () => {
       const items: AssessmentItem[] = (
         ['READING', 'LISTENING', 'VOCABULARY', 'GRAMMAR'] as Skill[]
       ).map((skill) => makeItem({ skill, correctAnswer: { correctIndex: 0 } }));
-      const { service, proficiencyLevels, proficiencyLevelHistories } = buildService(items);
+      const { service, proficiencyLevels, proficiencyLevelHistories, events } = buildService(items);
       const started = await service.startAttempt(CALLER, {
         languageId: LANGUAGE_ID,
         type: 'PLACEMENT',
@@ -405,8 +519,24 @@ describe('AssessmentService', () => {
         expect(result.confidence).toBeCloseTo(0.6, 5);
         expect(result.lowConfidence).toBe(false);
       }
+      expect(completed.retakeRecommended).toBe(false);
       expect(proficiencyLevels.size).toBe(4);
       expect(proficiencyLevelHistories).toHaveLength(4);
+
+      // E6-T6: emitted exactly once, only on the real transition, after
+      // every write has committed.
+      expect(events.publish).toHaveBeenCalledTimes(1);
+      expect(events.publish).toHaveBeenCalledWith('assessment.attempt.completed', {
+        userId: CALLER.userId,
+        payload: expect.objectContaining({
+          attemptId: started.attempt.id,
+          languageId: LANGUAGE_ID,
+          type: 'PLACEMENT',
+          skillResults: expect.arrayContaining([
+            expect.objectContaining({ skill: 'READING', cefrLevel: 'C2' }),
+          ]),
+        }) as unknown,
+      });
 
       // Idempotent re-completion: same computed result, but no duplicate
       // ProficiencyLevel/History writes — the real event only happened once.
@@ -416,6 +546,9 @@ describe('AssessmentService', () => {
       expect(secondCall.proficiencyLevels).toEqual(completed.proficiencyLevels);
       expect(proficiencyLevels.size).toBe(4);
       expect(proficiencyLevelHistories).toHaveLength(4);
+
+      // Never re-published on the idempotent replay.
+      expect(events.publish).toHaveBeenCalledTimes(1);
     });
 
     it('flags a skill lowConfidence when responses are inconsistent, independent of the other skills', async () => {
@@ -455,6 +588,10 @@ describe('AssessmentService', () => {
       expect(reading.lowConfidence).toBe(true);
       const listening = completed.proficiencyLevels.find((r) => r.skill === 'LISTENING')!;
       expect(listening.lowConfidence).toBe(false);
+
+      // §6.4's retake-offer contract (E6-T6): true as soon as any single
+      // skill is low-confidence, even though most skills here are not.
+      expect(completed.retakeRecommended).toBe(true);
     });
   });
 });

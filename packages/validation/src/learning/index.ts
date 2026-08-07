@@ -157,11 +157,17 @@ export type SkillBandingResult = z.infer<typeof skillBandingResultSchema>;
  * banded, confidence-scored placement result computed from it — one entry
  * per objective skill served (§6.4's provisional threshold table/confidence
  * formula, not yet a validated psychometric result, RISK_REGISTER R-05).
+ * `retakeRecommended` (E6-T6) is the low-confidence retake-offer contract
+ * §6.4 names — `true` when any served skill's own `lowConfidence` flag is
+ * set, so a client can show a single retake prompt without re-deriving the
+ * same logic itself; PRD.md §5.1's "a low-confidence result never presents
+ * as definitive" bar applies to the whole result once any skill trips it.
  */
 export const completeAssessmentAttemptResponseSchema = z.object({
   attempt: assessmentAttemptSchema,
   responses: z.array(assessmentResponseSchema),
   proficiencyLevels: z.array(skillBandingResultSchema),
+  retakeRecommended: z.boolean(),
 });
 export type CompleteAssessmentAttemptResponse = z.infer<
   typeof completeAssessmentAttemptResponseSchema

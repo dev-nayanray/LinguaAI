@@ -22,11 +22,13 @@ import type {
 } from '@linguaai/validation/learning';
 
 import { APP_PRISMA_CLIENT } from '../../database/index.js';
+import { DomainEventPublisher } from '../../events/index.js';
 import type { RequestUser } from '../auth/strategies/jwt.strategy.js';
 import {
   AdaptiveItemSelectionService,
   type SelectionHistoryEntry,
 } from './adaptive-item-selection.service.js';
+import { assessmentAttemptCompletedPayloadSchema } from './assessment-events.js';
 import {
   computeSkillBanding,
   type ScoredItem,
@@ -105,6 +107,7 @@ export class AssessmentService {
   constructor(
     @Inject(APP_PRISMA_CLIENT) private readonly appPrisma: PrismaClient,
     private readonly adaptiveSelection: AdaptiveItemSelectionService,
+    private readonly events: DomainEventPublisher,
   ) {}
 
   async startAttempt(
@@ -114,6 +117,35 @@ export class AssessmentService {
     const language = await this.appPrisma.language.findUnique({ where: { id: dto.languageId } });
     if (!language) {
       throw new NotFoundException('Language not found');
+    }
+
+    // Real gap found while building T6's re-assessment flow, applies
+    // regardless of `dto.type`: nothing previously stopped a user from
+    // starting a second concurrent attempt for the same language while one
+    // was already IN_PROGRESS — two simultaneous attempts would both try
+    // to serve/score items independently with no way to reconcile them.
+    const inProgress = await this.appPrisma.assessmentAttempt.findFirst({
+      where: { userId: caller.userId, languageId: language.id, status: 'IN_PROGRESS' },
+    });
+    if (inProgress) {
+      throw new ConflictException('An assessment attempt is already in progress for this language');
+    }
+
+    // PRD.md §5.1's user-initiated re-assessment flow (E6-T6): "re"-assessing
+    // implies a prior real assessment exists — a REASSESSMENT attempt with
+    // no completed history for this language is a semantically invalid
+    // request on otherwise-valid input (422, matching the same class as the
+    // no-items-available check below), not a 400 the request schema alone
+    // can catch.
+    if (dto.type === 'REASSESSMENT') {
+      const priorCompleted = await this.appPrisma.assessmentAttempt.findFirst({
+        where: { userId: caller.userId, languageId: language.id, status: 'COMPLETED' },
+      });
+      if (!priorCompleted) {
+        throw new UnprocessableEntityException(
+          'Cannot start a re-assessment without a prior completed assessment for this language',
+        );
+      }
     }
 
     const attempt = await this.appPrisma.assessmentAttempt.create({
@@ -240,50 +272,85 @@ export class AssessmentService {
 
     let finalAttempt = attempt;
     if (!alreadyCompleted) {
-      finalAttempt = await this.appPrisma.assessmentAttempt.update({
-        where: { id: attempt.id },
-        data: { status: 'COMPLETED', completedAt: new Date() },
-      });
+      // Real gap found while adding T6's event emission and re-examining
+      // this method: the attempt-status update and every skill's
+      // ProficiencyLevel/History write previously ran as separate,
+      // unwrapped sequential awaits — a failure partway through (e.g. the
+      // 3rd skill's upsert throwing) would leave the attempt marked
+      // COMPLETED with only some skills' proficiency data recorded, a real
+      // partial-write hazard for a state this platform treats as atomic.
+      // Wrapped in a single transaction so it's all-or-nothing, matching
+      // `OrganizationsService`'s own established transaction discipline.
+      finalAttempt = await this.appPrisma.$transaction(async (tx) => {
+        const updated = await tx.assessmentAttempt.update({
+          where: { id: attempt.id },
+          data: { status: 'COMPLETED', completedAt: new Date() },
+        });
 
-      // Writes happen only on the real IN_PROGRESS -> COMPLETED transition
-      // — never on an idempotent replay, or every retried `complete` call
-      // would append a spurious ProficiencyLevelHistory row for an event
-      // that only actually happened once.
-      for (const result of proficiencyResults) {
-        const proficiencyLevel = await this.appPrisma.proficiencyLevel.upsert({
-          where: {
-            userId_languageId_skill: {
+        for (const result of proficiencyResults) {
+          const proficiencyLevel = await tx.proficiencyLevel.upsert({
+            where: {
+              userId_languageId_skill: {
+                userId: caller.userId,
+                languageId: attempt.languageId,
+                skill: result.skill,
+              },
+            },
+            create: {
               userId: caller.userId,
               languageId: attempt.languageId,
               skill: result.skill,
+              cefrLevel: result.cefrLevel,
+              confidence: result.confidence,
+              source: 'ASSESSMENT',
             },
-          },
-          create: {
-            userId: caller.userId,
-            languageId: attempt.languageId,
-            skill: result.skill,
-            cefrLevel: result.cefrLevel,
-            confidence: result.confidence,
-            source: 'ASSESSMENT',
-          },
-          update: {
-            cefrLevel: result.cefrLevel,
-            confidence: result.confidence,
-            source: 'ASSESSMENT',
-          },
-        });
-        await this.appPrisma.proficiencyLevelHistory.create({
-          data: {
-            proficiencyLevelId: proficiencyLevel.id,
-            userId: caller.userId,
-            languageId: attempt.languageId,
-            skill: result.skill,
-            cefrLevel: result.cefrLevel,
-            confidence: result.confidence,
-            source: 'ASSESSMENT',
-          },
-        });
-      }
+            update: {
+              cefrLevel: result.cefrLevel,
+              confidence: result.confidence,
+              source: 'ASSESSMENT',
+            },
+          });
+          await tx.proficiencyLevelHistory.create({
+            data: {
+              proficiencyLevelId: proficiencyLevel.id,
+              userId: caller.userId,
+              languageId: attempt.languageId,
+              skill: result.skill,
+              cefrLevel: result.cefrLevel,
+              confidence: result.confidence,
+              source: 'ASSESSMENT',
+            },
+          });
+        }
+
+        return updated;
+      });
+
+      // Published only after the transaction has actually committed —
+      // same discipline as `OrganizationsService`'s own event calls, and
+      // only on the real transition (never on an idempotent replay), or
+      // every retried `complete` call would emit a spurious duplicate
+      // event for something that only actually happened once.
+      // EVENT_ARCHITECTURE.md's own already-cataloged row (§3) names
+      // `recommendation-engine`/`analytics-service` as this event's
+      // consumers — neither exists yet (ROADMAP.md), so this is the real,
+      // tested mechanism with no live consumer, matching T7/T10's own
+      // "build it real, flag the not-yet-wired consumer" precedent.
+      const eventPayload = assessmentAttemptCompletedPayloadSchema.parse({
+        attemptId: finalAttempt.id,
+        languageId: finalAttempt.languageId,
+        type: finalAttempt.type,
+        skillResults: proficiencyResults.map(({ skill, cefrLevel, confidence, lowConfidence }) => ({
+          skill,
+          cefrLevel,
+          confidence,
+          lowConfidence,
+        })),
+      });
+      await this.events.publish('assessment.attempt.completed', {
+        userId: caller.userId,
+        payload: eventPayload,
+      });
     }
 
     return {
@@ -297,6 +364,11 @@ export class AssessmentService {
           lowConfidence,
         }),
       ),
+      // §6.4's low-confidence retake-offer contract (E6-T6, API shape
+      // only) — true when any served skill's own lowConfidence flag is
+      // set; the frontend epic's own job is building the retake-offer UX
+      // this flag is for (PRD.md §5.1).
+      retakeRecommended: proficiencyResults.some((result) => result.lowConfidence),
     };
   }
 
