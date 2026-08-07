@@ -9,6 +9,7 @@ import { GatewayModule } from './gateway/gateway.module.js';
 import { HealthController } from './health/health.controller.js';
 import { MemoryModule } from './memory/memory.module.js';
 import { OrchestratorModule } from './orchestrator/orchestrator.module.js';
+import { PartitionMaintenanceModule } from './partition-maintenance/partition-maintenance.module.js';
 import { PromptModule } from './prompts/prompt.module.js';
 import { RagModule } from './rag/rag.module.js';
 import { SafetyModule } from './safety/safety.module.js';
@@ -24,6 +25,7 @@ import { SafetyModule } from './safety/safety.module.js';
     SafetyModule,
     OrchestratorModule,
     AgentSessionsModule,
+    PartitionMaintenanceModule,
   ],
   controllers: [HealthController],
   providers: [
