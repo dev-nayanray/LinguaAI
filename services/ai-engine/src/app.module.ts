@@ -8,6 +8,7 @@ import { MemoryModule } from './memory/memory.module.js';
 import { OrchestratorModule } from './orchestrator/orchestrator.module.js';
 import { PromptModule } from './prompts/prompt.module.js';
 import { RagModule } from './rag/rag.module.js';
+import { SafetyModule } from './safety/safety.module.js';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { RagModule } from './rag/rag.module.js';
     RegistryModule,
     MemoryModule,
     RagModule,
+    SafetyModule,
     OrchestratorModule,
   ],
   controllers: [HealthController],

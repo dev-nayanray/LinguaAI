@@ -5,6 +5,7 @@ import type { RouterService } from '../gateway/router.service.js';
 import type { MemoryManagerService } from '../memory/memory-manager.service.js';
 import type { RetrievedMemory } from '../memory/memory-manager.types.js';
 import type { PromptManagerService } from '../prompts/prompt-manager.service.js';
+import { SafetyLayerService } from '../safety/safety-layer.service.js';
 import { OrchestratorService } from './orchestrator.service.js';
 import { RollingSummaryCache } from './rolling-summary.cache.js';
 import {
@@ -65,7 +66,7 @@ function fakePrisma(overrides: { session?: Partial<AIAgentSession>; messages?: A
       update: jest.fn().mockResolvedValue(session),
     },
     aIMessage: {
-      create: jest.fn().mockResolvedValue({}),
+      create: jest.fn().mockResolvedValue({ id: 'assistant-msg-1' }),
       findMany: jest.fn().mockResolvedValue(overrides.messages ?? []),
     },
   } as unknown as PrismaClient & {
@@ -103,6 +104,11 @@ function fakeGenerateResponse(overrides: Partial<GenerateResponse> = {}): Genera
   };
 }
 
+/** The real, dependency-free SafetyLayerService — used everywhere except the dedicated "Safety Layer integration" tests below, so delimiting/sanitization behavior is exercised authentically, not mocked away. */
+function realSafetyLayer(): SafetyLayerService {
+  return new SafetyLayerService();
+}
+
 describe('OrchestratorService', () => {
   describe('startSession', () => {
     it('creates a new AIAgentSession row and returns its id', async () => {
@@ -112,6 +118,7 @@ describe('OrchestratorService', () => {
         fakeRouter() as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
         fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
         new RollingSummaryCache(),
       );
 
@@ -136,6 +143,7 @@ describe('OrchestratorService', () => {
         fakeRouter() as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
         fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
         new RollingSummaryCache(),
       );
 
@@ -160,6 +168,7 @@ describe('OrchestratorService', () => {
         router as unknown as RouterService,
         promptManager as unknown as PromptManagerService,
         fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
         new RollingSummaryCache(),
       );
 
@@ -207,6 +216,7 @@ describe('OrchestratorService', () => {
         router as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
         fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
         new RollingSummaryCache(),
       );
 
@@ -218,7 +228,7 @@ describe('OrchestratorService', () => {
       expect(request.systemPrompt).toBe('You are the persona.');
     });
 
-    it("retrieves relevant memories query-texted against the learner's message and injects them into the system prompt", async () => {
+    it("retrieves relevant memories query-texted against the learner's message and injects them into the system prompt, boundary-delimited", async () => {
       const prisma = fakePrisma({ messages: buildMessages(1) });
       const router = fakeRouter();
       router.generate.mockResolvedValue(fakeGenerateResponse());
@@ -231,6 +241,7 @@ describe('OrchestratorService', () => {
         router as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
         memoryManager as unknown as MemoryManagerService,
+        realSafetyLayer(),
         new RollingSummaryCache(),
       );
 
@@ -248,6 +259,7 @@ describe('OrchestratorService', () => {
       const request = router.generate.mock.calls[0]![1];
       expect(request.systemPrompt).toContain('What you already know about this learner:');
       expect(request.systemPrompt).toContain('confuses ser/estar');
+      expect(request.systemPrompt).toContain('<untrusted_context label="learner_memory">');
     });
 
     it('does not add a memory section to the system prompt when no memories are retrieved', async () => {
@@ -260,6 +272,7 @@ describe('OrchestratorService', () => {
         router as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
         fakeMemoryManager([]) as unknown as MemoryManagerService,
+        realSafetyLayer(),
         new RollingSummaryCache(),
       );
 
@@ -288,6 +301,7 @@ describe('OrchestratorService', () => {
         router as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
         fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
         cache,
       );
 
@@ -299,7 +313,7 @@ describe('OrchestratorService', () => {
       expect(cache.get('session-1')?.summary).toBe('durable prior summary');
     });
 
-    it('folds older turns into a rolling summary once the unsummarized tail exceeds the trigger, retaining only the most recent turns verbatim, and persists it durably', async () => {
+    it('folds older turns into a rolling summary once the unsummarized tail exceeds the trigger, retaining only the most recent turns verbatim, and persists it durably, boundary-delimited', async () => {
       const messages = buildMessages(ROLLING_SUMMARY_TRIGGER_MESSAGE_COUNT + 2);
       const prisma = fakePrisma({ messages });
       const router = fakeRouter();
@@ -313,6 +327,7 @@ describe('OrchestratorService', () => {
         router as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
         fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
         cache,
       );
 
@@ -334,6 +349,9 @@ describe('OrchestratorService', () => {
       expect(replyCall[1].messages).toHaveLength(ROLLING_SUMMARY_RETAIN_RECENT_COUNT);
       expect(replyCall[1].systemPrompt).toContain('Summary of the conversation so far:');
       expect(replyCall[1].systemPrompt).toContain('a fresh summary');
+      expect(replyCall[1].systemPrompt).toContain(
+        '<untrusted_context label="conversation_summary">',
+      );
 
       expect(cache.get('session-1')?.summary).toBe('a fresh summary');
       expect(prisma.aIAgentSession.update).toHaveBeenCalledWith({
@@ -356,6 +374,7 @@ describe('OrchestratorService', () => {
         router as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
         fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
         cache,
       );
 
@@ -385,6 +404,7 @@ describe('OrchestratorService', () => {
         router as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
         fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
         cache,
       );
 
@@ -408,6 +428,7 @@ describe('OrchestratorService', () => {
         fakeRouter() as unknown as RouterService,
         fakePromptManager() as unknown as PromptManagerService,
         fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
         cache,
       );
 
@@ -418,6 +439,67 @@ describe('OrchestratorService', () => {
         data: { status: 'ENDED', endedAt: expect.any(Date) },
       });
       expect(cache.get('session-1')).toBeUndefined();
+    });
+  });
+
+  describe('Safety Layer integration (T8)', () => {
+    it('sanitizes the model output before storing and returning it', async () => {
+      const prisma = fakePrisma({ messages: buildMessages(1) });
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(
+        fakeGenerateResponse({ content: '<script>alert(1)</script>safe text' }),
+      );
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+      );
+
+      const result = await service.sendMessage({
+        sessionId: 'session-1',
+        userMessage: 'hi',
+        variables: {},
+      });
+
+      expect(result.assistantMessage).toBe('alert(1)safe text');
+      expect(prisma.aIMessage.create).toHaveBeenNthCalledWith(2, {
+        data: expect.objectContaining({ content: 'alert(1)safe text' }),
+      });
+    });
+
+    it('records a human-review sample keyed to the real session and assistant-message id', async () => {
+      const prisma = fakePrisma({ messages: buildMessages(1) });
+      prisma.aIMessage.create
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ id: 'assistant-msg-42' });
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(fakeGenerateResponse());
+      const safetyLayer = {
+        delimitUntrustedContent: jest.fn((_label: string, text: string) => text),
+        sanitizeOutput: jest.fn((text: string) => text),
+        resolveAgeBracket: jest.fn(),
+        recordSampleForReviewIfDue: jest.fn(),
+      } as unknown as SafetyLayerService;
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        safetyLayer,
+        new RollingSummaryCache(),
+      );
+
+      await service.sendMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} });
+
+      expect(safetyLayer.recordSampleForReviewIfDue).toHaveBeenCalledWith({
+        sessionId: 'session-1',
+        messageId: 'assistant-msg-42',
+      });
     });
   });
 });

@@ -7,6 +7,7 @@ import { RouterService } from '../gateway/router.service.js';
 import { MemoryManagerService } from '../memory/memory-manager.service.js';
 import type { RetrievedMemory } from '../memory/memory-manager.types.js';
 import { PromptManagerService } from '../prompts/prompt-manager.service.js';
+import { SafetyLayerService } from '../safety/safety-layer.service.js';
 import {
   ROLLING_SUMMARY_RETAIN_RECENT_COUNT,
   ROLLING_SUMMARY_TRIGGER_MESSAGE_COUNT,
@@ -62,6 +63,7 @@ export class OrchestratorService {
     private readonly router: RouterService,
     private readonly promptManager: PromptManagerService,
     private readonly memoryManager: MemoryManagerService,
+    private readonly safetyLayer: SafetyLayerService,
     private readonly rollingSummaryCache: RollingSummaryCache,
   ) {}
 
@@ -114,22 +116,27 @@ export class OrchestratorService {
     );
 
     const response = await this.router.generate('teacher', {
-      systemPrompt: `${personaPrompt}${memorySuffixFor(memories)}${summarySuffix}`,
+      systemPrompt: `${personaPrompt}${this.memorySuffixFor(memories)}${summarySuffix}`,
       messages: contextMessages,
     });
+    const sanitizedContent = this.safetyLayer.sanitizeOutput(response.content);
 
-    await this.prisma.aIMessage.create({
+    const assistantMessage = await this.prisma.aIMessage.create({
       data: {
         sessionId: input.sessionId,
         role: 'ASSISTANT',
-        content: response.content,
+        content: sanitizedContent,
         promptVersion,
         modelId: response.modelId,
         latencyMs: response.latencyMs,
       },
     });
+    this.safetyLayer.recordSampleForReviewIfDue({
+      sessionId: input.sessionId,
+      messageId: assistantMessage.id,
+    });
 
-    return { assistantMessage: response.content, promptVersion, modelId: response.modelId };
+    return { assistantMessage: sanitizedContent, promptVersion, modelId: response.modelId };
   }
 
   async endSession(input: EndSessionInput): Promise<void> {
@@ -178,7 +185,7 @@ export class OrchestratorService {
     if (tail.length <= ROLLING_SUMMARY_TRIGGER_MESSAGE_COUNT) {
       return {
         contextMessages: tail.map(toChatMessage),
-        summarySuffix: cached ? summarySuffixFor(cached.summary) : '',
+        summarySuffix: cached ? this.summarySuffixFor(cached.summary) : '',
       };
     }
 
@@ -198,8 +205,22 @@ export class OrchestratorService {
 
     return {
       contextMessages: stillRecent.map(toChatMessage),
-      summarySuffix: summarySuffixFor(newSummary),
+      summarySuffix: this.summarySuffixFor(newSummary),
     };
+  }
+
+  private summarySuffixFor(summary: string): string {
+    const delimited = this.safetyLayer.delimitUntrustedContent('conversation_summary', summary);
+    return `\n\nSummary of the conversation so far:\n${delimited}`;
+  }
+
+  private memorySuffixFor(memories: RetrievedMemory[]): string {
+    if (memories.length === 0) {
+      return '';
+    }
+    const lines = memories.map((m) => `- (${m.category}) ${m.fact}`).join('\n');
+    const delimited = this.safetyLayer.delimitUntrustedContent('learner_memory', lines);
+    return `\n\nWhat you already know about this learner:\n${delimited}`;
   }
 
   private async summarize(
@@ -216,16 +237,4 @@ export class OrchestratorService {
     });
     return response.content;
   }
-}
-
-function summarySuffixFor(summary: string): string {
-  return `\n\nSummary of the conversation so far:\n${summary}`;
-}
-
-function memorySuffixFor(memories: RetrievedMemory[]): string {
-  if (memories.length === 0) {
-    return '';
-  }
-  const lines = memories.map((m) => `- (${m.category}) ${m.fact}`).join('\n');
-  return `\n\nWhat you already know about this learner:\n${lines}`;
 }
