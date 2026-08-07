@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   writingCritiqueSchema,
+  type ScoreWritingRequest,
   type WritingCritiqueSchema,
 } from '@linguaai/validation/ai-coaching';
 
@@ -9,7 +10,6 @@ import { renderTemplate } from '../prompts/render-template.js';
 import { formatGroundingContextForPrompt } from '../rag/format-grounding-context.js';
 import { RagRetrievalService } from '../rag/rag-retrieval.service.js';
 import { SafetyLayerService } from '../safety/safety-layer.service.js';
-import type { ScoreWritingResponseInput } from './assessment-scoring.types.js';
 import { writingScoringPromptTemplate } from './writing-scoring.prompt.js';
 
 /**
@@ -29,7 +29,7 @@ export class AssessmentScoringService {
     private readonly safetyLayer: SafetyLayerService,
   ) {}
 
-  async scoreWritingResponse(input: ScoreWritingResponseInput): Promise<WritingCritiqueSchema> {
+  async scoreWritingResponse(input: ScoreWritingRequest): Promise<WritingCritiqueSchema> {
     const grounding = await this.ragRetrieval.retrieveGroundingContext({
       queryText: `CEFR writing proficiency descriptors for ${input.targetLanguageName}`,
       languageId: input.languageId,

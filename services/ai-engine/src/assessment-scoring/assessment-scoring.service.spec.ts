@@ -1,10 +1,11 @@
+import type { ScoreWritingRequest } from '@linguaai/validation/ai-coaching';
+
 import type { GenerateResponse } from '../gateway/model-provider.interface.js';
 import type { RouterService } from '../gateway/router.service.js';
 import type { GroundingPassage } from '../rag/rag-retrieval.types.js';
 import type { RagRetrievalService } from '../rag/rag-retrieval.service.js';
 import { SafetyLayerService } from '../safety/safety-layer.service.js';
 import { AssessmentScoringService } from './assessment-scoring.service.js';
-import type { ScoreWritingResponseInput } from './assessment-scoring.types.js';
 
 function fakeRouter(): jest.Mocked<Pick<RouterService, 'generate'>> {
   return { generate: jest.fn() };
@@ -32,7 +33,7 @@ function fakeGenerateResponse(overrides: Partial<GenerateResponse> = {}): Genera
   };
 }
 
-const INPUT: ScoreWritingResponseInput = {
+const INPUT: ScoreWritingRequest = {
   languageId: 'lang-es',
   targetLanguageName: 'Spanish',
   prompt: 'Describe your ideal vacation.',

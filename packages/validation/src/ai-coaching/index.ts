@@ -141,3 +141,24 @@ export const writingCritiqueSchema = z.object({
 });
 assertExtends<WritingCritique, z.infer<typeof writingCritiqueSchema>>();
 export type WritingCritiqueSchema = z.infer<typeof writingCritiqueSchema>;
+
+/**
+ * `POST /v1/assessment-scoring/writing` request body (E6 T5, ADR-033's
+ * pattern applied to Writing-skill scoring). Shape matches
+ * `AssessmentScoringService.scoreWritingResponse()`'s own input exactly —
+ * one schema for both the wire contract and the service call, the same
+ * "no separate internal type" precedent `startAgentSessionRequestSchema`
+ * already set for `OrchestratorService.startSession()`.
+ * `learnerResponse`'s 10000-character cap is a flagged, undocumented-
+ * elsewhere defensive bound (an essay-length response is realistically
+ * longer than a single conversational turn's 8000-char cap
+ * (`sendAgentMessageRequestSchema`), but still needs *some* ceiling to
+ * bound worst-case cost/latency).
+ */
+export const scoreWritingRequestSchema = z.object({
+  languageId: z.string().uuid(),
+  targetLanguageName: z.string().min(1),
+  prompt: z.string().min(1),
+  learnerResponse: z.string().min(1).max(10000),
+});
+export type ScoreWritingRequest = z.infer<typeof scoreWritingRequestSchema>;
