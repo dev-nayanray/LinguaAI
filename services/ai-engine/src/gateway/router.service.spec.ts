@@ -1,3 +1,4 @@
+import { AI_EMBEDDING_DIMENSIONS, AI_EMBEDDING_MODEL } from './embedding.constants.js';
 import type { AiGatewayModuleConfig } from './gateway.config.js';
 import type {
   EmbedResponse,
@@ -171,14 +172,26 @@ describe('RouterService', () => {
   });
 
   describe('embed', () => {
-    it('always delegates to the OpenAI provider, with no failover story', async () => {
-      const response: EmbedResponse = { embedding: [0.1, 0.2], modelId: 'text-embedding-3-small' };
+    it('always delegates to the OpenAI provider, pinning the model per ADR-031 — the caller never supplies one', async () => {
+      const response: EmbedResponse = {
+        embedding: new Array(AI_EMBEDDING_DIMENSIONS).fill(0.1),
+        modelId: AI_EMBEDDING_MODEL,
+      };
       openai.embed.mockResolvedValue(response);
 
-      const result = await router.embed({ model: 'text-embedding-3-small', input: 'hola' });
+      const result = await router.embed({ input: 'hola' });
 
-      expect(openai.embed).toHaveBeenCalledWith({ model: 'text-embedding-3-small', input: 'hola' });
+      expect(openai.embed).toHaveBeenCalledWith({ model: AI_EMBEDDING_MODEL, input: 'hola' });
       expect(result).toBe(response);
+    });
+
+    it('throws a clear error rather than returning a vector of the wrong dimension', async () => {
+      const response: EmbedResponse = { embedding: [0.1, 0.2, 0.3], modelId: AI_EMBEDDING_MODEL };
+      openai.embed.mockResolvedValue(response);
+
+      await expect(router.embed({ input: 'hola' })).rejects.toThrow(
+        `Embedding provider returned a 3-dimension vector, expected ${AI_EMBEDDING_DIMENSIONS} per ADR-031`,
+      );
     });
   });
 });

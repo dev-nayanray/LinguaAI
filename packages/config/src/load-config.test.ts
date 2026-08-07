@@ -3,7 +3,13 @@ import { z } from 'zod';
 
 import { ConfigValidationError } from './errors.js';
 import { loadConfig } from './load-config.js';
-import { aiGatewayEnvSchema, databaseEnvSchema, nodeEnvSchema, redisEnvSchema } from './schemas.js';
+import {
+  aiGatewayEnvSchema,
+  appRoleDatabaseEnvSchema,
+  databaseEnvSchema,
+  nodeEnvSchema,
+  redisEnvSchema,
+} from './schemas.js';
 
 describe('loadConfig', () => {
   it('returns the parsed, typed config when all required vars are present and valid', () => {
@@ -78,6 +84,15 @@ describe('loadConfig', () => {
 
     it('redisEnvSchema requires a valid REDIS_URL', () => {
       expect(() => loadConfig(redisEnvSchema, {})).toThrow(/REDIS_URL/);
+    });
+
+    it('appRoleDatabaseEnvSchema requires a valid APP_DATABASE_URL but not APP_SERVICE_ROLE_DATABASE_URL', () => {
+      expect(() => loadConfig(appRoleDatabaseEnvSchema, {})).toThrow(/APP_DATABASE_URL/);
+
+      const result = loadConfig(appRoleDatabaseEnvSchema, {
+        APP_DATABASE_URL: 'postgresql://app_role:pass@localhost:5432/db',
+      });
+      expect(result).toEqual({ APP_DATABASE_URL: 'postgresql://app_role:pass@localhost:5432/db' });
     });
 
     it('aiGatewayEnvSchema defaults AI_GATEWAY_DEFAULT_PROVIDER to "anthropic" but still requires both API keys and both model vars', () => {

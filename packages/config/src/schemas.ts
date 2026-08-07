@@ -69,6 +69,20 @@ export const appDatabaseEnvSchema = z.object({
   APP_SERVICE_ROLE_DATABASE_URL: z.string().url(),
 });
 
+/**
+ * The `app_role`-only half of `appDatabaseEnvSchema` above — for a
+ * `services/*` consumer (ai-engine, E5 T4; ADR-036) that needs a real,
+ * least-privilege application database connection but has no
+ * `app_service_role` (`BYPASSRLS`) use case at all, unlike apps/api's
+ * small, explicitly-named set of exceptions (ADR-022). Kept as its own
+ * fragment rather than reusing `appDatabaseEnvSchema` wholesale, so a
+ * service with no BYPASSRLS need is never required to configure a
+ * credential it will never use.
+ */
+export const appRoleDatabaseEnvSchema = z.object({
+  APP_DATABASE_URL: z.string().url(),
+});
+
 /** Consumed by apps/api's AuthModule (E2-T8/T9) — JWT signing/verification only; database URLs live in `appDatabaseEnvSchema`. */
 export const authEnvSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(1),
@@ -139,6 +153,7 @@ export type DatabaseEnv = z.infer<typeof databaseEnvSchema>;
 export type RedisEnv = z.infer<typeof redisEnvSchema>;
 export type ObservabilityEnv = z.infer<typeof observabilityEnvSchema>;
 export type AppDatabaseEnv = z.infer<typeof appDatabaseEnvSchema>;
+export type AppRoleDatabaseEnv = z.infer<typeof appRoleDatabaseEnvSchema>;
 export type AuthEnv = z.infer<typeof authEnvSchema>;
 export type OAuthEnv = z.infer<typeof oauthEnvSchema>;
 export type MfaEnv = z.infer<typeof mfaEnvSchema>;

@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
+import { AI_EMBEDDING_DIMENSIONS, AI_EMBEDDING_MODEL } from './embedding.constants.js';
 import { AI_GATEWAY_CONFIG, ANTHROPIC_PROVIDER, OPENAI_PROVIDER } from './gateway.config.js';
 import type { AiGatewayModuleConfig } from './gateway.config.js';
 import type {
@@ -119,8 +120,20 @@ export class RouterService {
     yield* secondary.stream(fullRequest);
   }
 
-  /** No failover — ADR-031 pins exactly one embedding provider; a request for a model the embedding provider doesn't serve is a caller error, not a routing decision. */
-  async embed(request: EmbedRequest): Promise<EmbedResponse> {
-    return this.openAiProvider.embed(request);
+  /**
+   * No failover — ADR-031 pins exactly one embedding provider and exactly
+   * one model. The caller never supplies a model (unlike `generate()`/
+   * `stream()`, where the request class picks one) — there is only ever
+   * one correct choice, so making it a parameter would just be one more
+   * place a caller could accidentally get it wrong.
+   */
+  async embed(request: Omit<EmbedRequest, 'model'>): Promise<EmbedResponse> {
+    const response = await this.openAiProvider.embed({ ...request, model: AI_EMBEDDING_MODEL });
+    if (response.embedding.length !== AI_EMBEDDING_DIMENSIONS) {
+      throw new Error(
+        `Embedding provider returned a ${response.embedding.length}-dimension vector, expected ${AI_EMBEDDING_DIMENSIONS} per ADR-031 — refusing to hand back a vector that would fail insertion into the vector(${AI_EMBEDDING_DIMENSIONS}) columns.`,
+      );
+    }
+    return response;
   }
 }
