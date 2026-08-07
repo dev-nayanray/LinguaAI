@@ -41,6 +41,17 @@ enum ProficiencySource {
   INFERRED
 }
 
+/// E6 T1 (ADR-037). MULTIPLE_CHOICE/FILL_IN_BLANK cover the 4 objective
+/// skills (Reading/Listening/Vocabulary/Grammar) — deterministically
+/// scored in apps/api against AssessmentItem.correctAnswer. OPEN_RESPONSE
+/// is Writing-skill only — AssessmentItem.correctAnswer is null for these
+/// (E6 design doc §6.1); scored by ai-engine (E6 T4), not an answer key.
+enum AssessmentItemType {
+  MULTIPLE_CHOICE
+  FILL_IN_BLANK
+  OPEN_RESPONSE
+}
+
 model AssessmentAttempt {
   id         String @id @default(uuid()) @db.Uuid
   userId     String @db.Uuid
@@ -65,6 +76,8 @@ model AssessmentAttempt {
 model AssessmentResponse {
   id        String   @id @default(uuid()) @db.Uuid
   attemptId String   @db.Uuid
+  /// Nullable — E6 T1 (ADR-037) added AssessmentItem after this table already existed; a response created before an item bank existed has nothing to point to. Every response the adaptive algorithm (E6 T2) creates going forward sets this.
+  itemId    String?  @db.Uuid
   skill     Skill
   prompt    String
   /// Structured, never raw HTML — validated at the application layer.
@@ -74,9 +87,53 @@ model AssessmentResponse {
   createdAt DateTime @default(now())
 
   attempt AssessmentAttempt @relation(fields: [attemptId], references: [id])
+  item    AssessmentItem?   @relation(fields: [itemId], references: [id])
 
   @@index([attemptId])
+  @@index([itemId])
   @@map("AssessmentResponse")
+}
+
+/// Curated placement-test item bank (E6 T1, ADR-037) — closes a real gap:
+/// no reusable, standalone item bank existed anywhere in the schema before
+/// this (AssessmentResponse.prompt was free text; content.prisma's
+/// Exercise is bound to an authored curriculum Activity, structurally
+/// incompatible with a pre-course placement test — confirmed by direct
+/// inspection, E6 design doc §3.1). Mirrors KnowledgeBaseEntry's own
+/// curated-content shape (versioned, linguist sign-off) rather than
+/// Exercise's course-bound shape.
+model AssessmentItem {
+  id         String @id @default(uuid()) @db.Uuid
+  languageId String @db.Uuid
+
+  skill             Skill
+  cefrLevel         CefrLevel
+  /// Relative difficulty within its own (skill, cefrLevel) band — the adaptive algorithm's (E6 T2) own selection input, distinct from cefrLevel itself: two items can target the same CEFR band at different difficulty.
+  difficulty        Float
+  prompt            String
+  /// Listening-skill items only — a real gap found while drafting T1's own
+  /// seed content, not scoped in the E6 design doc's original §6.1 model
+  /// (which only had `prompt: String`). Mirrors AIMessage.audioUrl's own
+  /// existing precedent (ai.prisma) — real audio-file authoring/storage
+  /// (S3, matching DATABASE.md's "Assessment/conversation raw audio: 90
+  /// days" retention policy) is separately-scoped future content work, not
+  /// this task's own seed pass; null here means the item's `prompt` field
+  /// carries a text scaffold of what would be played, not real audio yet.
+  audioUrl          String?
+  /// Structured, never raw HTML — same discipline as Exercise.correctAnswer/AssessmentResponse.response. Null for OPEN_RESPONSE (Writing) items — scored by ai-engine (E6 T4), not an answer key.
+  correctAnswer     Json?
+  itemType          AssessmentItemType
+  isActive          Boolean            @default(true)
+  linguistSignOffBy String?
+  linguistSignOffAt DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  language  Language             @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  responses AssessmentResponse[]
+
+  @@index([languageId, skill, cefrLevel, isActive])
+  @@map("AssessmentItem")
 }
 
 /// Current CEFR level per user/language/skill — "current state" only; see

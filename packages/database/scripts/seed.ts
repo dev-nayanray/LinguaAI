@@ -10,7 +10,7 @@
 // programs below are illustrative seed data, labeled as such, not a
 // product decision made by this script.
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -174,6 +174,208 @@ async function seedKnowledgeBaseEntries() {
   }
   console.log(`Seeded ${entries.length} KnowledgeBaseEntry rows.`);
   return created;
+}
+
+// E6 T1 (ADR-037): real, if intentionally small, curated placement-test
+// item bank content — Spanish (the same illustrative language every other
+// seed function above already uses), spanning A1/B1/C1 (a sparse sample
+// across the difficulty range, not all 6 CEFR bands) for the 4 objective
+// skills, plus 1 Writing (OPEN_RESPONSE) item. Matches KnowledgeBaseEntry's
+// own seeding discipline (E5 T7: "5 seeded rows for verification, not
+// exhaustive") — the target ~10-15 items per skill per band (E6 design doc
+// §6.1) is real, separately-scoped future content-authoring work, not
+// delivered by this seed pass. Listening items have no real audioUrl yet
+// (a real, flagged gap — E6 design doc §6.1's own audioUrl comment); their
+// `prompt` is a text scaffold of what would be played.
+async function seedAssessmentItems() {
+  const spanish = await prisma.language.findUniqueOrThrow({ where: { code: 'es' } });
+
+  const items: Array<{
+    skill: 'READING' | 'LISTENING' | 'VOCABULARY' | 'GRAMMAR' | 'WRITING';
+    cefrLevel: 'A1' | 'B1' | 'C1';
+    difficulty: number;
+    prompt: string;
+    audioUrl?: string;
+    correctAnswer: Prisma.InputJsonValue | null;
+    itemType: 'MULTIPLE_CHOICE' | 'FILL_IN_BLANK' | 'OPEN_RESPONSE';
+  }> = [
+    // Reading
+    {
+      skill: 'READING',
+      cefrLevel: 'A1',
+      difficulty: 0.5,
+      prompt: 'Read: "Me llamo Ana. Soy de España. Tengo veinte años." What is Ana\'s age?',
+      correctAnswer: { options: ['Ten', 'Twenty', 'Thirty', 'Not stated'], correctIndex: 1 },
+      itemType: 'MULTIPLE_CHOICE',
+    },
+    {
+      skill: 'READING',
+      cefrLevel: 'B1',
+      difficulty: 0.5,
+      prompt:
+        'Read: "Aunque llovía mucho, decidimos ir al mercado porque necesitábamos comprar verduras frescas para la cena." Why did they go to the market despite the rain?',
+      correctAnswer: {
+        options: [
+          'They wanted to see the rain',
+          'They needed fresh vegetables for dinner',
+          'The market was closing',
+          'It was not raining',
+        ],
+        correctIndex: 1,
+      },
+      itemType: 'MULTIPLE_CHOICE',
+    },
+    {
+      skill: 'READING',
+      cefrLevel: 'C1',
+      difficulty: 0.5,
+      prompt:
+        'Read: "Si bien la propuesta parecía prometedora en un principio, un análisis más riguroso reveló una serie de inconsistencias que sus defensores no habían anticipado." What does the passage imply about the proposal\'s initial reception?',
+      correctAnswer: {
+        options: [
+          'It was immediately rejected',
+          'It seemed promising before closer scrutiny found flaws',
+          'Its defenders had already found all the flaws',
+          'No analysis was ever conducted',
+        ],
+        correctIndex: 1,
+      },
+      itemType: 'MULTIPLE_CHOICE',
+    },
+    // Listening (no real audio yet — see this function's own header comment)
+    {
+      skill: 'LISTENING',
+      cefrLevel: 'A1',
+      difficulty: 0.5,
+      prompt:
+        '[Audio transcript scaffold] "Hola, ¿cómo estás? — Muy bien, gracias." What is the second speaker expressing?',
+      correctAnswer: {
+        options: ['Sadness', 'Wellbeing', 'Confusion', 'A question'],
+        correctIndex: 1,
+      },
+      itemType: 'MULTIPLE_CHOICE',
+    },
+    {
+      skill: 'LISTENING',
+      cefrLevel: 'B1',
+      difficulty: 0.5,
+      prompt:
+        '[Audio transcript scaffold] "El tren a Madrid sale a las nueve, pero llega con retraso los lunes." When might the train be late?',
+      correctAnswer: {
+        options: ['Every day', 'Only on Mondays', 'Never', 'Only at 9pm'],
+        correctIndex: 1,
+      },
+      itemType: 'MULTIPLE_CHOICE',
+    },
+    {
+      skill: 'LISTENING',
+      cefrLevel: 'C1',
+      difficulty: 0.5,
+      prompt:
+        '[Audio transcript scaffold] "A pesar de las críticas iniciales, el proyecto acabó por ganarse el respeto de la comunidad científica." What is the speaker\'s overall point?',
+      correctAnswer: {
+        options: [
+          'The project failed despite early praise',
+          'The project eventually earned respect despite early criticism',
+          'The scientific community never accepted the project',
+          'There were no initial critiques',
+        ],
+        correctIndex: 1,
+      },
+      itemType: 'MULTIPLE_CHOICE',
+    },
+    // Vocabulary
+    {
+      skill: 'VOCABULARY',
+      cefrLevel: 'A1',
+      difficulty: 0.5,
+      prompt: 'What does "gato" mean in English?',
+      correctAnswer: { options: ['Dog', 'Cat', 'Bird', 'Fish'], correctIndex: 1 },
+      itemType: 'MULTIPLE_CHOICE',
+    },
+    {
+      skill: 'VOCABULARY',
+      cefrLevel: 'B1',
+      difficulty: 0.5,
+      prompt: 'Fill in the blank: "Necesito ___ una cita con el médico." (to make/schedule)',
+      correctAnswer: { acceptable: ['pedir', 'concertar', 'sacar'] },
+      itemType: 'FILL_IN_BLANK',
+    },
+    {
+      skill: 'VOCABULARY',
+      cefrLevel: 'C1',
+      difficulty: 0.5,
+      prompt:
+        'Which word best fits: "Su discurso fue tan ___ que convenció a toda la sala." (persuasive)',
+      correctAnswer: { options: ['aburrido', 'contundente', 'breve', 'confuso'], correctIndex: 1 },
+      itemType: 'MULTIPLE_CHOICE',
+    },
+    // Grammar
+    {
+      skill: 'GRAMMAR',
+      cefrLevel: 'A1',
+      difficulty: 0.5,
+      prompt: 'Fill in the blank: "Yo ___ estudiante." (soy/eres/es)',
+      correctAnswer: { acceptable: ['soy'] },
+      itemType: 'FILL_IN_BLANK',
+    },
+    {
+      skill: 'GRAMMAR',
+      cefrLevel: 'B1',
+      difficulty: 0.5,
+      prompt:
+        'Fill in the blank (preterite vs. imperfect): "Cuando era niño, ___ (vivir) en Madrid."',
+      correctAnswer: { acceptable: ['vivía'] },
+      itemType: 'FILL_IN_BLANK',
+    },
+    {
+      skill: 'GRAMMAR',
+      cefrLevel: 'C1',
+      difficulty: 0.5,
+      prompt:
+        'Fill in the blank (subjunctive): "Dudo que ella ___ (llegar) a tiempo, dado el tráfico."',
+      correctAnswer: { acceptable: ['llegue'] },
+      itemType: 'FILL_IN_BLANK',
+    },
+    // Writing — OPEN_RESPONSE, no answer key; scored by ai-engine (E6 T4)
+    {
+      skill: 'WRITING',
+      cefrLevel: 'B1',
+      difficulty: 0.5,
+      prompt:
+        'Escribe un párrafo breve (60-100 palabras) describiendo tu ciudad favorita y por qué te gusta.',
+      correctAnswer: null,
+      itemType: 'OPEN_RESPONSE',
+    },
+  ];
+
+  let created = 0;
+  for (const item of items) {
+    const existing = await prisma.assessmentItem.findFirst({
+      where: {
+        languageId: spanish.id,
+        skill: item.skill,
+        cefrLevel: item.cefrLevel,
+        prompt: item.prompt,
+      },
+    });
+    if (!existing) {
+      await prisma.assessmentItem.create({
+        data: {
+          languageId: spanish.id,
+          skill: item.skill,
+          cefrLevel: item.cefrLevel,
+          difficulty: item.difficulty,
+          prompt: item.prompt,
+          audioUrl: item.audioUrl ?? null,
+          correctAnswer: item.correctAnswer ?? undefined,
+          itemType: item.itemType,
+        },
+      });
+      created++;
+    }
+  }
+  console.log(`Seeded ${created} new AssessmentItem rows (${items.length} defined).`);
 }
 
 async function seedBadgesAndMissions() {
@@ -358,6 +560,7 @@ async function main() {
   await seedBadgesAndMissions();
   await seedExamPrograms(knowledgeBaseEntries);
   await seedPlans();
+  await seedAssessmentItems();
   console.log('Seed complete.');
 }
 
