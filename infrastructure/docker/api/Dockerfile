@@ -83,10 +83,41 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack 
 # verified empirically on ai-engine.
 COPY --from=prod-deps --chown=nestjs:nodejs /app/node_modules ./node_modules
 COPY --from=prod-deps --chown=nestjs:nodejs /app/package.json ./package.json
+# @prisma/client's own generated output — see the matching comment in
+# infrastructure/docker/ai-engine/Dockerfile for the full explanation
+# (same root cause, same fix, both files depend on packages/database).
+# The hashed path must be re-verified if a future lockfile change ever
+# bumps @prisma/client, prisma, or their resolved peers.
+COPY --from=installer --chown=nestjs:nodejs /app/node_modules/.pnpm/@prisma+client@6.19.3_prisma@6.19.3_magicast@0.3.5_typescript@5.9.3__typescript@5.9.3/node_modules/.prisma ./node_modules/.pnpm/@prisma+client@6.19.3_prisma@6.19.3_magicast@0.3.5_typescript@5.9.3__typescript@5.9.3/node_modules/.prisma
 COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/config/package.json ./packages/config/package.json
 COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/config/node_modules ./packages/config/node_modules
 COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/observability/package.json ./packages/observability/package.json
 COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/observability/node_modules ./packages/observability/node_modules
+# packages/database/events/utils/types/validation — real, direct (or
+# database's own transitive) dependencies of apps/api, missing from this
+# file until this fix. Same root cause as ai-engine's identical gap
+# (infrastructure/docker/ai-engine/Dockerfile): `turbo prune`'s own
+# dependency-graph traversal (the pruner stage above) correctly includes
+# all of these in the pruned workspace, so the build itself succeeds
+# either way, but this runner stage's copy list is hand-maintained per
+# package, not graph-derived — without this, the final image built and
+# passed a plain `docker build`/scan with no error, yet would crash on
+# first real request (`Cannot find module '@linguaai/database'`, etc.)
+# since none of these were ever actually present in the image.
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/database/package.json ./packages/database/package.json
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/database/node_modules ./packages/database/node_modules
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/events/package.json ./packages/events/package.json
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/events/node_modules ./packages/events/node_modules
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/utils/package.json ./packages/utils/package.json
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/utils/node_modules ./packages/utils/node_modules
+# packages/types has no "dependencies" of its own (a pure type-only
+# package) — pnpm never creates a node_modules directory for it at all,
+# verified empirically; unlike every other package.json+node_modules pair
+# here, only the package.json (needed for its own "exports" resolution)
+# is copied.
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/types/package.json ./packages/types/package.json
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/validation/package.json ./packages/validation/package.json
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/validation/node_modules ./packages/validation/node_modules
 COPY --from=prod-deps --chown=nestjs:nodejs /app/apps/api/package.json ./apps/api/package.json
 COPY --from=prod-deps --chown=nestjs:nodejs /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=installer --chown=nestjs:nodejs /app/apps/api/dist ./apps/api/dist
@@ -94,6 +125,16 @@ COPY --from=installer --chown=nestjs:nodejs /app/packages/config/dist ./packages
 COPY --from=installer --chown=nestjs:nodejs /app/packages/config/dist-cjs ./packages/config/dist-cjs
 COPY --from=installer --chown=nestjs:nodejs /app/packages/observability/dist ./packages/observability/dist
 COPY --from=installer --chown=nestjs:nodejs /app/packages/observability/dist-cjs ./packages/observability/dist-cjs
+COPY --from=installer --chown=nestjs:nodejs /app/packages/database/dist ./packages/database/dist
+COPY --from=installer --chown=nestjs:nodejs /app/packages/database/dist-cjs ./packages/database/dist-cjs
+COPY --from=installer --chown=nestjs:nodejs /app/packages/events/dist ./packages/events/dist
+COPY --from=installer --chown=nestjs:nodejs /app/packages/events/dist-cjs ./packages/events/dist-cjs
+COPY --from=installer --chown=nestjs:nodejs /app/packages/utils/dist ./packages/utils/dist
+COPY --from=installer --chown=nestjs:nodejs /app/packages/utils/dist-cjs ./packages/utils/dist-cjs
+COPY --from=installer --chown=nestjs:nodejs /app/packages/types/dist ./packages/types/dist
+COPY --from=installer --chown=nestjs:nodejs /app/packages/types/dist-cjs ./packages/types/dist-cjs
+COPY --from=installer --chown=nestjs:nodejs /app/packages/validation/dist ./packages/validation/dist
+COPY --from=installer --chown=nestjs:nodejs /app/packages/validation/dist-cjs ./packages/validation/dist-cjs
 USER nestjs
 EXPOSE 4000
 ENV PORT=4000

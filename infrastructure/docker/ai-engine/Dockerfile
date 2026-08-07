@@ -89,10 +89,47 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack 
 # empirically.
 COPY --from=prod-deps --chown=nestjs:nodejs /app/node_modules ./node_modules
 COPY --from=prod-deps --chown=nestjs:nodejs /app/package.json ./package.json
+# @prisma/client's own generated output (the query engine binary + generated
+# types, produced by `prisma generate`) — NOT covered by the plain
+# `node_modules` copy above. `prisma generate` only ever ran in the
+# `installer` stage (via turbo's build pipeline); `prod-deps` runs a
+# separate, --prod-only `pnpm install` that never invokes it (`prisma`/
+# `dotenv-cli` are devDependencies, correctly absent from a --prod
+# install), so without this, the image builds and passes a plain `docker
+# build`/scan with no error, yet crashes on first request with "@prisma/
+# client did not initialize yet" — verified empirically (this exact
+# failure, then this exact fix, both reproduced locally before this line
+# was added). The path below is pnpm's real, content-hashed store
+# location for this exact dependency-graph state (verified empirically
+# against this stage) — stable for a given `pnpm-lock.yaml`, but must be
+# re-verified (`docker build --target installer` then `find
+# node_modules/.pnpm -iname '*prisma+client*'`) if a future lockfile
+# change ever bumps `@prisma/client`, `prisma`, or their resolved peers.
+COPY --from=installer --chown=nestjs:nodejs /app/node_modules/.pnpm/@prisma+client@6.19.3_prisma@6.19.3_magicast@0.3.5_typescript@5.9.3__typescript@5.9.3/node_modules/.prisma ./node_modules/.pnpm/@prisma+client@6.19.3_prisma@6.19.3_magicast@0.3.5_typescript@5.9.3__typescript@5.9.3/node_modules/.prisma
 COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/config/package.json ./packages/config/package.json
 COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/config/node_modules ./packages/config/node_modules
 COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/observability/package.json ./packages/observability/package.json
 COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/observability/node_modules ./packages/observability/node_modules
+# packages/database (E5 T4) — a real, direct dependency of ai-engine's
+# DatabaseModule/OrchestratorService/MemoryManagerService/RagRetrievalService,
+# missing from this file until this fix: `turbo prune`'s own dependency-
+# graph traversal (the pruner stage above) correctly includes it in the
+# pruned workspace, so the build itself succeeds either way, but this
+# runner stage's copy list is hand-maintained per package, not graph-
+# derived — without this, the final image built and passed a plain
+# `docker build`/scan with no error, yet would crash on first real request
+# (`Cannot find module '@linguaai/database'`) since its package.json/
+# node_modules/dist were never actually present in the image.
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/database/package.json ./packages/database/package.json
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/database/node_modules ./packages/database/node_modules
+# packages/database's own workspace dependencies (packages/database/
+# package.json), transitively required for the same reason — Node's
+# module resolution needs the real target directory present, not just
+# packages/database's own symlink to it.
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/events/package.json ./packages/events/package.json
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/events/node_modules ./packages/events/node_modules
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/utils/package.json ./packages/utils/package.json
+COPY --from=prod-deps --chown=nestjs:nodejs /app/packages/utils/node_modules ./packages/utils/node_modules
 COPY --from=prod-deps --chown=nestjs:nodejs /app/services/ai-engine/package.json ./services/ai-engine/package.json
 COPY --from=prod-deps --chown=nestjs:nodejs /app/services/ai-engine/node_modules ./services/ai-engine/node_modules
 COPY --from=installer --chown=nestjs:nodejs /app/services/ai-engine/dist ./services/ai-engine/dist
@@ -100,6 +137,12 @@ COPY --from=installer --chown=nestjs:nodejs /app/packages/config/dist ./packages
 COPY --from=installer --chown=nestjs:nodejs /app/packages/config/dist-cjs ./packages/config/dist-cjs
 COPY --from=installer --chown=nestjs:nodejs /app/packages/observability/dist ./packages/observability/dist
 COPY --from=installer --chown=nestjs:nodejs /app/packages/observability/dist-cjs ./packages/observability/dist-cjs
+COPY --from=installer --chown=nestjs:nodejs /app/packages/database/dist ./packages/database/dist
+COPY --from=installer --chown=nestjs:nodejs /app/packages/database/dist-cjs ./packages/database/dist-cjs
+COPY --from=installer --chown=nestjs:nodejs /app/packages/events/dist ./packages/events/dist
+COPY --from=installer --chown=nestjs:nodejs /app/packages/events/dist-cjs ./packages/events/dist-cjs
+COPY --from=installer --chown=nestjs:nodejs /app/packages/utils/dist ./packages/utils/dist
+COPY --from=installer --chown=nestjs:nodejs /app/packages/utils/dist-cjs ./packages/utils/dist-cjs
 USER nestjs
 EXPOSE 4001
 ENV PORT=4001
