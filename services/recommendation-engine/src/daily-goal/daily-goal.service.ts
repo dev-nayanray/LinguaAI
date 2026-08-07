@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LearningPlan, Prisma, PrismaClient } from '@linguaai/database';
+import { DomainEventPublisher } from '@linguaai/events';
 import { toLocalCalendarDate } from '@linguaai/utils';
 
 import { RECOMMENDATION_ENGINE_PRISMA_CLIENT } from '../database/database.config.js';
@@ -9,6 +10,8 @@ import {
   BASE_TARGET_ACTIVITIES,
   BASE_TARGET_MINUTES,
   BASE_TARGET_XP,
+  DAILY_GOAL_READY_EVENT_TYPE,
+  DOMAIN_EVENT_PUBLISHER,
   RECENT_DAILY_GOALS_FOR_ADJUSTMENT,
   WEAK_SKILL_ACTIVITY_BONUS,
 } from './daily-goal.constants.js';
@@ -29,6 +32,7 @@ export class DailyGoalService {
   constructor(
     @Inject(RECOMMENDATION_ENGINE_PRISMA_CLIENT) private readonly prisma: PrismaClient,
     private readonly weaknessDetection: WeaknessDetectionService,
+    @Inject(DOMAIN_EVENT_PUBLISHER) private readonly eventPublisher: DomainEventPublisher,
   ) {}
 
   async generateForPlan(plan: Pick<LearningPlan, 'id' | 'userId' | 'languageId'>): Promise<void> {
@@ -85,6 +89,14 @@ export class DailyGoalService {
     if (weakSkills.length > 0) {
       await this.recordWeakSkillsOnPlan(plan.id, weakSkills);
     }
+
+    // §6.5 — published after the row above is (re)computed, not before;
+    // a consumer reacting to this event (e.g. notification-service) must
+    // be able to read back the same row this event describes.
+    await this.eventPublisher.publish(DAILY_GOAL_READY_EVENT_TYPE, {
+      userId: plan.userId,
+      payload: { userId: plan.userId, date: tomorrow, targetXp, targetMinutes, targetActivities },
+    });
 
     this.logger.log(
       `Generated DailyGoal for user ${plan.userId} (${tomorrow}, xp=${targetXp}, minutes=${targetMinutes}, activities=${targetActivities})`,

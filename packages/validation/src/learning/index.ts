@@ -205,3 +205,29 @@ export const assessmentAttemptCompletedPayloadSchema = z.object({
 export type AssessmentAttemptCompletedPayload = z.infer<
   typeof assessmentAttemptCompletedPayloadSchema
 >;
+
+/**
+ * The real payload shape `DailyGoalService.generateForPlan()` publishes for
+ * `recommendation.daily_goal.ready` (E7 T4, §6.5) — closes §3.4's found gap
+ * (`ARCHITECTURE.md` §6 narrated a "plan ready" event `notification-service`
+ * consumes; no such row existed in `EVENT_ARCHITECTURE.md`'s actual catalog
+ * until this task). Lives here, not `services/recommendation-engine`-local,
+ * for the same reason `assessmentAttemptCompletedPayloadSchema` does: its
+ * real consumers (`notification-service`, `analytics-service`) cannot
+ * import from `services/recommendation-engine`'s own `src/` internals
+ * (this repo's own "consume a package's public exports only" rule), so the
+ * producer and every consumer share this one schema. `date` is a plain
+ * `YYYY-MM-DD` calendar-date string — the same value `toLocalCalendarDate`/
+ * `nextCalendarDate` (`packages/utils`) already compute in the user's own
+ * timezone, not a UTC instant a consumer would have to re-localize.
+ */
+export const recommendationDailyGoalReadyPayloadSchema = z.object({
+  userId: z.string().uuid(),
+  date: z.string().date(),
+  targetXp: z.number().int().positive(),
+  targetMinutes: z.number().int().positive(),
+  targetActivities: z.number().int().positive(),
+});
+export type RecommendationDailyGoalReadyPayload = z.infer<
+  typeof recommendationDailyGoalReadyPayloadSchema
+>;

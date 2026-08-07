@@ -38,3 +38,9 @@ export const DAILY_GOAL_JOB_ID = 'daily-goal-generation-repeatable';
 export const DAILY_GOAL_CRON = '0 3 * * *';
 export const DAILY_GOAL_JOB_ATTEMPTS = 3;
 export const DAILY_GOAL_BACKOFF_MS = 5000;
+
+/** E7 T4, §6.5 — cataloged in EVENT_ARCHITECTURE.md; published once per plan after its DailyGoal row is (re)computed. */
+export const DAILY_GOAL_READY_EVENT_TYPE = 'recommendation.daily_goal.ready';
+
+/** DI token for the `DomainEventPublisher` instance `DailyGoalService` publishes `DAILY_GOAL_READY_EVENT_TYPE` through — defined here, not in `daily-goal.module.ts`, so `daily-goal.service.ts` can import it without a module<->service circular import. */
+export const DOMAIN_EVENT_PUBLISHER = Symbol('DOMAIN_EVENT_PUBLISHER');

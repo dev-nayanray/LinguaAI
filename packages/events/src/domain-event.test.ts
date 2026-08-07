@@ -58,6 +58,17 @@ describe('DomainEventPublisher', () => {
     const [, second] = add.mock.calls[1] as [string, { eventId: string }];
     expect(first.eventId).not.toBe(second.eventId);
   });
+
+  it('stamps envelopes with a non-default producedBy when the constructor is given one (E7 T4 — recommendation-engine is the first real non-apps/api producer)', async () => {
+    const add = vi.fn().mockResolvedValue(undefined);
+    const queue = { add } as unknown as import('bullmq').Queue;
+    const publisher = new DomainEventPublisher(queue, 'services/recommendation-engine');
+
+    await publisher.publish('recommendation.daily_goal.ready', { userId: 'u-1', payload: {} });
+
+    const [, envelope] = add.mock.calls[0] as [string, { producedBy: string }];
+    expect(envelope.producedBy).toBe('services/recommendation-engine');
+  });
 });
 
 describe('createDomainEventsQueue', () => {
