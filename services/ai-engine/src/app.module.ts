@@ -1,7 +1,10 @@
 import { type MiddlewareConsumer, Module, type NestModule } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
 import { ObservabilityModule, RequestLoggingMiddleware } from '@linguaai/observability/nestjs';
 
+import { AgentSessionsModule } from './agent-sessions/agent-sessions.module.js';
 import { RegistryModule } from './agents/registry/registry.module.js';
+import { GlobalExceptionFilter } from './common/filters/global-exception.filter.js';
 import { GatewayModule } from './gateway/gateway.module.js';
 import { HealthController } from './health/health.controller.js';
 import { MemoryModule } from './memory/memory.module.js';
@@ -20,8 +23,15 @@ import { SafetyModule } from './safety/safety.module.js';
     RagModule,
     SafetyModule,
     OrchestratorModule,
+    AgentSessionsModule,
   ],
   controllers: [HealthController],
+  providers: [
+    {
+      provide: APP_FILTER,
+      useClass: GlobalExceptionFilter,
+    },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

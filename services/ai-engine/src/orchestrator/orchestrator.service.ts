@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type {
+  AIAgentSession,
   AIMessage,
   AIMessageRole,
   OrchestratorAgentPersona,
@@ -9,7 +10,12 @@ import type {
 import { CircuitBreakerService } from '../cost/circuit-breaker.service.js';
 import { CostMeterService } from '../cost/cost-meter.service.js';
 import { AI_ENGINE_PRISMA_CLIENT } from '../database/database.config.js';
-import type { ChatMessage, ChatRole } from '../gateway/model-provider.interface.js';
+import type {
+  ChatMessage,
+  ChatRole,
+  GenerateRequest,
+  GenerateResponse,
+} from '../gateway/model-provider.interface.js';
 import { RouterService, type ModelTier } from '../gateway/router.service.js';
 import { MemoryManagerService } from '../memory/memory-manager.service.js';
 import type { RetrievedMemory } from '../memory/memory-manager.types.js';
@@ -25,6 +31,7 @@ import type {
   EndSessionInput,
   SendMessageInput,
   SendMessageResult,
+  SendMessageStreamEvent,
   StartSessionInput,
   StartSessionResult,
 } from './orchestrator.types.js';
@@ -104,6 +111,62 @@ export class OrchestratorService {
   }
 
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
+    const { session, request, tier, promptVersion } = await this.prepareGeneration(input);
+    const response = await this.router.generate('teacher', request, tier);
+    return this.finalizeAssistantReply(session, response, promptVersion);
+  }
+
+  /**
+   * ADR-033 (T10): the real, token-by-token backing for the SSE contract's
+   * "session message generation" stream — uses `RouterService.stream()`
+   * end-to-end rather than wrapping a single non-streaming `generate()`
+   * call, matching AI_SYSTEM.md §7/PERFORMANCE.md §2's "streaming at every
+   * hop, not an optional add-on." Shares `prepareGeneration`/
+   * `finalizeAssistantReply` with `sendMessage()` — the circuit-breaker
+   * check, memory/rolling-summary context, safety sanitization, cost
+   * metering, and human-review sampling are identical for both; only the
+   * actual generation call (and how its result is assembled) differs.
+   *
+   * Live-streamed `token` deltas are raw, un-sanitized model output —
+   * `sanitizeOutput()` can only run on the complete text (a `<script>` tag
+   * arriving split across several deltas can't be stripped mid-stream).
+   * This is not a new gap: AI_GOVERNANCE.md §6 already documents the
+   * gateway-level sanitizer as defense-in-depth, with "a renderer-level
+   * sanitizer at render time" as the primary defense — exactly the layer a
+   * streaming UI must apply to live deltas regardless. Only the final
+   * `done` event (and the persisted `AIMessage` row) carries the
+   * sanitized text.
+   */
+  async *streamMessage(input: SendMessageInput): AsyncGenerator<SendMessageStreamEvent> {
+    const { session, request, tier, promptVersion } = await this.prepareGeneration(input);
+
+    let content = '';
+    let usage:
+      Pick<GenerateResponse, 'inputTokens' | 'outputTokens' | 'modelId' | 'latencyMs'> | undefined;
+    for await (const chunk of this.router.stream('teacher', request, tier)) {
+      if (chunk.delta) {
+        content += chunk.delta;
+        yield { type: 'token', delta: chunk.delta };
+      }
+      if (chunk.done) {
+        usage = chunk.usage;
+      }
+    }
+    if (!usage) {
+      throw new Error('Stream ended without usage metadata on its final chunk');
+    }
+
+    const result = await this.finalizeAssistantReply(session, { content, ...usage }, promptVersion);
+    yield { type: 'done', ...result };
+  }
+
+  /** Shared "before generation" setup for both `sendMessage`/`streamMessage` — session validation, user-message write, rolling-summary/memory context, persona prompt, and the ADR-034 circuit-breaker check every Router-invoking call needs. */
+  private async prepareGeneration(input: SendMessageInput): Promise<{
+    session: AIAgentSession;
+    request: Omit<GenerateRequest, 'model'>;
+    tier: ModelTier;
+    promptVersion: string;
+  }> {
     const session = await this.prisma.aIAgentSession.findUniqueOrThrow({
       where: { id: input.sessionId },
     });
@@ -140,16 +203,28 @@ export class OrchestratorService {
       session.orchestratorAgent,
       input.variables,
     );
-
     const tier = await this.resolveTierOrThrow();
-    const response = await this.router.generate(
-      'teacher',
-      {
+
+    return {
+      session,
+      request: {
         systemPrompt: `${personaPrompt}${this.memorySuffixFor(memories)}${summarySuffix}`,
         messages: contextMessages,
       },
       tier,
-    );
+      promptVersion,
+    };
+  }
+
+  /** Shared "after generation" finish — cost metering, output sanitization, the `AIMessage` write, and human-review sampling, identical whether the reply came from `generate()` or was accumulated from `stream()`. */
+  private async finalizeAssistantReply(
+    session: Pick<AIAgentSession, 'id' | 'userId' | 'orchestratorAgent'>,
+    response: Pick<
+      GenerateResponse,
+      'content' | 'inputTokens' | 'outputTokens' | 'modelId' | 'latencyMs'
+    >,
+    promptVersion: string,
+  ): Promise<SendMessageResult> {
     await this.costMeter.recordUsage({
       userId: session.userId,
       agentPersona: session.orchestratorAgent,
@@ -163,7 +238,7 @@ export class OrchestratorService {
 
     const assistantMessage = await this.prisma.aIMessage.create({
       data: {
-        sessionId: input.sessionId,
+        sessionId: session.id,
         role: 'ASSISTANT',
         content: sanitizedContent,
         promptVersion,
@@ -172,7 +247,7 @@ export class OrchestratorService {
       },
     });
     this.safetyLayer.recordSampleForReviewIfDue({
-      sessionId: input.sessionId,
+      sessionId: session.id,
       messageId: assistantMessage.id,
     });
 

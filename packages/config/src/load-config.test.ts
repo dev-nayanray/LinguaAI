@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { ConfigValidationError } from './errors.js';
 import { loadConfig } from './load-config.js';
 import {
+  aiEngineClientEnvSchema,
   aiGatewayEnvSchema,
   appRoleDatabaseEnvSchema,
   databaseEnvSchema,
@@ -107,6 +108,17 @@ describe('loadConfig', () => {
       expect(result.AI_GATEWAY_DEFAULT_PROVIDER).toBe('anthropic');
     });
 
+    it('aiGatewayEnvSchema treats an explicitly blank economy-model env var as not configured, not a validation error', () => {
+      const result = loadConfig(aiGatewayEnvSchema, {
+        ANTHROPIC_API_KEY: 'sk-ant-test',
+        OPENAI_API_KEY: 'sk-oai-test',
+        AI_MODEL_TEACHER_DEFAULT: 'claude-sonnet-5',
+        AI_MODEL_ASSESSMENT_DEFAULT: 'claude-sonnet-5',
+        AI_MODEL_TEACHER_ECONOMY: '',
+      });
+      expect(result.AI_MODEL_TEACHER_ECONOMY).toBeUndefined();
+    });
+
     it('aiGatewayEnvSchema rejects an unrecognized provider value', () => {
       expect(() =>
         loadConfig(aiGatewayEnvSchema, {
@@ -117,6 +129,15 @@ describe('loadConfig', () => {
           AI_MODEL_ASSESSMENT_DEFAULT: 'claude-sonnet-5',
         }),
       ).toThrow(ConfigValidationError);
+    });
+
+    it('aiEngineClientEnvSchema requires a valid AI_ENGINE_URL', () => {
+      expect(() => loadConfig(aiEngineClientEnvSchema, {})).toThrow(/AI_ENGINE_URL/);
+
+      const result = loadConfig(aiEngineClientEnvSchema, {
+        AI_ENGINE_URL: 'http://localhost:4001',
+      });
+      expect(result.AI_ENGINE_URL).toBe('http://localhost:4001');
     });
 
     it('fragments merge together into one composite schema, as a consuming app would', () => {

@@ -68,6 +68,7 @@ jobs:
           ADMIN_URL=http://localhost:3001
           NEXT_PUBLIC_API_URL=http://localhost:4000
           DATABASE_URL=postgresql://linguaai:linguaai_dev_password@localhost:5432/linguaai
+          AI_ENGINE_URL=http://localhost:4001
           POSTGRES_USER=linguaai
           POSTGRES_PASSWORD=linguaai_dev_password
           POSTGRES_DB=linguaai

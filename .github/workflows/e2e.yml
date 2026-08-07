@@ -16,6 +16,7 @@ concurrency:
 env:
   DATABASE_URL: postgresql://linguaai:linguaai_dev_password@localhost:5432/linguaai
   REDIS_URL: redis://localhost:6379
+  AI_ENGINE_URL: http://localhost:4001
 
 jobs:
   e2e:

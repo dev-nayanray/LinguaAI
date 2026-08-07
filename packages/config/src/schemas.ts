@@ -163,6 +163,20 @@ export const aiGatewayEnvSchema = z.object({
 });
 export type AiGatewayEnv = z.infer<typeof aiGatewayEnvSchema>;
 
+/**
+ * Consumed by `apps/api`'s `AiEngineClientModule` (E5 T10, ADR-033) — the
+ * base URL of the `ai-engine` service this client calls internally.
+ * `.env.example` already declares `AI_ENGINE_URL` (E1 Part 7, alongside
+ * every other `services/*` URL) but no consumer validated it as a schema
+ * fragment until this task actually needed to call it — the same "not
+ * scaffolded speculatively ahead of need" convention `aiGatewayEnvSchema`'s
+ * own header comment documents.
+ */
+export const aiEngineClientEnvSchema = z.object({
+  AI_ENGINE_URL: z.string().url(),
+});
+export type AiEngineClientEnv = z.infer<typeof aiEngineClientEnvSchema>;
+
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
 export type ServerUrlEnv = z.infer<typeof serverUrlEnvSchema>;
 export type DatabaseEnv = z.infer<typeof databaseEnvSchema>;

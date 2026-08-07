@@ -2,7 +2,7 @@ import type { AIAgentSession, AIMessage, PrismaClient } from '@linguaai/database
 
 import type { CircuitBreakerService } from '../cost/circuit-breaker.service.js';
 import type { CostMeterService } from '../cost/cost-meter.service.js';
-import type { GenerateResponse } from '../gateway/model-provider.interface.js';
+import type { GenerateResponse, StreamChunk } from '../gateway/model-provider.interface.js';
 import type { RouterService } from '../gateway/router.service.js';
 import type { MemoryManagerService } from '../memory/memory-manager.service.js';
 import type { RetrievedMemory } from '../memory/memory-manager.types.js';
@@ -77,8 +77,20 @@ function fakePrisma(overrides: { session?: Partial<AIAgentSession>; messages?: A
   };
 }
 
-function fakeRouter(): jest.Mocked<Pick<RouterService, 'generate'>> {
-  return { generate: jest.fn() };
+function fakeRouter(): jest.Mocked<Pick<RouterService, 'generate' | 'stream'>> {
+  return { generate: jest.fn(), stream: jest.fn() };
+}
+
+async function* fakeStream(chunks: StreamChunk[]): AsyncIterable<StreamChunk> {
+  for (const chunk of chunks) yield chunk;
+}
+
+async function collectStream<T>(iterable: AsyncIterable<T>): Promise<T[]> {
+  const result: T[] = [];
+  for await (const item of iterable) {
+    result.push(item);
+  }
+  return result;
 }
 
 function fakePromptManager(): jest.Mocked<Pick<PromptManagerService, 'getSystemPrompt'>> {
@@ -663,6 +675,212 @@ describe('OrchestratorService', () => {
         outputTokens: 30,
         latencyMs: 42,
       });
+    });
+  });
+
+  describe('streamMessage (T10, ADR-033)', () => {
+    it('yields a token event per delta, then exactly one done event with the accumulated, sanitized text', async () => {
+      const prisma = fakePrisma({
+        session: { orchestratorAgent: 'EXAM_COACH' },
+        messages: buildMessages(1),
+      });
+      const router = fakeRouter();
+      router.stream.mockReturnValue(
+        fakeStream([
+          { delta: 'hel', done: false },
+          { delta: 'lo', done: false },
+          {
+            delta: '',
+            done: true,
+            usage: {
+              inputTokens: 12,
+              outputTokens: 6,
+              modelId: 'claude-teacher-model',
+              latencyMs: 55,
+            },
+          },
+        ]),
+      );
+      const promptManager = fakePromptManager();
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        promptManager as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      const events = await collectStream(
+        service.streamMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} }),
+      );
+
+      expect(events).toEqual([
+        { type: 'token', delta: 'hel' },
+        { type: 'token', delta: 'lo' },
+        {
+          type: 'done',
+          assistantMessage: 'hello',
+          promptVersion: 'v1',
+          modelId: 'claude-teacher-model',
+        },
+      ]);
+      expect(prisma.aIMessage.create).toHaveBeenNthCalledWith(2, {
+        data: {
+          sessionId: 'session-1',
+          role: 'ASSISTANT',
+          content: 'hello',
+          promptVersion: 'v1',
+          modelId: 'claude-teacher-model',
+          latencyMs: 55,
+        },
+      });
+    });
+
+    it('checks the circuit breaker before streaming and passes tier="economy" on DEGRADE, same as sendMessage', async () => {
+      const prisma = fakePrisma({ messages: buildMessages(1) });
+      const router = fakeRouter();
+      router.stream.mockReturnValue(
+        fakeStream([
+          {
+            delta: 'hi',
+            done: true,
+            usage: {
+              inputTokens: 1,
+              outputTokens: 1,
+              modelId: 'claude-teacher-model',
+              latencyMs: 1,
+            },
+          },
+        ]),
+      );
+      const circuitBreaker = { checkBreachState: jest.fn().mockResolvedValue('DEGRADE') };
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        circuitBreaker as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await collectStream(
+        service.streamMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} }),
+      );
+
+      expect(router.stream).toHaveBeenCalledWith('teacher', expect.anything(), 'economy');
+    });
+
+    it('throws before ever calling the Router when the circuit breaker reports HARD_STOP', async () => {
+      const prisma = fakePrisma({ messages: buildMessages(1) });
+      const router = fakeRouter();
+      const circuitBreaker = { checkBreachState: jest.fn().mockResolvedValue('HARD_STOP') };
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        circuitBreaker as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await expect(
+        collectStream(
+          service.streamMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} }),
+        ),
+      ).rejects.toThrow('cost circuit breaker threshold');
+      expect(router.stream).not.toHaveBeenCalled();
+    });
+
+    it('records cost usage and human-review sampling exactly once, after the stream completes', async () => {
+      const prisma = fakePrisma({ messages: buildMessages(1) });
+      prisma.aIMessage.create
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ id: 'assistant-msg-77' });
+      const router = fakeRouter();
+      router.stream.mockReturnValue(
+        fakeStream([
+          {
+            delta: 'reply',
+            done: true,
+            usage: {
+              inputTokens: 3,
+              outputTokens: 4,
+              modelId: 'claude-teacher-model',
+              latencyMs: 9,
+            },
+          },
+        ]),
+      );
+      const costMeter = fakeCostMeter();
+      const safetyLayer = {
+        delimitUntrustedContent: jest.fn((_label: string, text: string) => text),
+        sanitizeOutput: jest.fn((text: string) => text),
+        resolveAgeBracket: jest.fn(),
+        recordSampleForReviewIfDue: jest.fn(),
+      } as unknown as SafetyLayerService;
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        safetyLayer,
+        new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        costMeter as unknown as CostMeterService,
+      );
+
+      await collectStream(
+        service.streamMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} }),
+      );
+
+      expect(costMeter.recordUsage).toHaveBeenCalledTimes(1);
+      expect(costMeter.recordUsage).toHaveBeenCalledWith({
+        userId: 'user-1',
+        agentPersona: 'CONVERSATION_PARTNER',
+        modelId: 'claude-teacher-model',
+        promptVersion: 'v1',
+        inputTokens: 3,
+        outputTokens: 4,
+        latencyMs: 9,
+      });
+      expect(safetyLayer.recordSampleForReviewIfDue).toHaveBeenCalledWith({
+        sessionId: 'session-1',
+        messageId: 'assistant-msg-77',
+      });
+    });
+
+    it('throws a clear error if the stream ends without a final usage-bearing chunk', async () => {
+      const prisma = fakePrisma({ messages: buildMessages(1) });
+      const router = fakeRouter();
+      router.stream.mockReturnValue(fakeStream([{ delta: 'partial', done: false }]));
+
+      const service = new OrchestratorService(
+        prisma,
+        router as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await expect(
+        collectStream(
+          service.streamMessage({ sessionId: 'session-1', userMessage: 'hi', variables: {} }),
+        ),
+      ).rejects.toThrow('Stream ended without usage metadata');
     });
   });
 });

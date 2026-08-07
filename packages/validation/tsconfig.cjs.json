@@ -14,7 +14,8 @@
     // type-check it, so this "paths" override only needs to satisfy tsc,
     // pointing it straight at the sibling package's own CJS output.
     "paths": {
-      "@linguaai/types/identity": ["../types/dist-cjs/identity/index.d.ts"]
+      "@linguaai/types/identity": ["../types/dist-cjs/identity/index.d.ts"],
+      "@linguaai/types/ai-coaching": ["../types/dist-cjs/ai-coaching/index.d.ts"]
     }
   }
 }
