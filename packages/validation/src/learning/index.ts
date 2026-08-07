@@ -295,3 +295,45 @@ export const dailyGoalResponseSchema = z.object({
 });
 assertExtends<DailyGoal, z.infer<typeof dailyGoalResponseSchema>>();
 export type DailyGoalResponse = z.infer<typeof dailyGoalResponseSchema>;
+
+// --- Domain event payloads (EVENT_ARCHITECTURE.md §3) — E8 T3, §6.3 ---
+
+/**
+ * The real payload shape `ExerciseAttemptsService.submitAttempt()`
+ * (`apps/api/src/modules/course/`) publishes for `learning.exercise.answered`
+ * on every scored `ExerciseAttempt` — closing §3.2 of the E8 design doc's
+ * own found gap (this event was already cataloged, Producer "`apps/api`",
+ * but had never had a real producer until this task). Lives here, not
+ * `apps/api`-local, matching `assessmentAttemptCompletedPayloadSchema`'s
+ * own precedent: `recommendation-engine`/`analytics-service` (this event's
+ * real cataloged consumers) cannot import from `apps/*` (ADR-015).
+ */
+export const learningExerciseAnsweredPayloadSchema = z.object({
+  userId: z.string().uuid(),
+  exerciseId: z.string().uuid(),
+  correct: z.boolean(),
+});
+export type LearningExerciseAnsweredPayload = z.infer<typeof learningExerciseAnsweredPayloadSchema>;
+
+/**
+ * The real payload shape `ExerciseAttemptsService` publishes for
+ * `learning.lesson.completed` — the moment every attemptable `Exercise` in
+ * a `Lesson`'s own `Activity` set has at least one attempt on record for a
+ * user (E8 design doc §6.3/§10 open question #2, resolved here). `score`
+ * is a real, documented, provisional formula, not silently invented: the
+ * *most recent* attempt's own `score` per exercise, averaged across every
+ * exercise in the lesson — chosen over "average of all attempts" so a
+ * learner who initially struggled but ultimately answered correctly gets
+ * credit for their current understanding, not penalized for practicing.
+ * `SPEAKING_PROMPT` exercises are excluded from both the completion check
+ * and this average — they can never be attempted at all in this epic's own
+ * scope (§1, rejected 422 until `services/speech-service`, E10), so
+ * requiring one would make any lesson containing one permanently
+ * uncompletable.
+ */
+export const learningLessonCompletedPayloadSchema = z.object({
+  userId: z.string().uuid(),
+  lessonId: z.string().uuid(),
+  score: z.number().min(0).max(1),
+});
+export type LearningLessonCompletedPayload = z.infer<typeof learningLessonCompletedPayloadSchema>;

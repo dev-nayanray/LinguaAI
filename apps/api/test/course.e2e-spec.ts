@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { getPrismaClient } from '@linguaai/database';
+import { createDomainEventsQueue, type DomainEvent } from '@linguaai/events';
 import cookieParser from 'cookie-parser';
+import type { Job } from 'bullmq';
 import { authenticator } from 'otplib';
 import request from 'supertest';
 
@@ -30,6 +32,7 @@ describe('CourseModule (e2e)', () => {
   const createdUserIds: string[] = [];
   const createdLanguageIds: string[] = [];
   const createdCourseIds: string[] = [];
+  let inspectorQueue: ReturnType<typeof createDomainEventsQueue>;
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
@@ -39,7 +42,43 @@ describe('CourseModule (e2e)', () => {
     app.use(cookieParser());
     app.setGlobalPrefix('v1', { exclude: ['health'] });
     await app.init();
+
+    const redisUrl = process.env.REDIS_URL;
+    if (!redisUrl) {
+      throw new Error('REDIS_URL is not set — this suite requires a real Redis instance.');
+    }
+    inspectorQueue = createDomainEventsQueue(redisUrl);
   });
+
+  /**
+   * Polls the real `domain-events` queue for a job matching `type`/`userId`
+   * (E8 T3, §6.3) — `domain-events.e2e-spec.ts`'s own doc comment already
+   * establishes the platform's deliberate scoping: one real-Redis proof of
+   * the underlying publish mechanism is enough, not one per event. This
+   * suite reuses that same real queue *not* to re-prove the transport, but
+   * to prove this task's own new query logic (completion detection, score
+   * aggregation) against real Postgres data actually produces the right
+   * event at the right moment — the class of bug a Prisma-mocked unit test
+   * can't catch (nested `where` shape, `distinct` behavior).
+   */
+  async function findPublishedJob(
+    type: string,
+    userId: string,
+    timeoutMs = 5000,
+  ): Promise<Job<DomainEvent> | undefined> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const jobs = await inspectorQueue.getJobs(['waiting', 'active', 'completed']);
+      const match = jobs.find(
+        (job) => job.name === type && (job.data as DomainEvent).userId === userId,
+      );
+      if (match) {
+        return match as Job<DomainEvent>;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return undefined;
+  }
 
   /** Bottom-up cascade delete — Course/Level/Unit carry no onDelete: Cascade on their own parent FK (content.prisma), so cleanup must walk the tree itself, deepest-first, the same discipline assessment.e2e-spec.ts's own per-language cleanup already established. */
   async function cleanupCourse(courseId: string): Promise<void> {
@@ -89,6 +128,9 @@ describe('CourseModule (e2e)', () => {
       await setupPrisma.language.deleteMany({ where: { id: { in: createdLanguageIds } } });
     }
     await setupPrisma.$disconnect();
+    if (inspectorQueue) {
+      await inspectorQueue.close();
+    }
     if (app) {
       await app.close();
     }
@@ -642,6 +684,95 @@ describe('CourseModule (e2e)', () => {
         .set('Authorization', `Bearer ${learner.accessToken}`)
         .send({ response: { selectedIndex: 0 } });
       expect(res.status).toBe(404);
+    }, 30000);
+  });
+
+  describe('domain event emission (E8 T3, §6.3)', () => {
+    it('publishes a real learning.exercise.answered job on every attempt, and learning.lesson.completed only once every exercise has been attempted', async () => {
+      const { exerciseIds } = await authorAndPublishCourse();
+      const learner = await freshSession();
+      const auth = (req: request.Test) => req.set('Authorization', `Bearer ${learner.accessToken}`);
+
+      const firstAttemptRes = await auth(
+        request(app.getHttpServer()).post(`/v1/exercises/${exerciseIds.MULTIPLE_CHOICE}/attempts`),
+      ).send({ response: { selectedIndex: 0 } });
+      expect(firstAttemptRes.status).toBe(201);
+
+      const answeredJob = await findPublishedJob('learning.exercise.answered', learner.userId);
+      expect(answeredJob?.data).toEqual(
+        expect.objectContaining({
+          type: 'learning.exercise.answered',
+          producedBy: 'apps/api',
+          userId: learner.userId,
+          payload: {
+            userId: learner.userId,
+            exerciseId: exerciseIds.MULTIPLE_CHOICE,
+            correct: true,
+          },
+        }),
+      );
+
+      // Only one of the lesson's five attemptable exercises has been
+      // attempted so far — the lesson must not be reported complete yet.
+      const tooEarly = await findPublishedJob('learning.lesson.completed', learner.userId, 500);
+      expect(tooEarly).toBeUndefined();
+
+      // Attempt the remaining four attemptable exercises (SPEAKING_PROMPT
+      // is deliberately never attempted — §1's own scope exclusion — and
+      // must not block completion).
+      await auth(
+        request(app.getHttpServer()).post(`/v1/exercises/${exerciseIds.FILL_BLANK}/attempts`),
+      ).send({ response: { text: 'Hola' } });
+      await auth(
+        request(app.getHttpServer()).post(`/v1/exercises/${exerciseIds.TRANSLATION}/attempts`),
+      ).send({ response: { text: 'Adios' } });
+      await auth(
+        request(app.getHttpServer()).post(`/v1/exercises/${exerciseIds.MATCHING}/attempts`),
+      ).send({
+        response: {
+          matches: [
+            { left: 'Hola', right: 'Hello' },
+            { left: 'Adios', right: 'Goodbye' },
+          ],
+        },
+      });
+      await auth(
+        request(app.getHttpServer()).post(
+          `/v1/exercises/${exerciseIds.LISTENING_COMPREHENSION}/attempts`,
+        ),
+      ).send({ response: { selectedIndex: 1 } });
+
+      const completedJob = await findPublishedJob('learning.lesson.completed', learner.userId);
+      expect(completedJob?.data).toEqual(
+        expect.objectContaining({
+          type: 'learning.lesson.completed',
+          producedBy: 'apps/api',
+          userId: learner.userId,
+          payload: expect.objectContaining({ userId: learner.userId, score: 1 }) as unknown,
+        }),
+      );
+
+      // Re-attempting an already-completed exercise must not publish a
+      // second, redundant learning.lesson.completed.
+      const jobsBeforeReattempt = (
+        await inspectorQueue.getJobs(['waiting', 'active', 'completed'])
+      ).filter(
+        (j) =>
+          j.name === 'learning.lesson.completed' &&
+          (j.data as DomainEvent).userId === learner.userId,
+      ).length;
+      await auth(
+        request(app.getHttpServer()).post(`/v1/exercises/${exerciseIds.MULTIPLE_CHOICE}/attempts`),
+      ).send({ response: { selectedIndex: 0 } });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const jobsAfterReattempt = (
+        await inspectorQueue.getJobs(['waiting', 'active', 'completed'])
+      ).filter(
+        (j) =>
+          j.name === 'learning.lesson.completed' &&
+          (j.data as DomainEvent).userId === learner.userId,
+      ).length;
+      expect(jobsAfterReattempt).toBe(jobsBeforeReattempt);
     }, 30000);
   });
 });
