@@ -1,6 +1,75 @@
-// Learning bounded context (ARCHITECTURE.md §2.1). Intentionally empty at
-// E1 — domain types (Course, Lesson, Exercise, Progress, ...) land here
-// starting Epic E2. This file exists so the @linguaai/types/learning
-// subpath resolves via the package's real "exports" map (T7 acceptance
-// criteria).
-export {};
+// Learning bounded context (ARCHITECTURE.md §2.1). First real content
+// (E6-T2): Assessment entities, mirroring assessment.prisma field-for-field
+// (E4-T3's schema, E6-T1's AssessmentItem addition). Zod schemas in
+// @linguaai/validation/learning import the runtime enum arrays below rather
+// than redefining them, same dependency direction as the identity context.
+//
+// Timestamps are typed `string` (ISO 8601) — these are wire/domain types
+// consumed across the API boundary, not Prisma's own generated types
+// (packages/database), which use `Date`.
+
+export const SKILLS = [
+  'READING',
+  'WRITING',
+  'LISTENING',
+  'SPEAKING',
+  'VOCABULARY',
+  'GRAMMAR',
+] as const;
+export type Skill = (typeof SKILLS)[number];
+
+/** Not yet defined anywhere else in packages/types (module 5/Course Management, E8, hasn't landed) — defined here since AssessmentItem/AssessmentAttempt need it now. Whichever epic adds Course/Level types first should reuse this, not redefine it. */
+export const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const;
+export type CefrLevel = (typeof CEFR_LEVELS)[number];
+
+export const ASSESSMENT_TYPES = ['PLACEMENT', 'REASSESSMENT'] as const;
+export type AssessmentType = (typeof ASSESSMENT_TYPES)[number];
+
+export const ASSESSMENT_STATUSES = ['IN_PROGRESS', 'COMPLETED', 'ABANDONED'] as const;
+export type AssessmentStatus = (typeof ASSESSMENT_STATUSES)[number];
+
+export const ASSESSMENT_ITEM_TYPES = ['MULTIPLE_CHOICE', 'FILL_IN_BLANK', 'OPEN_RESPONSE'] as const;
+export type AssessmentItemType = (typeof ASSESSMENT_ITEM_TYPES)[number];
+
+export interface AssessmentAttempt {
+  id: string;
+  userId: string;
+  languageId: string;
+  type: AssessmentType;
+  status: AssessmentStatus;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+/**
+ * The full backend-truth shape, including `correctAnswer` — the answer key.
+ * Never send this type's value directly to a client taking the assessment
+ * (E6 design doc §6.3's own scoring-integrity bar). `AssessmentItemPublicView`
+ * (@linguaai/validation/learning) is the wire-safe subset served during an
+ * attempt; this type is not itself wire-safe.
+ */
+export interface AssessmentItem {
+  id: string;
+  languageId: string;
+  skill: Skill;
+  cefrLevel: CefrLevel;
+  difficulty: number;
+  prompt: string;
+  audioUrl: string | null;
+  correctAnswer: unknown;
+  itemType: AssessmentItemType;
+  isActive: boolean;
+}
+
+export interface AssessmentResponse {
+  id: string;
+  attemptId: string;
+  itemId: string | null;
+  skill: Skill;
+  prompt: string;
+  /** Always a plain object (`{ selectedIndex }`, `{ text }`, ...) — "structured, never raw HTML" (same discipline as Exercise.correctAnswer), never a bare primitive. */
+  response: Record<string, unknown>;
+  isCorrect: boolean | null;
+  score: number | null;
+  createdAt: string;
+}

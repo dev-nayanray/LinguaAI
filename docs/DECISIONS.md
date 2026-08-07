@@ -367,48 +367,59 @@ Format: Context → Decision → Consequences → Status.
 **Reversibility:** Medium — a real content table; once real seed/production content exists, changing its shape is a real migration with real data to carry forward, the same class of cost every other schema change in this platform already documents honestly.
 **Status:** Accepted (2026-08-07) — implemented in E6 T1, by explicit user direction to proceed past the design phase, the same distinction E4/E5's own status lines draw.
 
+### ADR-038 — Adaptive item-selection algorithm lives in `apps/api`'s own Assessment module, not `recommendation-engine`
+
+**Context:** E6 design doc §3.3 found a real bounded-context ambiguity: ARCHITECTURE.md §2.1's own table lists "Assessment" as hosted in both `apps/api` and `recommendation-engine`, but EVENT_ARCHITECTURE.md's already-cataloged `assessment.attempt.completed` row names only `apps/api` as producer. `recommendation-engine` remains an unclaimed, empty E1 skeleton (confirmed by direct inspection) and is not a listed E6 dependency (ROADMAP.md). Per ARCHITECTURE.md §2.1's own service-boundary rule ("`recommendation-engine` owns deterministic/algorithmic decisions... not require a generative model call"), the algorithm could legitimately live in either place.
+**Decision:** The adaptive difficulty-stepping algorithm (E6 design doc §6.2) is implemented as `AdaptiveItemSelectionService`, a pure, stateless class inside `apps/api/src/modules/assessment/` — it takes a skill's candidate `AssessmentItem` rows and this attempt's prior responses for that skill as plain inputs and returns a selection decision; it performs no I/O itself (`AssessmentService` does the Prisma reads/writes and calls it). **Real, load-bearing detail decided during implementation, not fully specified by the design doc's own §6.2 text:** the seed item bank (E6 T1) is intentionally sparse (13 items spanning only A1/B1/C1, not all six CEFR bands) — a strict "select from the current band only" rule would dead-end the moment the running target steps into an unseeded band (e.g. A2, B2, C2). The selector therefore falls back to the nearest CEFR band (by band-index distance, either direction) that has an unserved item for that skill when the exact target band is empty, before concluding the skill has run out of content — this is a defensive extension the design doc didn't anticipate, needed because the algorithm must work against T1's real, deliberately-small seed data, not a hypothetical fully-populated bank. Skill serving order for this task is fixed: `READING`, `LISTENING`, `VOCABULARY`, `GRAMMAR` (E6 design doc §1's own listed order) — `WRITING` is deliberately excluded from T2's item-serving sequence (see this ADR's Consequences) and `SPEAKING` is out of scope entirely (§3.2).
+**Alternatives considered:** Building the algorithm as real code inside `recommendation-engine` (rejected for this epic specifically, not forever — stands up a second, entirely empty service's first-ever real code inside an epic with no other reason to touch it, when a self-contained, relocatable service class inside `apps/api` satisfies every current requirement); a full item-response-theory (IRT) calibrated model (rejected — needs real attempt-outcome data this platform doesn't have yet, a cold-start problem; the simplified difficulty-stepping approach is a real, working, honestly-flagged interim, matching this platform's other provisional-parameter precedents, e.g. ADR-034's cost thresholds).
+**Consequences:** `AssessmentService`'s `submitResponse` only serves `WRITING`-skill items once E6 T4/T5 land real AI scoring — serving one now with no way to score it would leave an attempt permanently unable to reach `COMPLETED` for that skill. `AssessmentModule`'s own `completeAttempt` therefore only requires the four objective skills' stop conditions to be met, not `WRITING`; wiring `WRITING` into the same lifecycle is real, tracked follow-up work for T4/T5, not silently deferred. If a future Architecture Gate review disagrees with this ADR's placement, `AdaptiveItemSelectionService`'s pure, I/O-free design makes relocating it to `recommendation-engine` a self-contained move, the same "designed to be relocatable" precedent ADR-035 already used.
+**Security implications:** None beyond ordinary per-request authorization (an attempt's own owner only, enforced in `AssessmentService`, 404 not 403 on mismatch — API_GUIDELINES.md §3's no-existence-leak rule).
+**Reversibility:** High — a pure service class with no `apps/api`-specific dependency; relocating it later is low-cost.
+**Status:** Accepted (2026-08-07) — implemented in E6 T2, by explicit user direction to proceed past the design phase, the same distinction E4/E5/E6-T1's own status lines draw.
+
 ---
 
 ## ADR index
 
-| ID      | Title                                                                              | Status   |
-| ------- | ---------------------------------------------------------------------------------- | -------- |
-| ADR-001 | Turborepo + pnpm monorepo                                                          | Accepted |
-| ADR-002 | Modular monolith + targeted microservices                                          | Accepted |
-| ADR-003 | REST over GraphQL                                                                  | Accepted |
-| ADR-004 | pgvector for MVP vector search                                                     | Accepted |
-| ADR-005 | Postgres RLS for tenant isolation                                                  | Accepted |
-| ADR-006 | AI Gateway pattern                                                                 | Accepted |
-| ADR-007 | Single Orchestrator + tool-calling agent handoff                                   | Accepted |
-| ADR-008 | RAG grounding required for factual AI output                                       | Accepted |
-| ADR-009 | ECS Fargate over Kubernetes                                                        | Accepted |
-| ADR-010 | Domain events over point-to-point queues                                           | Accepted |
-| ADR-011 | Mandatory MFA for privileged roles                                                 | Accepted |
-| ADR-012 | Platform-level AI cost circuit breaker                                             | Accepted |
-| ADR-013 | Family plan descoped from MVP                                                      | Accepted |
-| ADR-014 | Split test runner: Jest (NestJS) / Vitest (elsewhere)                              | Accepted |
-| ADR-015 | Dependency-boundary enforcement via ESLint                                         | Accepted |
-| ADR-016 | Observability stack: OTel + CloudWatch + X-Ray (ADOT) + Sentry + local Jaeger      | Accepted |
-| ADR-017 | Container supply chain: Syft + Trivy + cosign + GitHub attestation                 | Accepted |
-| ADR-018 | JWT Bearer access token + rotating refresh token, `jti` denylist                   | Accepted |
-| ADR-019 | TOTP as mandatory MFA mechanism for privileged roles                               | Accepted |
-| ADR-020 | OAuth provider set at MVP: Google + Apple only                                     | Accepted |
-| ADR-021 | Two-person approval for `ADMIN` role grants/revocations                            | Accepted |
-| ADR-022 | Narrow `BYPASSRLS` service role for cross-tenant operations                        | Accepted |
-| ADR-023 | Privileged-column protection: `REVOKE`/`GRANT` + `SECURITY DEFINER`                | Accepted |
-| ADR-024 | Flutter design-token export: build-only, never-committed artifact                  | Proposed |
-| ADR-025 | `lucide-react` as the v1 icon library                                              | Accepted |
-| ADR-026 | Storybook access control: CloudFront Function + KeyValueStore                      | Proposed |
-| ADR-027 | Prisma multi-file schema composition (`prismaSchemaFolder`)                        | Accepted |
-| ADR-028 | `pg_partman` for time-based partition maintenance                                  | Accepted |
-| ADR-029 | `AIMessage.content` field-level encryption via a Prisma Client Extension           | Accepted |
-| ADR-030 | Cross-domain FKs must be real Prisma `@relation`s, not plain scalars               | Accepted |
-| ADR-031 | Pin AI embedding model to OpenAI `text-embedding-3-small` (1536-dim)               | Accepted |
-| ADR-032 | Specialist trigger-condition catalog + tool-registry versioning scheme             | Accepted |
-| ADR-033 | `apps/api`↔`ai-engine` contract: REST + `@nestjs/swagger`, SSE streaming           | Proposed |
-| ADR-034 | AI cost circuit breaker: Redis sliding-window counter, 3-stage breach ladder       | Proposed |
-| ADR-035 | `AIMessage`/partitioned-table maintenance: BullMQ job inside `ai-engine`           | Proposed |
-| ADR-036 | `services/*` microservices connect to Postgres as `app_role`, never `DATABASE_URL` | Accepted |
-| ADR-037 | New curated `AssessmentItem` model backs the placement test (E6 T1)                | Accepted |
+| ID      | Title                                                                                      | Status   |
+| ------- | ------------------------------------------------------------------------------------------ | -------- |
+| ADR-001 | Turborepo + pnpm monorepo                                                                  | Accepted |
+| ADR-002 | Modular monolith + targeted microservices                                                  | Accepted |
+| ADR-003 | REST over GraphQL                                                                          | Accepted |
+| ADR-004 | pgvector for MVP vector search                                                             | Accepted |
+| ADR-005 | Postgres RLS for tenant isolation                                                          | Accepted |
+| ADR-006 | AI Gateway pattern                                                                         | Accepted |
+| ADR-007 | Single Orchestrator + tool-calling agent handoff                                           | Accepted |
+| ADR-008 | RAG grounding required for factual AI output                                               | Accepted |
+| ADR-009 | ECS Fargate over Kubernetes                                                                | Accepted |
+| ADR-010 | Domain events over point-to-point queues                                                   | Accepted |
+| ADR-011 | Mandatory MFA for privileged roles                                                         | Accepted |
+| ADR-012 | Platform-level AI cost circuit breaker                                                     | Accepted |
+| ADR-013 | Family plan descoped from MVP                                                              | Accepted |
+| ADR-014 | Split test runner: Jest (NestJS) / Vitest (elsewhere)                                      | Accepted |
+| ADR-015 | Dependency-boundary enforcement via ESLint                                                 | Accepted |
+| ADR-016 | Observability stack: OTel + CloudWatch + X-Ray (ADOT) + Sentry + local Jaeger              | Accepted |
+| ADR-017 | Container supply chain: Syft + Trivy + cosign + GitHub attestation                         | Accepted |
+| ADR-018 | JWT Bearer access token + rotating refresh token, `jti` denylist                           | Accepted |
+| ADR-019 | TOTP as mandatory MFA mechanism for privileged roles                                       | Accepted |
+| ADR-020 | OAuth provider set at MVP: Google + Apple only                                             | Accepted |
+| ADR-021 | Two-person approval for `ADMIN` role grants/revocations                                    | Accepted |
+| ADR-022 | Narrow `BYPASSRLS` service role for cross-tenant operations                                | Accepted |
+| ADR-023 | Privileged-column protection: `REVOKE`/`GRANT` + `SECURITY DEFINER`                        | Accepted |
+| ADR-024 | Flutter design-token export: build-only, never-committed artifact                          | Proposed |
+| ADR-025 | `lucide-react` as the v1 icon library                                                      | Accepted |
+| ADR-026 | Storybook access control: CloudFront Function + KeyValueStore                              | Proposed |
+| ADR-027 | Prisma multi-file schema composition (`prismaSchemaFolder`)                                | Accepted |
+| ADR-028 | `pg_partman` for time-based partition maintenance                                          | Accepted |
+| ADR-029 | `AIMessage.content` field-level encryption via a Prisma Client Extension                   | Accepted |
+| ADR-030 | Cross-domain FKs must be real Prisma `@relation`s, not plain scalars                       | Accepted |
+| ADR-031 | Pin AI embedding model to OpenAI `text-embedding-3-small` (1536-dim)                       | Accepted |
+| ADR-032 | Specialist trigger-condition catalog + tool-registry versioning scheme                     | Accepted |
+| ADR-033 | `apps/api`↔`ai-engine` contract: REST + `@nestjs/swagger`, SSE streaming                   | Proposed |
+| ADR-034 | AI cost circuit breaker: Redis sliding-window counter, 3-stage breach ladder               | Proposed |
+| ADR-035 | `AIMessage`/partitioned-table maintenance: BullMQ job inside `ai-engine`                   | Proposed |
+| ADR-036 | `services/*` microservices connect to Postgres as `app_role`, never `DATABASE_URL`         | Accepted |
+| ADR-037 | New curated `AssessmentItem` model backs the placement test (E6 T1)                        | Accepted |
+| ADR-038 | Adaptive item-selection algorithm lives in `apps/api`, not `recommendation-engine` (E6 T2) | Accepted |
 
 New ADRs are appended, never renumbered or rewritten in place.
