@@ -172,3 +172,36 @@ export const completeAssessmentAttemptResponseSchema = z.object({
 export type CompleteAssessmentAttemptResponse = z.infer<
   typeof completeAssessmentAttemptResponseSchema
 >;
+
+// --- Domain event payloads (EVENT_ARCHITECTURE.md §3) ---
+
+/**
+ * The real payload shape `AssessmentService.completeAttempt()` publishes
+ * for `assessment.attempt.completed` (E6-T6). Moved here from
+ * `apps/api/src/modules/assessment/assessment-events.ts` (E7-T2) — a
+ * consumer outside `apps/api` (`recommendation-engine`, `EVENT_ARCHITECTURE.md`'s
+ * own already-cataloged consumer) cannot import from `apps/*` (ADR-015's
+ * module-boundary rule), so this schema has to live in a shared package
+ * either way; `@linguaai/validation` is the same single-source-of-truth
+ * location every other wire-contract schema in this bounded context
+ * already uses. The producer (`apps/api`) and every consumer import the
+ * exact same schema — the same "one schema, not a hand-copied duplicate
+ * that could silently drift" discipline `event-catalog-conformance.spec.ts`
+ * (E6-T6) already established.
+ */
+export const assessmentAttemptCompletedSkillResultSchema = z.object({
+  skill: skillSchema,
+  cefrLevel: cefrLevelSchema,
+  confidence: z.number().min(0).max(1),
+  lowConfidence: z.boolean(),
+});
+
+export const assessmentAttemptCompletedPayloadSchema = z.object({
+  attemptId: z.string().uuid(),
+  languageId: z.string().uuid(),
+  type: assessmentTypeSchema,
+  skillResults: z.array(assessmentAttemptCompletedSkillResultSchema),
+});
+export type AssessmentAttemptCompletedPayload = z.infer<
+  typeof assessmentAttemptCompletedPayloadSchema
+>;

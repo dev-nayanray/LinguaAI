@@ -14,13 +14,14 @@ import type {
   PrismaClient,
   Skill,
 } from '@linguaai/database';
-import type {
-  AssessmentItemPublicView,
-  CompleteAssessmentAttemptResponse,
-  StartAssessmentAttemptRequest,
-  StartAssessmentAttemptResponse,
-  SubmitAssessmentResponseRequest,
-  SubmitAssessmentResponseResponse,
+import {
+  assessmentAttemptCompletedPayloadSchema,
+  type AssessmentItemPublicView,
+  type CompleteAssessmentAttemptResponse,
+  type StartAssessmentAttemptRequest,
+  type StartAssessmentAttemptResponse,
+  type SubmitAssessmentResponseRequest,
+  type SubmitAssessmentResponseResponse,
 } from '@linguaai/validation/learning';
 
 import { APP_PRISMA_CLIENT } from '../../database/index.js';
@@ -31,7 +32,6 @@ import {
   AdaptiveItemSelectionService,
   type SelectionHistoryEntry,
 } from './adaptive-item-selection.service.js';
-import { assessmentAttemptCompletedPayloadSchema } from './assessment-events.js';
 import {
   computeSkillBanding,
   computeWritingBanding,

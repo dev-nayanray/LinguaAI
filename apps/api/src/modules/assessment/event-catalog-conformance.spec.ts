@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { assessmentAttemptCompletedPayloadSchema } from './assessment-events.js';
+import { assessmentAttemptCompletedPayloadSchema } from '@linguaai/validation/learning';
 
 /**
  * E6-T6's own evidence bar names an "event-catalog conformance test" — no
