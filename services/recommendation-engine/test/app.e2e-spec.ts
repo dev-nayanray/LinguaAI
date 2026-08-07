@@ -4,6 +4,17 @@ import request from 'supertest';
 
 import { AppModule } from '../src/app.module.js';
 
+/**
+ * `AppModule` now wires two real BullMQ `Worker`s (`DomainEventsModule`,
+ * `DailyGoalModule`, E7 T2/T3) that start unconditionally on `app.init()`
+ * — every e2e spec file that boots this same module gets its own real
+ * Worker instance on the same real queue names. `test:e2e:api` runs Jest
+ * with `--runInBand` for exactly this reason: without it, this file's own
+ * app could still be shutting down its Worker connections while another
+ * spec file's own app has already started its own competing Worker on the
+ * same queue, producing a real "Connection is closed" race — found while
+ * building T3, not a pre-existing flake.
+ */
 describe('AppModule (e2e)', () => {
   let app: INestApplication;
 

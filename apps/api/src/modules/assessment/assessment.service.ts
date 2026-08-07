@@ -9,40 +9,51 @@ import type {
   AssessmentAttempt,
   AssessmentItem,
   AssessmentResponse,
+  CefrLevel,
+  Prisma,
   PrismaClient,
   Skill,
 } from '@linguaai/database';
-import type {
-  AssessmentItemPublicView,
-  CompleteAssessmentAttemptResponse,
-  StartAssessmentAttemptRequest,
-  StartAssessmentAttemptResponse,
-  SubmitAssessmentResponseRequest,
-  SubmitAssessmentResponseResponse,
+import {
+  assessmentAttemptCompletedPayloadSchema,
+  type AssessmentItemPublicView,
+  type CompleteAssessmentAttemptResponse,
+  type StartAssessmentAttemptRequest,
+  type StartAssessmentAttemptResponse,
+  type SubmitAssessmentResponseRequest,
+  type SubmitAssessmentResponseResponse,
 } from '@linguaai/validation/learning';
 
 import { APP_PRISMA_CLIENT } from '../../database/index.js';
+import { DomainEventPublisher } from '../../events/index.js';
 import type { RequestUser } from '../auth/strategies/jwt.strategy.js';
+import { AiEngineClientService } from '../ai-engine/ai-engine-client.service.js';
 import {
   AdaptiveItemSelectionService,
   type SelectionHistoryEntry,
 } from './adaptive-item-selection.service.js';
 import {
   computeSkillBanding,
+  computeWritingBanding,
   type ScoredItem,
   type SkillBandingResult,
 } from './cefr-banding.util.js';
 import { scoreObjectiveResponse } from './objective-scoring.util.js';
 
 /**
- * Fixed serving order for T2's scope (E6 design doc §1's own listed order).
- * WRITING is deliberately excluded — ai-engine's scoring capability doesn't
- * exist yet (T4/T5); serving a WRITING item with no way to score it would
- * leave an attempt permanently unable to reach every objective skill's
- * completion condition. SPEAKING is out of scope entirely (§3.2). See
- * ADR-038's Consequences.
+ * Fixed serving order (E6 design doc §1/§6.2). WRITING is served last and
+ * exactly once (T1's own seed content has a single OPEN_RESPONSE item per
+ * language; `AdaptiveItemSelectionService.selectNext` naturally stops the
+ * moment its candidate pool is exhausted, the same "no more items" path
+ * every objective skill already relies on — no WRITING-specific serving
+ * logic needed). T2 originally excluded WRITING here because ai-engine's
+ * scoring capability didn't exist yet (T4/T5); wiring it back in — actually
+ * calling `AiEngineClientService.scoreWriting()` from `submitResponse` — is
+ * this task's own scope (E6-T7, per T5's own doc comment on
+ * `AiEngineClientService.scoreWriting`). SPEAKING remains out of scope
+ * entirely (§3.2). See ADR-038's Consequences.
  */
-const SKILL_ORDER: Skill[] = ['READING', 'LISTENING', 'VOCABULARY', 'GRAMMAR'];
+const SKILL_ORDER: Skill[] = ['READING', 'LISTENING', 'VOCABULARY', 'GRAMMAR', 'WRITING'];
 
 function toPublicItemView(item: AssessmentItem): AssessmentItemPublicView {
   return {
@@ -54,6 +65,28 @@ function toPublicItemView(item: AssessmentItem): AssessmentItemPublicView {
     audioUrl: item.audioUrl,
     itemType: item.itemType,
   };
+}
+
+/**
+ * Reads back the `aiCefrLevel`/`confidence` a WRITING response's own
+ * `scoreWritingItem` persisted (`response` JSON blob + `score` column) —
+ * the inverse of that write. Throws on a malformed/missing `aiCefrLevel`
+ * rather than silently defaulting: every WRITING `AssessmentResponse` this
+ * service itself ever creates always sets it, so a missing value can only
+ * mean a data-integrity violation, the same class of defensive throw
+ * `computeProficiencyResults`'s own missing-`item` check already uses.
+ */
+function extractWritingCritique(response: AssessmentResponse): {
+  cefrLevel: CefrLevel;
+  confidence: number;
+} {
+  const data = response.response as { aiCefrLevel?: CefrLevel };
+  if (!data.aiCefrLevel || response.score === null) {
+    throw new Error(
+      `WRITING AssessmentResponse ${response.id} is missing its AI critique — data integrity violation`,
+    );
+  }
+  return { cefrLevel: data.aiCefrLevel, confidence: response.score };
 }
 
 function toWireAttempt(attempt: AssessmentAttempt): StartAssessmentAttemptResponse['attempt'] {
@@ -105,6 +138,8 @@ export class AssessmentService {
   constructor(
     @Inject(APP_PRISMA_CLIENT) private readonly appPrisma: PrismaClient,
     private readonly adaptiveSelection: AdaptiveItemSelectionService,
+    private readonly events: DomainEventPublisher,
+    private readonly aiEngineClient: AiEngineClientService,
   ) {}
 
   async startAttempt(
@@ -114,6 +149,35 @@ export class AssessmentService {
     const language = await this.appPrisma.language.findUnique({ where: { id: dto.languageId } });
     if (!language) {
       throw new NotFoundException('Language not found');
+    }
+
+    // Real gap found while building T6's re-assessment flow, applies
+    // regardless of `dto.type`: nothing previously stopped a user from
+    // starting a second concurrent attempt for the same language while one
+    // was already IN_PROGRESS — two simultaneous attempts would both try
+    // to serve/score items independently with no way to reconcile them.
+    const inProgress = await this.appPrisma.assessmentAttempt.findFirst({
+      where: { userId: caller.userId, languageId: language.id, status: 'IN_PROGRESS' },
+    });
+    if (inProgress) {
+      throw new ConflictException('An assessment attempt is already in progress for this language');
+    }
+
+    // PRD.md §5.1's user-initiated re-assessment flow (E6-T6): "re"-assessing
+    // implies a prior real assessment exists — a REASSESSMENT attempt with
+    // no completed history for this language is a semantically invalid
+    // request on otherwise-valid input (422, matching the same class as the
+    // no-items-available check below), not a 400 the request schema alone
+    // can catch.
+    if (dto.type === 'REASSESSMENT') {
+      const priorCompleted = await this.appPrisma.assessmentAttempt.findFirst({
+        where: { userId: caller.userId, languageId: language.id, status: 'COMPLETED' },
+      });
+      if (!priorCompleted) {
+        throw new UnprocessableEntityException(
+          'Cannot start a re-assessment without a prior completed assessment for this language',
+        );
+      }
     }
 
     const attempt = await this.appPrisma.assessmentAttempt.create({
@@ -168,7 +232,10 @@ export class AssessmentService {
       throw new ConflictException('This is not the currently active item for this attempt');
     }
 
-    const { isCorrect, score } = scoreObjectiveResponse(item, dto.response);
+    const { isCorrect, score, responseData } =
+      item.itemType === 'OPEN_RESPONSE'
+        ? await this.scoreWritingItem(attempt.languageId, item, dto.response)
+        : { ...scoreObjectiveResponse(item, dto.response), responseData: dto.response };
 
     const savedResponse = await this.appPrisma.assessmentResponse.create({
       data: {
@@ -176,7 +243,7 @@ export class AssessmentService {
         itemId: item.id,
         skill: item.skill,
         prompt: item.prompt,
-        response: dto.response,
+        response: responseData,
         isCorrect,
         score,
       },
@@ -197,6 +264,61 @@ export class AssessmentService {
       },
       nextItem: nextItem ? toPublicItemView(nextItem) : null,
       attemptStatus: attempt.status,
+    };
+  }
+
+  /**
+   * WRITING (OPEN_RESPONSE) items are AI-scored (§6.3), not answer-key
+   * matched — calls the already-built `AssessmentScoringService` via
+   * `AiEngineClientService.scoreWriting()` (T4/T5), reused here, not
+   * reimplemented. `isCorrect` genuinely has no meaning for an open-ended
+   * essay (stored `null`, matching the column's own nullable type); `score`
+   * reuses the critique's own `confidence` (0-1) — the same value
+   * `computeWritingBanding` later reads back out. The AI's `cefrLevel`/
+   * `feedback` have no dedicated `AssessmentResponse` columns (a schema
+   * change was not part of this task's own scope, §6.1) — persisted inside
+   * the same `response` JSON blob the learner's own text already occupies,
+   * so `computeProficiencyResults`'s later idempotent recompute (and the
+   * client's own `completeAttempt` `responses[]` view) can read them back
+   * without a second table.
+   */
+  private async scoreWritingItem(
+    languageId: string,
+    item: AssessmentItem,
+    response: SubmitAssessmentResponseRequest['response'],
+  ): Promise<{ isCorrect: null; score: number; responseData: Prisma.InputJsonObject }> {
+    if (!('text' in response)) {
+      throw new UnprocessableEntityException(
+        'OPEN_RESPONSE (Writing) items require a response shaped { text }',
+      );
+    }
+
+    // Only reached via `startAttempt`'s already-served WRITING item, so the
+    // language is known to exist — re-fetched here (not threaded through
+    // from the caller) since `submitResponse` only carries `languageId`,
+    // and `targetLanguageName` is a real, separate value `ai-engine`'s own
+    // request schema requires (a display name for the scoring prompt, not
+    // just the id).
+    const language = await this.appPrisma.language.findUnique({ where: { id: languageId } });
+    if (!language) {
+      throw new NotFoundException('Language not found');
+    }
+
+    const critique = await this.aiEngineClient.scoreWriting({
+      languageId,
+      targetLanguageName: language.name,
+      prompt: item.prompt,
+      learnerResponse: response.text,
+    });
+
+    return {
+      isCorrect: null,
+      score: critique.confidence,
+      responseData: {
+        text: response.text,
+        aiCefrLevel: critique.cefrLevel,
+        aiFeedback: critique.feedback,
+      },
     };
   }
 
@@ -240,50 +362,85 @@ export class AssessmentService {
 
     let finalAttempt = attempt;
     if (!alreadyCompleted) {
-      finalAttempt = await this.appPrisma.assessmentAttempt.update({
-        where: { id: attempt.id },
-        data: { status: 'COMPLETED', completedAt: new Date() },
-      });
+      // Real gap found while adding T6's event emission and re-examining
+      // this method: the attempt-status update and every skill's
+      // ProficiencyLevel/History write previously ran as separate,
+      // unwrapped sequential awaits — a failure partway through (e.g. the
+      // 3rd skill's upsert throwing) would leave the attempt marked
+      // COMPLETED with only some skills' proficiency data recorded, a real
+      // partial-write hazard for a state this platform treats as atomic.
+      // Wrapped in a single transaction so it's all-or-nothing, matching
+      // `OrganizationsService`'s own established transaction discipline.
+      finalAttempt = await this.appPrisma.$transaction(async (tx) => {
+        const updated = await tx.assessmentAttempt.update({
+          where: { id: attempt.id },
+          data: { status: 'COMPLETED', completedAt: new Date() },
+        });
 
-      // Writes happen only on the real IN_PROGRESS -> COMPLETED transition
-      // — never on an idempotent replay, or every retried `complete` call
-      // would append a spurious ProficiencyLevelHistory row for an event
-      // that only actually happened once.
-      for (const result of proficiencyResults) {
-        const proficiencyLevel = await this.appPrisma.proficiencyLevel.upsert({
-          where: {
-            userId_languageId_skill: {
+        for (const result of proficiencyResults) {
+          const proficiencyLevel = await tx.proficiencyLevel.upsert({
+            where: {
+              userId_languageId_skill: {
+                userId: caller.userId,
+                languageId: attempt.languageId,
+                skill: result.skill,
+              },
+            },
+            create: {
               userId: caller.userId,
               languageId: attempt.languageId,
               skill: result.skill,
+              cefrLevel: result.cefrLevel,
+              confidence: result.confidence,
+              source: 'ASSESSMENT',
             },
-          },
-          create: {
-            userId: caller.userId,
-            languageId: attempt.languageId,
-            skill: result.skill,
-            cefrLevel: result.cefrLevel,
-            confidence: result.confidence,
-            source: 'ASSESSMENT',
-          },
-          update: {
-            cefrLevel: result.cefrLevel,
-            confidence: result.confidence,
-            source: 'ASSESSMENT',
-          },
-        });
-        await this.appPrisma.proficiencyLevelHistory.create({
-          data: {
-            proficiencyLevelId: proficiencyLevel.id,
-            userId: caller.userId,
-            languageId: attempt.languageId,
-            skill: result.skill,
-            cefrLevel: result.cefrLevel,
-            confidence: result.confidence,
-            source: 'ASSESSMENT',
-          },
-        });
-      }
+            update: {
+              cefrLevel: result.cefrLevel,
+              confidence: result.confidence,
+              source: 'ASSESSMENT',
+            },
+          });
+          await tx.proficiencyLevelHistory.create({
+            data: {
+              proficiencyLevelId: proficiencyLevel.id,
+              userId: caller.userId,
+              languageId: attempt.languageId,
+              skill: result.skill,
+              cefrLevel: result.cefrLevel,
+              confidence: result.confidence,
+              source: 'ASSESSMENT',
+            },
+          });
+        }
+
+        return updated;
+      });
+
+      // Published only after the transaction has actually committed —
+      // same discipline as `OrganizationsService`'s own event calls, and
+      // only on the real transition (never on an idempotent replay), or
+      // every retried `complete` call would emit a spurious duplicate
+      // event for something that only actually happened once.
+      // EVENT_ARCHITECTURE.md's own already-cataloged row (§3) names
+      // `recommendation-engine`/`analytics-service` as this event's
+      // consumers — neither exists yet (ROADMAP.md), so this is the real,
+      // tested mechanism with no live consumer, matching T7/T10's own
+      // "build it real, flag the not-yet-wired consumer" precedent.
+      const eventPayload = assessmentAttemptCompletedPayloadSchema.parse({
+        attemptId: finalAttempt.id,
+        languageId: finalAttempt.languageId,
+        type: finalAttempt.type,
+        skillResults: proficiencyResults.map(({ skill, cefrLevel, confidence, lowConfidence }) => ({
+          skill,
+          cefrLevel,
+          confidence,
+          lowConfidence,
+        })),
+      });
+      await this.events.publish('assessment.attempt.completed', {
+        userId: caller.userId,
+        payload: eventPayload,
+      });
     }
 
     return {
@@ -297,33 +454,66 @@ export class AssessmentService {
           lowConfidence,
         }),
       ),
+      // §6.4's low-confidence retake-offer contract (E6-T6, API shape
+      // only) — true when any served skill's own lowConfidence flag is
+      // set; the frontend epic's own job is building the retake-offer UX
+      // this flag is for (PRD.md §5.1).
+      retakeRecommended: proficiencyResults.some((result) => result.lowConfidence),
     };
   }
 
   /**
    * Groups this attempt's responses by skill and bands each group (§6.4).
-   * `WRITING`/`SPEAKING` never appear (ADR-038's skill order excludes
-   * them) — only the 4 objective skills this attempt actually served.
+   * `SPEAKING` never appears (out of scope entirely, §3.2). WRITING (E6-T7)
+   * is banded separately from the 4 objective skills — `computeSkillBanding`
+   * only knows how to weight isCorrect/difficulty across multiple items,
+   * which doesn't apply to a single AI-scored essay; its already-persisted
+   * critique (`extractWritingCritique`) is read back and passed through
+   * `computeWritingBanding` instead.
+   *
+   * Real, deliberate asymmetry with the 4 objective skills: a WRITING
+   * result is only included when a WRITING response was actually served —
+   * unlike `computeSkillBanding([])`'s own zero-items default, a missing
+   * WRITING result is *omitted* from `proficiencyLevels` entirely, not
+   * defaulted to a low-confidence A1. Most languages have no seeded WRITING
+   * item yet (T1's own scope), so defaulting would misrepresent "never
+   * assessed" as "assessed and scored poorly" and spuriously force
+   * `retakeRecommended: true` on every one of those attempts — see
+   * `computeWritingBanding`'s own doc comment for the full reasoning.
    */
   private computeProficiencyResults(
     responses: ReadonlyArray<AssessmentResponse & { item: AssessmentItem | null }>,
   ): Array<{ skill: Skill } & SkillBandingResult> {
     const bySkill = new Map<Skill, ScoredItem[]>();
+    let latestWritingResponse: AssessmentResponse | undefined;
     for (const response of responses) {
       if (!response.item) {
         throw new Error(
           `AssessmentResponse ${response.id} has no linked AssessmentItem — data integrity violation`,
         );
       }
+      if (response.skill === 'WRITING') {
+        // T1's seed content serves at most 1 WRITING item per attempt
+        // (§6.2) — `responses` arrives ordered by `createdAt asc`, so the
+        // last one encountered is the most recent if this invariant were
+        // ever violated, rather than an arbitrary one.
+        latestWritingResponse = response;
+        continue;
+      }
       const scored = bySkill.get(response.skill) ?? [];
       scored.push({ isCorrect: response.isCorrect, difficulty: response.item.difficulty });
       bySkill.set(response.skill, scored);
     }
 
-    return SKILL_ORDER.map((skill) => ({
-      skill,
-      ...computeSkillBanding(bySkill.get(skill) ?? []),
-    }));
+    return SKILL_ORDER.flatMap((skill): Array<{ skill: Skill } & SkillBandingResult> => {
+      if (skill === 'WRITING') {
+        if (!latestWritingResponse) {
+          return [];
+        }
+        return [{ skill, ...computeWritingBanding(extractWritingCritique(latestWritingResponse)) }];
+      }
+      return [{ skill, ...computeSkillBanding(bySkill.get(skill) ?? []) }];
+    });
   }
 
   /**

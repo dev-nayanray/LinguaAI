@@ -124,9 +124,8 @@ export class AiEngineClientService {
 
   /**
    * E6 T5 (ADR-033's pattern applied to Writing-skill scoring, §6.3) —
-   * `apps/api`'s `AssessmentModule` does not call this yet; wiring it into
-   * the attempt lifecycle is E6 T6/T7's own scope (this task's own
-   * dependency list is T2/T4, not T3's banding logic).
+   * wired into the attempt lifecycle by `AssessmentService.scoreWritingItem`
+   * (E6-T7).
    */
   async scoreWriting(input: ScoreWritingRequest): Promise<WritingCritiqueSchema> {
     const response = await fetch(`${this.config.AI_ENGINE_URL}/v1/assessment-scoring/writing`, {

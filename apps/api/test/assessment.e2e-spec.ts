@@ -7,7 +7,25 @@ import cookieParser from 'cookie-parser';
 import request from 'supertest';
 
 import { AppModule } from '../src/app.module.js';
+import { AiEngineClientService } from '../src/modules/ai-engine/ai-engine-client.service.js';
 import { registerAndLogin, type RegisteredSession } from './helpers/auth-flow.js';
+
+/**
+ * `AssessmentService.scoreWritingItem` (E6-T7) calls this over a real HTTP
+ * request to `ai-engine` — genuinely unavailable in this environment (no
+ * live LLM provider credentials, RISK_REGISTER R-88, the same limitation
+ * E6 T4's own honestly-reported evidence bar already carries). Overriding
+ * just this one provider keeps everything else in the request path real
+ * (Postgres, the actual `AssessmentController`/`AssessmentService`, the
+ * actual HTTP layer) — only the genuinely-external network boundary is
+ * stubbed, the same "mock the boundary, not the system under test"
+ * discipline as `assessment.service.spec.ts`'s own `fakeAiEngineClient`.
+ */
+const aiEngineClientStub: Pick<AiEngineClientService, 'scoreWriting'> = {
+  scoreWriting: jest
+    .fn()
+    .mockResolvedValue({ cefrLevel: 'B2', confidence: 0.8, feedback: 'Good use of vocabulary.' }),
+};
 
 /**
  * Integration tests against real Postgres (E6 T2) — same discipline as
@@ -28,7 +46,10 @@ describe('AssessmentModule (e2e)', () => {
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(AiEngineClientService)
+      .useValue(aiEngineClientStub)
+      .compile();
     app = moduleRef.createNestApplication();
     app.use(cookieParser());
     app.setGlobalPrefix('v1', { exclude: ['health'] });
@@ -176,6 +197,8 @@ describe('AssessmentModule (e2e)', () => {
         expect(result.confidence).toBeCloseTo(0.6, 5);
         expect(result.lowConfidence).toBe(false);
       }
+      // §6.4's retake-offer contract (E6-T6) — every skill confident here.
+      expect(completeRes.body.retakeRecommended).toBe(false);
 
       // Idempotent re-completion (a real, partial mitigation for the
       // Idempotency-Key infrastructure this platform doesn't build yet,
@@ -193,6 +216,227 @@ describe('AssessmentModule (e2e)', () => {
         where: { userId: session.userId, languageId },
       });
       expect(historyRows).toHaveLength(4);
+    });
+  });
+
+  /**
+   * Walks a full start -> answer every objective skill -> complete cycle
+   * for the given session/attempt type, answering every item correctly.
+   * Shared by the re-assessment flow tests below so each one only has to
+   * assert what's actually specific to it, not re-derive the same
+   * item-by-item walk the lifecycle test above already covers in detail.
+   */
+  async function completeFullAttempt(
+    session: RegisteredSession,
+    type: 'PLACEMENT' | 'REASSESSMENT',
+  ): Promise<{ attemptId: string; completeRes: request.Response }> {
+    const startRes = await request(app.getHttpServer())
+      .post('/v1/assessment-attempts')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({ languageId, type });
+    const attemptId = startRes.body.attempt.id as string;
+
+    const expectedOrder: Skill[] = ['READING', 'LISTENING', 'VOCABULARY', 'GRAMMAR'];
+    let currentItemId = startRes.body.nextItem.id as string;
+    for (let i = 0; i < expectedOrder.length; i++) {
+      const submitRes = await request(app.getHttpServer())
+        .post(`/v1/assessment-attempts/${attemptId}/responses`)
+        .set('Authorization', `Bearer ${session.accessToken}`)
+        .send({ itemId: currentItemId, response: { selectedIndex: 1 } });
+      const nextItem = submitRes.body.nextItem as { id: string } | null;
+      if (nextItem) {
+        currentItemId = nextItem.id;
+      }
+    }
+
+    const completeRes = await request(app.getHttpServer())
+      .post(`/v1/assessment-attempts/${attemptId}/complete`)
+      .set('Authorization', `Bearer ${session.accessToken}`);
+    return { attemptId, completeRes };
+  }
+
+  describe('WRITING (OPEN_RESPONSE) skill scoring (E6-T7)', () => {
+    it('scores the WRITING item via the (stubbed) AiEngineClientService and includes it in the completed proficiencyLevels', async () => {
+      // A dedicated language/item set, not the shared `languageId`/`items`
+      // fixture above — the shared fixture deliberately has no WRITING item
+      // so the existing lifecycle test's own 4-skill assertions stay
+      // unaffected by this task's change (`computeWritingBanding`'s own
+      // doc comment: WRITING is omitted, not defaulted, when unserved).
+      const language = await setupPrisma.language.create({
+        data: { code: `e2e-writing-${randomUUID().slice(0, 8)}`, name: 'E2E Writing Language' },
+      });
+      const objectiveSkills: Skill[] = ['READING', 'LISTENING', 'VOCABULARY', 'GRAMMAR'];
+      const objectiveItems = await Promise.all(
+        objectiveSkills.map((skill) =>
+          setupPrisma.assessmentItem.create({
+            data: {
+              languageId: language.id,
+              skill,
+              cefrLevel: 'B1',
+              difficulty: 0.5,
+              prompt: `${skill} prompt`,
+              correctAnswer: { correctIndex: 1 },
+              itemType: 'MULTIPLE_CHOICE',
+            },
+          }),
+        ),
+      );
+      const writingItem = await setupPrisma.assessmentItem.create({
+        data: {
+          languageId: language.id,
+          skill: 'WRITING',
+          cefrLevel: 'B1',
+          difficulty: 0.5,
+          prompt: 'Describe your favorite city.',
+          // Omitted, not `null` — Prisma's `InputJsonValue` for a nullable
+          // `Json?` column doesn't accept a literal `null` directly (needs
+          // `Prisma.JsonNull`); leaving the field unset stores NULL the
+          // same way, matching `seed.ts`'s own `correctAnswer: item.correctAnswer ?? undefined` precedent for this exact column.
+          itemType: 'OPEN_RESPONSE',
+        },
+      });
+
+      try {
+        const session = await freshSession();
+        const startRes = await request(app.getHttpServer())
+          .post('/v1/assessment-attempts')
+          .set('Authorization', `Bearer ${session.accessToken}`)
+          .send({ languageId: language.id, type: 'PLACEMENT' });
+        const attemptId = startRes.body.attempt.id as string;
+
+        let currentItemId = startRes.body.nextItem.id as string;
+        let writingSubmitRes: request.Response | null = null;
+        for (let i = 0; i < objectiveItems.length; i++) {
+          const submitRes = await request(app.getHttpServer())
+            .post(`/v1/assessment-attempts/${attemptId}/responses`)
+            .set('Authorization', `Bearer ${session.accessToken}`)
+            .send({ itemId: currentItemId, response: { selectedIndex: 1 } });
+          const nextItem = submitRes.body.nextItem as { id: string } | null;
+          if (nextItem) {
+            currentItemId = nextItem.id;
+          }
+        }
+        // The loop above leaves `currentItemId` pointing at the WRITING
+        // item (last in `SKILL_ORDER`) once every objective item is spent.
+        expect(currentItemId).toBe(writingItem.id);
+        writingSubmitRes = await request(app.getHttpServer())
+          .post(`/v1/assessment-attempts/${attemptId}/responses`)
+          .set('Authorization', `Bearer ${session.accessToken}`)
+          .send({ itemId: writingItem.id, response: { text: 'My favorite city is Madrid.' } });
+
+        expect(writingSubmitRes.status).toBe(201);
+        expect(writingSubmitRes.body.response.isCorrect).toBeNull();
+        expect(writingSubmitRes.body.response.score).toBe(0.8);
+        expect(writingSubmitRes.body.nextItem).toBeNull();
+
+        const completeRes = await request(app.getHttpServer())
+          .post(`/v1/assessment-attempts/${attemptId}/complete`)
+          .set('Authorization', `Bearer ${session.accessToken}`);
+
+        expect(completeRes.status).toBe(200);
+        expect(completeRes.body.proficiencyLevels).toHaveLength(5);
+        const writing = (
+          completeRes.body.proficiencyLevels as Array<{
+            skill: string;
+            cefrLevel: string;
+            confidence: number;
+            lowConfidence: boolean;
+          }>
+        ).find((r) => r.skill === 'WRITING')!;
+        expect(writing.cefrLevel).toBe('B2');
+        expect(writing.confidence).toBe(0.8);
+        expect(writing.lowConfidence).toBe(false);
+        expect(completeRes.body.retakeRecommended).toBe(false);
+
+        // The AI's feedback/cefrLevel surface on the raw response record too
+        // (persisted in the same `response` JSON blob, E6-T7).
+        const writingResponse = (
+          completeRes.body.responses as Array<{ skill: string; response: Record<string, unknown> }>
+        ).find((r) => r.skill === 'WRITING')!;
+        expect(writingResponse.response.aiCefrLevel).toBe('B2');
+        expect(writingResponse.response.aiFeedback).toBe('Good use of vocabulary.');
+      } finally {
+        await setupPrisma.proficiencyLevelHistory.deleteMany({
+          where: { languageId: language.id },
+        });
+        await setupPrisma.proficiencyLevel.deleteMany({ where: { languageId: language.id } });
+        await setupPrisma.assessmentResponse.deleteMany({
+          where: { item: { languageId: language.id } },
+        });
+        await setupPrisma.assessmentAttempt.deleteMany({ where: { languageId: language.id } });
+        await setupPrisma.assessmentItem.deleteMany({ where: { languageId: language.id } });
+        await setupPrisma.language.delete({ where: { id: language.id } });
+      }
+    });
+  });
+
+  describe('concurrent attempt guard', () => {
+    it('returns 409 when starting a second attempt while one is already IN_PROGRESS for the same language', async () => {
+      const session = await freshSession();
+      const firstRes = await request(app.getHttpServer())
+        .post('/v1/assessment-attempts')
+        .set('Authorization', `Bearer ${session.accessToken}`)
+        .send({ languageId, type: 'PLACEMENT' });
+      expect(firstRes.status).toBe(201);
+
+      const secondRes = await request(app.getHttpServer())
+        .post('/v1/assessment-attempts')
+        .set('Authorization', `Bearer ${session.accessToken}`)
+        .send({ languageId, type: 'PLACEMENT' });
+      expect(secondRes.status).toBe(409);
+    });
+  });
+
+  describe('user-initiated re-assessment flow (T6, §6.4)', () => {
+    it('returns 422 for a REASSESSMENT with no prior completed assessment for this language', async () => {
+      const session = await freshSession();
+      const res = await request(app.getHttpServer())
+        .post('/v1/assessment-attempts')
+        .set('Authorization', `Bearer ${session.accessToken}`)
+        .send({ languageId, type: 'REASSESSMENT' });
+      expect(res.status).toBe(422);
+    });
+
+    it("creates a new AssessmentAttempt without disturbing the prior one's ProficiencyLevelHistory row", async () => {
+      const session = await freshSession();
+
+      const first = await completeFullAttempt(session, 'PLACEMENT');
+      expect(first.completeRes.status).toBe(200);
+
+      const historyAfterFirst = await setupPrisma.proficiencyLevelHistory.findMany({
+        where: { userId: session.userId, languageId },
+        orderBy: { recordedAt: 'asc' },
+      });
+      expect(historyAfterFirst).toHaveLength(4);
+      const firstHistoryIds = historyAfterFirst.map((row) => row.id).sort();
+
+      const second = await completeFullAttempt(session, 'REASSESSMENT');
+      expect(second.completeRes.status).toBe(200);
+      expect(second.attemptId).not.toBe(first.attemptId);
+      expect(second.completeRes.body.attempt.type).toBe('REASSESSMENT');
+
+      // The re-assessment created its own new attempt and its own new
+      // history rows — the first attempt's own rows are untouched, not
+      // overwritten or deleted.
+      const historyAfterSecond = await setupPrisma.proficiencyLevelHistory.findMany({
+        where: { userId: session.userId, languageId },
+        orderBy: { recordedAt: 'asc' },
+      });
+      expect(historyAfterSecond).toHaveLength(8);
+      const idsStillPresent = historyAfterSecond.map((row) => row.id);
+      for (const id of firstHistoryIds) {
+        expect(idsStillPresent).toContain(id);
+      }
+
+      // ProficiencyLevel itself is a current-state snapshot, unique per
+      // (userId, languageId, skill) — the re-assessment's writes upsert
+      // the same 4 rows rather than creating duplicates; it's
+      // ProficiencyLevelHistory alone that accumulates one row per
+      // completion.
+      const currentLevels = await setupPrisma.proficiencyLevel.findMany({
+        where: { userId: session.userId, languageId },
+      });
+      expect(currentLevels).toHaveLength(4);
     });
   });
 

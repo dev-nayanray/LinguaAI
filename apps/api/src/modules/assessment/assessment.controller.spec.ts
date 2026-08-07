@@ -81,6 +81,7 @@ describe('AssessmentController', () => {
       },
       responses: [],
       proficiencyLevels: [],
+      retakeRecommended: false,
     };
     const service = {
       completeAttempt: jest.fn().mockResolvedValue(response),
