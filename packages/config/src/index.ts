@@ -13,6 +13,7 @@ export {
   mfaEnvSchema,
   loginFailureEnvSchema,
   aiGatewayEnvSchema,
+  aiEngineClientEnvSchema,
   type NodeEnv,
   type ServerUrlEnv,
   type DatabaseEnv,
@@ -25,4 +26,5 @@ export {
   type MfaEnv,
   type LoginFailureEnv,
   type AiGatewayEnv,
+  type AiEngineClientEnv,
 } from './schemas.js';

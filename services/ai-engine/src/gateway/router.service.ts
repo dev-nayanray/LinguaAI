@@ -24,6 +24,9 @@ import type {
  */
 export type AiRequestClass = 'teacher' | 'assessment';
 
+/** ADR-034 (T9): 'economy' is the cost circuit breaker's DEGRADE target — falls back to 'default' per class if no economy model is configured, rather than failing the request over a config gap. */
+export type ModelTier = 'default' | 'economy';
+
 @Injectable()
 export class RouterService {
   private readonly logger = new Logger(RouterService.name);
@@ -40,8 +43,24 @@ export class RouterService {
     ]);
   }
 
-  private modelFor(requestClass: AiRequestClass): string {
-    return requestClass === 'teacher' ? this.config.teacherModel : this.config.assessmentModel;
+  private modelFor(requestClass: AiRequestClass, tier: ModelTier): string {
+    const defaultModel =
+      requestClass === 'teacher' ? this.config.teacherModel : this.config.assessmentModel;
+    if (tier === 'default') {
+      return defaultModel;
+    }
+
+    const economyModel =
+      requestClass === 'teacher'
+        ? this.config.teacherEconomyModel
+        : this.config.assessmentEconomyModel;
+    if (!economyModel) {
+      this.logger.warn(
+        `Economy tier requested for "${requestClass}" but no economy model is configured — using the default model instead.`,
+      );
+      return defaultModel;
+    }
+    return economyModel;
   }
 
   private primaryProvider(): ModelProvider {
@@ -70,8 +89,9 @@ export class RouterService {
   async generate(
     requestClass: AiRequestClass,
     request: Omit<GenerateRequest, 'model'>,
+    tier: ModelTier = 'default',
   ): Promise<GenerateResponse> {
-    const fullRequest: GenerateRequest = { ...request, model: this.modelFor(requestClass) };
+    const fullRequest: GenerateRequest = { ...request, model: this.modelFor(requestClass, tier) };
     const primary = this.primaryProvider();
 
     try {
@@ -96,8 +116,9 @@ export class RouterService {
   async *stream(
     requestClass: AiRequestClass,
     request: Omit<GenerateRequest, 'model'>,
+    tier: ModelTier = 'default',
   ): AsyncIterable<StreamChunk> {
-    const fullRequest: GenerateRequest = { ...request, model: this.modelFor(requestClass) };
+    const fullRequest: GenerateRequest = { ...request, model: this.modelFor(requestClass, tier) };
     const primary = this.primaryProvider();
 
     let yieldedAnyChunk = false;

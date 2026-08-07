@@ -37,3 +37,17 @@ export interface SendMessageResult {
 export interface EndSessionInput {
   sessionId: string;
 }
+
+/**
+ * `OrchestratorService.streamMessage()`'s yielded events (ADR-033, T10) —
+ * `token` deltas as the Router streams them, then exactly one `done` event
+ * carrying the same shape `SendMessageResult` already has. No `error`
+ * event is modeled here: a mid-stream failure propagates as a thrown
+ * error out of the async generator itself (the caller's `for await` loop
+ * sees it as a rejected iteration) — the SSE-specific "emit an `error`
+ * event instead of changing HTTP status once streaming has begun" concern
+ * belongs to the controller that turns this generator into an HTTP
+ * response, not to the Orchestrator's own contract.
+ */
+export type SendMessageStreamEvent =
+  { type: 'token'; delta: string } | ({ type: 'done' } & SendMessageResult);

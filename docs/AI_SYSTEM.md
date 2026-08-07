@@ -32,7 +32,7 @@ apps/api, apps/web, apps/mobile
    services/speech-service (STT/TTS providers, behind the same adapter pattern)
 ```
 
-All providers are integrated behind a single internal `ModelProvider` interface (`generate`, `stream`, `embed`) so the Router can fail over between providers without callers knowing which provider served a given request. The internal request/response contract between `apps/api` and `ai-engine` is documented alongside the OpenAPI spec (API_GUIDELINES.md §11) rather than left implicit.
+All providers are integrated behind a single internal `ModelProvider` interface (`generate`, `stream`, `embed`) so the Router can fail over between providers without callers knowing which provider served a given request. The internal request/response contract between `apps/api` and `ai-engine` is documented alongside the OpenAPI spec (API_GUIDELINES.md §11) rather than left implicit. Implemented (E5 T10, ADR-033): `services/ai-engine/src/agent-sessions/agent-sessions.controller.ts` (`POST /v1/agent-sessions`, `POST /v1/agent-sessions/:id/messages` — Server-Sent Events, API_GUIDELINES.md §13 — and `POST /v1/agent-sessions/:id/end`), consumed by `apps/api/src/modules/ai-engine/ai-engine-client.service.ts`; both sides validate against the same `@linguaai/validation/ai-coaching` Zod schemas.
 
 ## 3. Agent orchestration (implements ADR-007)
 

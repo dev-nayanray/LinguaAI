@@ -15,6 +15,12 @@ const optionalUrl = z.preprocess(
   z.string().url().optional(),
 );
 
+/** Same blank-string-tolerant treatment as `optionalUrl` above, for an optional field that isn't a URL. */
+const optionalNonEmptyString = z.preprocess(
+  (val) => (val === '' ? undefined : val),
+  z.string().min(1).optional(),
+);
+
 /**
  * Composable schema fragments mirroring .env.example's variable set —
  * apps/services `.merge()` together whichever fragments they actually need
@@ -144,8 +150,32 @@ export const aiGatewayEnvSchema = z.object({
   OPENAI_API_KEY: z.string().min(1),
   AI_MODEL_TEACHER_DEFAULT: z.string().min(1),
   AI_MODEL_ASSESSMENT_DEFAULT: z.string().min(1),
+  /**
+   * ADR-034 (E5 T9): the cost circuit breaker's DEGRADE stage target —
+   * "degrade new requests to a cheaper model tier where the request
+   * class allows it." Deliberately optional: with no economy model
+   * configured for a class, DEGRADE has no real target to switch to for
+   * that class and the Router falls back to the default model rather
+   * than fabricating a guessed cheap-model name.
+   */
+  AI_MODEL_TEACHER_ECONOMY: optionalNonEmptyString,
+  AI_MODEL_ASSESSMENT_ECONOMY: optionalNonEmptyString,
 });
 export type AiGatewayEnv = z.infer<typeof aiGatewayEnvSchema>;
+
+/**
+ * Consumed by `apps/api`'s `AiEngineClientModule` (E5 T10, ADR-033) — the
+ * base URL of the `ai-engine` service this client calls internally.
+ * `.env.example` already declares `AI_ENGINE_URL` (E1 Part 7, alongside
+ * every other `services/*` URL) but no consumer validated it as a schema
+ * fragment until this task actually needed to call it — the same "not
+ * scaffolded speculatively ahead of need" convention `aiGatewayEnvSchema`'s
+ * own header comment documents.
+ */
+export const aiEngineClientEnvSchema = z.object({
+  AI_ENGINE_URL: z.string().url(),
+});
+export type AiEngineClientEnv = z.infer<typeof aiEngineClientEnvSchema>;
 
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
 export type ServerUrlEnv = z.infer<typeof serverUrlEnvSchema>;
