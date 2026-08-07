@@ -1,7 +1,7 @@
 # Epic E6 — AI Language Assessment Engine
 
 **Epic ID:** E6 (ROADMAP.md)
-**Status:** Implementation in progress (T1–T8 done, 2026-08-07) — by explicit user direction to proceed past the design phase without waiting for an independent Architecture Gate review, the same distinction E4/E5's own status lines draw. §12's gate sign-off log remains entirely unchecked; this status line records what actually happened, not a claim that any gate has passed.
+**Status:** Implementation complete (T1–T8, 2026-08-07) — by explicit user direction to proceed past the design phase without waiting for an independent Architecture Gate review, the same distinction E4/E5's own status lines draw. §9's task sequence defines no T9 or beyond — confirmed by direct inspection before closing this line, not assumed — so "implementation complete" means every task this document itself scoped is done, not that scope was cut short. §12's gate sign-off log remains entirely unchecked; this status line records what actually happened, not a claim that any gate has passed.
 **Tech lead:** AI/Backend Engineering (TBD)
 **Gate owners assigned:** Architecture, Security, Database, API, AI, Performance, Testing, Documentation (Frontend/Accessibility/Deployment gates apply to the later feature epic that builds the actual assessment UI, not this backend-engine epic — see §3.6)
 
