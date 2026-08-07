@@ -90,6 +90,19 @@ export class DomainEventsModule implements OnModuleInit, OnModuleDestroy {
         `Domain event processing failed (job ${job?.id}, type ${job?.name}): ${err.message}`,
       );
     });
+
+    // Real, previously-latent bug found while building this module's own
+    // e2e tests (E7 T3): `Worker` is an `EventEmitter` — a connection-level
+    // error (e.g. a close/reconnect race during shutdown) with no
+    // `'error'` listener registered throws unhandled in Node, crashing
+    // the process rather than logging. `PartitionMaintenanceModule`
+    // (ai-engine, E5 T11) carries this same latent gap — never triggered
+    // there because no prior e2e test exercised a real Worker's full
+    // startup-processing-shutdown lifecycle the way this task's own e2e
+    // suite does. Logged, not silently swallowed.
+    this.worker.on('error', (err: Error) => {
+      this.logger.error(`Domain events Worker connection error: ${err.message}`);
+    });
   }
 
   async onModuleDestroy(): Promise<void> {

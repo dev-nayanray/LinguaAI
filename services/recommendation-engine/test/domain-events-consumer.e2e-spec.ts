@@ -44,6 +44,10 @@ describe('domain-events consumer: assessment.attempt.completed -> LearningPlan (
       throw new Error('REDIS_URL not set — see .env');
     }
     queue = createDomainEventsQueue(redisUrl);
+    // `Queue` is an `EventEmitter` — an unlistened `'error'` event throws
+    // unhandled in Node (the same real bug `DailyGoalModule`'s own doc
+    // comment explains, found while building this task's own e2e suite).
+    queue.on('error', () => undefined);
     publisher = new DomainEventPublisher(queue);
 
     const user = await setupPrisma.user.create({
@@ -70,6 +74,12 @@ describe('domain-events consumer: assessment.attempt.completed -> LearningPlan (
     await queue.close();
     await setupPrisma.$disconnect();
     await app.close();
+    // Grace period for a straggling BullMQ/ioredis teardown rejection to
+    // settle here rather than landing on whichever e2e spec file Jest
+    // runs next in the same `--runInBand` process — see
+    // `daily-goal-job.e2e-spec.ts`'s own identical fix/doc comment for
+    // the full explanation.
+    await new Promise((resolve) => setTimeout(resolve, 500));
   });
 
   /** Polls real Postgres for up to `timeoutMs` — the Worker processes asynchronously off the queue, not synchronously with `publish()`. */

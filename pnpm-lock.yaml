@@ -919,6 +919,12 @@ importers:
       '@linguaai/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@linguaai/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@linguaai/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
       '@linguaai/validation':
         specifier: workspace:*
         version: link:../../packages/validation
