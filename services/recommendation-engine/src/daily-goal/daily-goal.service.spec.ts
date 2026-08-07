@@ -1,9 +1,16 @@
+import type { DomainEventPublisher } from '@linguaai/events';
+
 import type { WeaknessDetectionService } from '../weakness-detection/weakness-detection.service.js';
+import { DAILY_GOAL_READY_EVENT_TYPE } from './daily-goal.constants.js';
 import { DailyGoalService } from './daily-goal.service.js';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const LANGUAGE_ID = '22222222-2222-4222-8222-222222222222';
 const PLAN_ID = '33333333-3333-4333-8333-333333333333';
+
+function fakeEventPublisher(): jest.Mocked<Pick<DomainEventPublisher, 'publish'>> {
+  return { publish: jest.fn().mockResolvedValue(undefined) };
+}
 
 function fakePrisma() {
   return {
@@ -29,10 +36,12 @@ describe('DailyGoalService', () => {
   function buildService(
     prisma: ReturnType<typeof fakePrisma>,
     weaknessDetection: ReturnType<typeof fakeWeaknessDetection>,
+    eventPublisher: ReturnType<typeof fakeEventPublisher> = fakeEventPublisher(),
   ) {
     return new DailyGoalService(
       prisma as never,
       weaknessDetection as unknown as WeaknessDetectionService,
+      eventPublisher as unknown as DomainEventPublisher,
     );
   }
 
@@ -139,5 +148,34 @@ describe('DailyGoalService', () => {
       service.generateForPlan({ id: PLAN_ID, userId: USER_ID, languageId: LANGUAGE_ID }),
     ).resolves.toBeUndefined();
     expect(prisma.dailyGoal.upsert).toHaveBeenCalled();
+  });
+
+  it('publishes recommendation.daily_goal.ready with the same values just upserted, after the upsert (§6.5)', async () => {
+    const prisma = fakePrisma();
+    const eventPublisher = fakeEventPublisher();
+    const service = buildService(prisma, fakeWeaknessDetection(), eventPublisher);
+    jest.useFakeTimers({ now: new Date('2026-06-15T12:00:00.000Z') });
+
+    try {
+      await service.generateForPlan({ id: PLAN_ID, userId: USER_ID, languageId: LANGUAGE_ID });
+    } finally {
+      jest.useRealTimers();
+    }
+
+    expect(prisma.dailyGoal.upsert).toHaveBeenCalled();
+    const upsertOrder = prisma.dailyGoal.upsert.mock.invocationCallOrder[0];
+    const publishOrder = eventPublisher.publish.mock.invocationCallOrder[0];
+    expect(upsertOrder).toBeLessThan(publishOrder as number);
+
+    expect(eventPublisher.publish).toHaveBeenCalledWith(DAILY_GOAL_READY_EVENT_TYPE, {
+      userId: USER_ID,
+      payload: {
+        userId: USER_ID,
+        date: '2026-06-16',
+        targetXp: 50,
+        targetMinutes: 15,
+        targetActivities: 3,
+      },
+    });
   });
 });

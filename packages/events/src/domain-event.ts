@@ -45,15 +45,28 @@ export interface PublishParams<TPayload extends Record<string, unknown> = Record
 }
 
 /**
- * `producedBy` is always `'apps/api'` (EVENT_ARCHITECTURE.md §3's catalog
- * lists every identity event's producer this way, including
- * `identity.role.changed`/`identity.role.emergency_recovery` — Part 9A
- * distinguishes the bootstrap-CLI origin via the payload's own `changedBy:
- * 'system-bootstrap'` field, not a different envelope-level producer
- * identity) — not configurable per call site.
+ * `producedBy` defaults to `'apps/api'` — every producer until E7 T4 really
+ * was `apps/api` (EVENT_ARCHITECTURE.md §3's catalog lists every identity
+ * event's producer this way, including `identity.role.changed`/
+ * `identity.role.emergency_recovery` — Part 9A distinguishes the
+ * bootstrap-CLI origin via the payload's own `changedBy: 'system-bootstrap'`
+ * field, not a different envelope-level producer identity, a deliberate
+ * choice that predates this constructor param and is left as-is). **Real
+ * bug found and fixed at E7 T4**: this used to be a hardcoded literal, not
+ * a default, with a doc comment claiming it need never vary — false the
+ * moment `recommendation-engine` (§6.5's own `DomainEventPublisher` call
+ * site) becomes this platform's first non-`apps/api` producer. Every
+ * existing call site (all of them genuinely `apps/api`-origin) is
+ * unaffected by the default; `recommendation-engine`'s own construction
+ * passes `'services/recommendation-engine'` explicitly, matching
+ * `EVENT_ARCHITECTURE.md` §3's Producer column convention for every other
+ * non-`apps/api` row (e.g. `services/speech-service`, `services/ai-engine`).
  */
 export class DomainEventPublisher {
-  constructor(private readonly queue: Queue) {}
+  constructor(
+    private readonly queue: Queue,
+    private readonly producedBy: string = 'apps/api',
+  ) {}
 
   async publish<TPayload extends Record<string, unknown>>(
     type: string,
@@ -64,7 +77,7 @@ export class DomainEventPublisher {
       type,
       version: 1,
       occurredAt: new Date().toISOString(),
-      producedBy: 'apps/api',
+      producedBy: this.producedBy,
       tenantId: params.tenantId ?? null,
       userId: params.userId,
       payload: params.payload,
