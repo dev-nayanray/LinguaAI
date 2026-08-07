@@ -1,10 +1,44 @@
-// AI Coaching bounded context (ARCHITECTURE.md §2.1). First real content
-// (E6-T4): the structured critique object Writing-skill AI scoring returns
-// (E6 design doc §6.3, ADR-039). `CefrLevel` is a shared, platform-wide
-// concept, not context-specific data — reused from `@linguaai/types/learning`
-// (that file's own header invites this) rather than redefined here.
+// AI Coaching bounded context (ARCHITECTURE.md §2.1). Two independent
+// pieces of real content, landed by separate tasks: `AIAgentSession`
+// (E5 T10, ADR-033) mirrors packages/database/schema/ai.prisma's
+// AIAgentSession field-for-field — scoped to exactly what the
+// apps/api<->ai-engine contract needs, not a restatement of every AI
+// Coaching entity (AIMemoryEntry, KnowledgeBaseEntry, etc.), which have no
+// external wire contract yet and stay internal to services/ai-engine until
+// a task actually exposes one. `WritingCritique` (E6 T4, ADR-039) is the
+// structured critique object Writing-skill AI scoring returns; `CefrLevel`
+// is a shared, platform-wide concept, not context-specific data — reused
+// from `@linguaai/types/learning` (that file's own header invites this)
+// rather than redefined here.
+//
+// Timestamps are typed `string` (ISO 8601) — wire/domain types consumed
+// across the API boundary, not Prisma's own generated `Date`-typed types.
 
 import type { CefrLevel } from '../learning/index.js';
+
+export const ORCHESTRATOR_AGENT_PERSONAS = [
+  'PERSONAL_LANGUAGE_TEACHER',
+  'CONVERSATION_PARTNER',
+  'VOCABULARY_COACH',
+  'WRITING_COACH',
+  'EXAM_COACH',
+] as const;
+export type OrchestratorAgentPersona = (typeof ORCHESTRATOR_AGENT_PERSONAS)[number];
+
+export const AGENT_SESSION_STATUSES = ['ACTIVE', 'ENDED', 'ABANDONED'] as const;
+export type AgentSessionStatus = (typeof AGENT_SESSION_STATUSES)[number];
+
+export interface AIAgentSession {
+  id: string;
+  userId: string;
+  languageId: string;
+  orchestratorAgent: OrchestratorAgentPersona;
+  status: AgentSessionStatus;
+  startedAt: string;
+  endedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 /**
  * `AssessmentScoringService.scoreWritingResponse()`'s return shape

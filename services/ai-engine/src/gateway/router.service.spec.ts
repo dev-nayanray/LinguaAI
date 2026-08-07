@@ -15,6 +15,8 @@ const config: AiGatewayModuleConfig = {
   openAiApiKey: 'test-openai-key',
   teacherModel: 'claude-teacher-model',
   assessmentModel: 'claude-assessment-model',
+  teacherEconomyModel: undefined,
+  assessmentEconomyModel: undefined,
 };
 
 function fakeGenerateResponse(modelId: string): GenerateResponse {
@@ -64,6 +66,46 @@ describe('RouterService', () => {
 
       expect(anthropic.generate).toHaveBeenCalledTimes(1);
       expect(openai.generate).not.toHaveBeenCalled();
+    });
+
+    it('uses the economy model when tier="economy" and one is configured for the class', async () => {
+      const economyRouter = new RouterService(
+        { ...config, teacherEconomyModel: 'claude-teacher-economy' },
+        anthropic,
+        openai,
+      );
+      anthropic.generate.mockResolvedValue(fakeGenerateResponse('claude-teacher-economy'));
+
+      await economyRouter.generate('teacher', { messages: [] }, 'economy');
+
+      expect(anthropic.generate).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'claude-teacher-economy' }),
+      );
+    });
+
+    it('falls back to the default model when tier="economy" but no economy model is configured for the class', async () => {
+      anthropic.generate.mockResolvedValue(fakeGenerateResponse('claude-teacher-model'));
+
+      await router.generate('teacher', { messages: [] }, 'economy');
+
+      expect(anthropic.generate).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'claude-teacher-model' }),
+      );
+    });
+
+    it('uses the assessment economy model when tier="economy" and one is configured for that class', async () => {
+      const economyRouter = new RouterService(
+        { ...config, assessmentEconomyModel: 'claude-assessment-economy' },
+        anthropic,
+        openai,
+      );
+      anthropic.generate.mockResolvedValue(fakeGenerateResponse('claude-assessment-economy'));
+
+      await economyRouter.generate('assessment', { messages: [] }, 'economy');
+
+      expect(anthropic.generate).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'claude-assessment-economy' }),
+      );
     });
 
     it('fails over to the secondary provider when the primary rejects', async () => {
