@@ -14,15 +14,20 @@ import type {
 } from './model-provider.interface.js';
 
 /**
- * The two request classes `.env.example`'s own already-declared config
- * pins a model for (`AI_MODEL_TEACHER_DEFAULT`/`AI_MODEL_ASSESSMENT_DEFAULT`)
- * — this is T1's model-tiering mechanism: which model a request uses is
- * config-driven per class, never hardcoded per call site. A fuller
- * dynamic-tiering system (e.g. degrading to a cheaper model under cost
- * pressure) is T9's Cost Meter & Circuit Breaker's own concern, built on
- * top of this same per-class resolution, not a T1 redesign.
+ * The three request classes `.env.example`'s own already-declared config
+ * pins a model for (`AI_MODEL_TEACHER_DEFAULT`/`AI_MODEL_ASSESSMENT_DEFAULT`/
+ * `AI_MODEL_CONTENT_DEFAULT`) — this is T1's model-tiering mechanism: which
+ * model a request uses is config-driven per class, never hardcoded per call
+ * site. A fuller dynamic-tiering system (e.g. degrading to a cheaper model
+ * under cost pressure) is T9's Cost Meter & Circuit Breaker's own concern,
+ * built on top of this same per-class resolution, not a T1 redesign.
+ * `'content'` (E8 T4, ADR-041) is the third class — AI-assisted content
+ * drafting has a materially different cost/latency/safety profile than
+ * either conversational (`'teacher'`) or single-essay-scoring (`'assessment'`)
+ * calls, so per-class cost monitoring (ADR-012's circuit breaker) stays
+ * meaningful rather than conflating unrelated call shapes under one class.
  */
-export type AiRequestClass = 'teacher' | 'assessment';
+export type AiRequestClass = 'teacher' | 'assessment' | 'content';
 
 /** ADR-034 (T9): 'economy' is the cost circuit breaker's DEGRADE target — falls back to 'default' per class if no economy model is configured, rather than failing the request over a config gap. */
 export type ModelTier = 'default' | 'economy';
@@ -43,17 +48,36 @@ export class RouterService {
     ]);
   }
 
+  /** One lookup per class, not a chain of binary ternaries — the shape that stopped scaling the moment a third class (`'content'`, E8 T4) existed. */
+  private defaultModelFor(requestClass: AiRequestClass): string {
+    switch (requestClass) {
+      case 'teacher':
+        return this.config.teacherModel;
+      case 'assessment':
+        return this.config.assessmentModel;
+      case 'content':
+        return this.config.contentModel;
+    }
+  }
+
+  private economyModelFor(requestClass: AiRequestClass): string | undefined {
+    switch (requestClass) {
+      case 'teacher':
+        return this.config.teacherEconomyModel;
+      case 'assessment':
+        return this.config.assessmentEconomyModel;
+      case 'content':
+        return this.config.contentEconomyModel;
+    }
+  }
+
   private modelFor(requestClass: AiRequestClass, tier: ModelTier): string {
-    const defaultModel =
-      requestClass === 'teacher' ? this.config.teacherModel : this.config.assessmentModel;
+    const defaultModel = this.defaultModelFor(requestClass);
     if (tier === 'default') {
       return defaultModel;
     }
 
-    const economyModel =
-      requestClass === 'teacher'
-        ? this.config.teacherEconomyModel
-        : this.config.assessmentEconomyModel;
+    const economyModel = this.economyModelFor(requestClass);
     if (!economyModel) {
       this.logger.warn(
         `Economy tier requested for "${requestClass}" but no economy model is configured — using the default model instead.`,

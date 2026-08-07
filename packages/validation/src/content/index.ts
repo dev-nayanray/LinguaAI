@@ -338,3 +338,55 @@ export const exerciseAttemptResultResponseSchema = z.object({
   score: z.number().nullable(),
 });
 export type ExerciseAttemptResultResponse = z.infer<typeof exerciseAttemptResultResponseSchema>;
+
+// --- AI-assisted content drafting (E8 T4, §6.4) — shared between apps/api's admin endpoint and services/ai-engine's own ContentDraftingService/Controller ---
+
+/** `POST /v1/admin/lessons/ai-draft` request body — the raw generation inputs, not attached to any real DB row yet (an admin picks the real Unit to attach the reviewed draft under via the ordinary create endpoints, §6.1). */
+export const draftLessonRequestSchema = z.object({
+  languageId: z.string().uuid(),
+  targetLanguageName: z.string().min(1),
+  cefrLevel: cefrLevelSchema,
+  topic: z.string().min(1).max(500),
+});
+export type DraftLessonRequest = z.infer<typeof draftLessonRequestSchema>;
+
+/**
+ * The model's own proposed `Exercise` shape — `SPEAKING_PROMPT` is
+ * deliberately excluded from the type union entirely (`.exclude(...)`),
+ * not just discouraged by prompt instruction: generating a draft exercise
+ * type this epic's own submission endpoint (E8 T2) rejects with 422 for
+ * every learner, always, would be a real design smell, not a genuine draft.
+ * `correctAnswer`'s own shape convention (`{ correctIndex }`/`{ acceptable }`/
+ * `{ pairs }`) matches `exercise-scoring.util.ts`'s own expectations exactly
+ * — the whole point of a *reviewable* draft is that once an ADMIN approves
+ * it unedited, submitting it through T1's real create endpoint must score
+ * correctly against real learner attempts later.
+ */
+export const contentDraftExerciseSchema = z.object({
+  type: exerciseTypeSchema.exclude(['SPEAKING_PROMPT']),
+  prompt: z.string().min(1),
+  correctAnswer: z.record(z.string(), z.unknown()),
+});
+export type ContentDraftExercise = z.infer<typeof contentDraftExerciseSchema>;
+
+export const contentDraftActivitySchema = z.object({
+  type: activityTypeSchema,
+  title: z.string().min(1),
+  content: z.record(z.string(), z.unknown()),
+  exercises: z.array(contentDraftExerciseSchema).min(1).max(5),
+});
+export type ContentDraftActivity = z.infer<typeof contentDraftActivitySchema>;
+
+/**
+ * `ContentDraftingService.draftLesson()`'s own return shape (E8 T4, §6.4)
+ * — a proposal an `ADMIN` reviews, edits as needed, and submits through
+ * §6.1's real create endpoints. Never persisted directly by this schema's
+ * own consumers; no `id`/timestamps, since nothing has been created yet.
+ */
+export const contentDraftLessonSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().min(1),
+  estimatedMinutes: z.number().int().min(1),
+  activities: z.array(contentDraftActivitySchema).min(1).max(3),
+});
+export type ContentDraftLesson = z.infer<typeof contentDraftLessonSchema>;
