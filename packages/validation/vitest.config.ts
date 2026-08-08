@@ -17,6 +17,7 @@ export default defineConfig({
         'src/learning/**',
         'src/ai-coaching/**',
         'src/content/**',
+        'src/vocabulary/**',
         'src/commerce/**',
         'src/community/**',
         'src/enterprise/**',

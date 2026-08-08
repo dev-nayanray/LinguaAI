@@ -13,14 +13,16 @@ export default defineConfig({
       // real correctness is verified where they're actually consumed
       // (e.g. apps/api's own Jest suites exercising the Zod schemas built
       // from these types). commerce/community/enterprise remain genuinely
-      // empty placeholders (later epics); learning/ai-coaching/content
-      // have real content (E6/E8) but the same "no logic here" shape.
+      // empty placeholders (later epics); learning/ai-coaching/content/
+      // vocabulary have real content (E6/E8/E9) but the same "no logic
+      // here" shape.
       exclude: [
         'src/**/*.test.ts',
         'src/index.ts',
         'src/learning/**',
         'src/ai-coaching/**',
         'src/content/**',
+        'src/vocabulary/**',
         'src/commerce/**',
         'src/community/**',
         'src/enterprise/**',
