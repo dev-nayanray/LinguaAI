@@ -34,6 +34,16 @@
         "default": "./dist-cjs/ai-coaching/index.js"
       }
     },
+    "./content": {
+      "import": {
+        "types": "./dist/content/index.d.ts",
+        "default": "./dist/content/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/content/index.d.ts",
+        "default": "./dist-cjs/content/index.js"
+      }
+    },
     "./commerce": {
       "import": {
         "types": "./dist/commerce/index.d.ts",

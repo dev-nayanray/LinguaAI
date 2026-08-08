@@ -150,6 +150,8 @@ export const aiGatewayEnvSchema = z.object({
   OPENAI_API_KEY: z.string().min(1),
   AI_MODEL_TEACHER_DEFAULT: z.string().min(1),
   AI_MODEL_ASSESSMENT_DEFAULT: z.string().min(1),
+  /** E8 T4 (ADR-041) — the third `AiRequestClass`, AI-assisted content drafting (`services/ai-engine/src/content-authoring/`). Neither `'teacher'` (conversational) nor `'assessment'` (scoring) fits a content-generation call — the same class of gap ADR-039 already found for `PromptManagerService`'s own persona union. */
+  AI_MODEL_CONTENT_DEFAULT: z.string().min(1),
   /**
    * ADR-034 (E5 T9): the cost circuit breaker's DEGRADE stage target —
    * "degrade new requests to a cheaper model tier where the request
@@ -160,6 +162,7 @@ export const aiGatewayEnvSchema = z.object({
    */
   AI_MODEL_TEACHER_ECONOMY: optionalNonEmptyString,
   AI_MODEL_ASSESSMENT_ECONOMY: optionalNonEmptyString,
+  AI_MODEL_CONTENT_ECONOMY: optionalNonEmptyString,
 });
 export type AiGatewayEnv = z.infer<typeof aiGatewayEnvSchema>;
 

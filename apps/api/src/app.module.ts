@@ -11,6 +11,7 @@ import { AiEngineClientModule } from './modules/ai-engine/ai-engine-client.modul
 import { AssessmentModule } from './modules/assessment/index.js';
 import { AuditModule } from './modules/audit/index.js';
 import { AuthModule } from './modules/auth/index.js';
+import { CourseModule } from './modules/course/index.js';
 import { OrganizationsModule } from './modules/organizations/index.js';
 import { RecommendationsModule } from './modules/recommendations/index.js';
 import { UsersModule } from './modules/users/index.js';
@@ -26,6 +27,7 @@ import { UsersModule } from './modules/users/index.js';
     OrganizationsModule,
     AssessmentModule,
     RecommendationsModule,
+    CourseModule,
     AuditModule,
     AiEngineClientModule,
   ],

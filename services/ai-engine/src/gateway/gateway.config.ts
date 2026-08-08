@@ -12,9 +12,12 @@ export interface AiGatewayModuleConfig {
   openAiApiKey: string;
   teacherModel: string;
   assessmentModel: string;
+  /** E8 T4 (ADR-041) — the third `AiRequestClass`, AI-assisted content drafting. */
+  contentModel: string;
   /** ADR-034 (T9): the circuit breaker's DEGRADE target per class — undefined when no economy model is configured for that class. */
   teacherEconomyModel: string | undefined;
   assessmentEconomyModel: string | undefined;
+  contentEconomyModel: string | undefined;
 }
 
 /** Validated once, at module load (fail-fast, DEPLOYMENT.md §7) — same pattern as apps/api's auth.config.ts. */
@@ -26,7 +29,9 @@ export function resolveAiGatewayConfig(): AiGatewayModuleConfig {
     openAiApiKey: env.OPENAI_API_KEY,
     teacherModel: env.AI_MODEL_TEACHER_DEFAULT,
     assessmentModel: env.AI_MODEL_ASSESSMENT_DEFAULT,
+    contentModel: env.AI_MODEL_CONTENT_DEFAULT,
     teacherEconomyModel: env.AI_MODEL_TEACHER_ECONOMY,
     assessmentEconomyModel: env.AI_MODEL_ASSESSMENT_ECONOMY,
+    contentEconomyModel: env.AI_MODEL_CONTENT_ECONOMY,
   };
 }

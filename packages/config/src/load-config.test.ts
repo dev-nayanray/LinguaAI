@@ -96,7 +96,7 @@ describe('loadConfig', () => {
       expect(result).toEqual({ APP_DATABASE_URL: 'postgresql://app_role:pass@localhost:5432/db' });
     });
 
-    it('aiGatewayEnvSchema defaults AI_GATEWAY_DEFAULT_PROVIDER to "anthropic" but still requires both API keys and both model vars', () => {
+    it('aiGatewayEnvSchema defaults AI_GATEWAY_DEFAULT_PROVIDER to "anthropic" but still requires both API keys and all three model vars', () => {
       expect(() => loadConfig(aiGatewayEnvSchema, {})).toThrow(ConfigValidationError);
 
       const result = loadConfig(aiGatewayEnvSchema, {
@@ -104,6 +104,7 @@ describe('loadConfig', () => {
         OPENAI_API_KEY: 'sk-oai-test',
         AI_MODEL_TEACHER_DEFAULT: 'claude-sonnet-5',
         AI_MODEL_ASSESSMENT_DEFAULT: 'claude-sonnet-5',
+        AI_MODEL_CONTENT_DEFAULT: 'claude-sonnet-5',
       });
       expect(result.AI_GATEWAY_DEFAULT_PROVIDER).toBe('anthropic');
     });
@@ -114,6 +115,7 @@ describe('loadConfig', () => {
         OPENAI_API_KEY: 'sk-oai-test',
         AI_MODEL_TEACHER_DEFAULT: 'claude-sonnet-5',
         AI_MODEL_ASSESSMENT_DEFAULT: 'claude-sonnet-5',
+        AI_MODEL_CONTENT_DEFAULT: 'claude-sonnet-5',
         AI_MODEL_TEACHER_ECONOMY: '',
       });
       expect(result.AI_MODEL_TEACHER_ECONOMY).toBeUndefined();
@@ -127,6 +129,7 @@ describe('loadConfig', () => {
           OPENAI_API_KEY: 'sk-oai-test',
           AI_MODEL_TEACHER_DEFAULT: 'claude-sonnet-5',
           AI_MODEL_ASSESSMENT_DEFAULT: 'claude-sonnet-5',
+          AI_MODEL_CONTENT_DEFAULT: 'claude-sonnet-5',
         }),
       ).toThrow(ConfigValidationError);
     });

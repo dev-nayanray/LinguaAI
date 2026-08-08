@@ -13,6 +13,12 @@ import {
   type StartAgentSessionResponse,
   type WritingCritiqueSchema,
 } from '@linguaai/validation/ai-coaching';
+import {
+  contentDraftLessonSchema,
+  draftLessonRequestSchema,
+  type ContentDraftLesson,
+  type DraftLessonRequest,
+} from '@linguaai/validation/content';
 
 import { AI_ENGINE_CLIENT_CONFIG } from './ai-engine-client.config.js';
 import type { AiEngineClientEnv } from '@linguaai/config';
@@ -142,6 +148,30 @@ export class AiEngineClientService {
       );
     }
     return writingCritiqueSchema.parse(await response.json());
+  }
+
+  /**
+   * E8 T4 (ADR-041, §6.4) — wired into `apps/api`'s own `ADMIN`-only
+   * `POST /v1/admin/lessons/ai-draft` endpoint
+   * (`ContentAuthoringController`). Returns a proposal only; nothing is
+   * ever persisted on this call path — the caller submits the (possibly
+   * edited) draft through the real create endpoints (§6.1) explicitly.
+   */
+  async draftLesson(input: DraftLessonRequest): Promise<ContentDraftLesson> {
+    const response = await fetch(`${this.config.AI_ENGINE_URL}/v1/content-authoring/draft-lesson`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(draftLessonRequestSchema.parse(input)),
+    });
+    if (!response.ok) {
+      const errorBody = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      throw new Error(
+        `ai-engine returned ${response.status} drafting a lesson: ${errorBody?.error?.message ?? 'unknown error'}`,
+      );
+    }
+    return contentDraftLessonSchema.parse(await response.json());
   }
 
   async endSession(sessionId: string): Promise<void> {

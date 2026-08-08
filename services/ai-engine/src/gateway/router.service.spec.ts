@@ -15,8 +15,10 @@ const config: AiGatewayModuleConfig = {
   openAiApiKey: 'test-openai-key',
   teacherModel: 'claude-teacher-model',
   assessmentModel: 'claude-assessment-model',
+  contentModel: 'claude-content-model',
   teacherEconomyModel: undefined,
   assessmentEconomyModel: undefined,
+  contentEconomyModel: undefined,
 };
 
 function fakeGenerateResponse(modelId: string): GenerateResponse {
@@ -56,6 +58,16 @@ describe('RouterService', () => {
 
       expect(anthropic.generate).toHaveBeenCalledWith(
         expect.objectContaining({ model: 'claude-assessment-model' }),
+      );
+    });
+
+    it('uses the content model for the content request class (E8 T4, ADR-041)', async () => {
+      anthropic.generate.mockResolvedValue(fakeGenerateResponse('claude-content-model'));
+
+      await router.generate('content', { messages: [{ role: 'user', content: 'hi' }] });
+
+      expect(anthropic.generate).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'claude-content-model' }),
       );
     });
 

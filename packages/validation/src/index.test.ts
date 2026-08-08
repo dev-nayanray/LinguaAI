@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import * as aiCoaching from '@linguaai/validation/ai-coaching';
 import * as commerce from '@linguaai/validation/commerce';
 import * as community from '@linguaai/validation/community';
+import * as content from '@linguaai/validation/content';
 import * as enterprise from '@linguaai/validation/enterprise';
 import * as identity from '@linguaai/validation/identity';
 import * as learning from '@linguaai/validation/learning';
@@ -20,6 +21,7 @@ describe('@linguaai/validation subpath exports', () => {
     ['identity', identity],
     ['learning', learning],
     ['ai-coaching', aiCoaching],
+    ['content', content],
     ['commerce', commerce],
     ['community', community],
     ['enterprise', enterprise],
