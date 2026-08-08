@@ -13,6 +13,8 @@ import {
   type VocabularyItem,
 } from '@linguaai/types/vocabulary';
 
+import { cefrLevelSchema } from '../learning/index.js';
+
 /**
  * Compile-time-only drift guard (identical pattern to every other bounded
  * context's own `assertExtends`): fails to compile if a schema's inferred
@@ -186,3 +188,32 @@ export const submitDeckReviewRequestSchema = z.object({
   quality: z.number().int().min(0).max(5),
 });
 export type SubmitDeckReviewRequest = z.infer<typeof submitDeckReviewRequestSchema>;
+
+// --- AI-assisted vocabulary-item drafting (E9 T4, §6.4) — shared between apps/api's admin endpoint and services/ai-engine's own ContentDraftingService/Controller ---
+
+/** `POST /v1/admin/vocabulary-items/ai-draft` request body — the admin supplies the term and target-language context; the AI proposes `partOfSpeech`/`translations`/`exampleSentences`. Not attached to any real DB row yet — an admin submits the (possibly-edited) draft through T1's own real create endpoint (§6.1) to actually persist it. */
+export const draftVocabularyItemRequestSchema = z.object({
+  languageId: z.string().uuid(),
+  targetLanguageName: z.string().min(1),
+  cefrLevel: cefrLevelSchema,
+  term: z.string().min(1).max(200),
+});
+export type DraftVocabularyItemRequest = z.infer<typeof draftVocabularyItemRequestSchema>;
+
+/**
+ * `ContentDraftingService.draftVocabularyItem()`'s own return shape (E8 T4's
+ * `ContentDraftingService`, extended here rather than a new service, §6.4)
+ * — deliberately identical in shape to `createVocabularyItemRequestSchema`
+ * (§6.1), since the whole point of a *reviewable* draft is that once an
+ * `ADMIN` approves it unedited, it can be submitted through the real create
+ * endpoint verbatim. No `id`/timestamps, since nothing has been created yet.
+ */
+export const vocabularyItemDraftSchema = z.object({
+  term: z.string().min(1),
+  partOfSpeech: partOfSpeechSchema,
+  translations: z.record(z.string(), z.string().min(1)).refine((t) => Object.keys(t).length > 0, {
+    message: 'translations must include at least one entry',
+  }),
+  exampleSentences: z.array(vocabularyExampleSentenceSchema).min(1).max(3).optional(),
+});
+export type VocabularyItemDraft = z.infer<typeof vocabularyItemDraftSchema>;

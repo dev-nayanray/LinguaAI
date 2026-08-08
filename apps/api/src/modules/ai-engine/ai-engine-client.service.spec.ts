@@ -334,4 +334,57 @@ describe('AiEngineClientService', () => {
       );
     });
   });
+
+  describe('draftVocabularyItem', () => {
+    const request = {
+      languageId: '22222222-2222-2222-2222-222222222222',
+      targetLanguageName: 'Spanish',
+      cefrLevel: 'A2' as const,
+      term: 'hola',
+    };
+    const draft = {
+      term: 'hola',
+      partOfSpeech: 'INTERJECTION',
+      translations: { en: 'hello' },
+    };
+
+    it('POSTs the validated request body and returns the parsed draft', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => draft,
+      } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new AiEngineClientService(config);
+
+      const result = await client.draftVocabularyItem(request);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://ai-engine.internal:4001/v1/content-authoring/draft-vocabulary-item',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      const [, init] = fetchMock.mock.calls[0]!;
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual(request);
+      expect(result).toEqual(draft);
+    });
+
+    it('throws a clear error, including the upstream message, when ai-engine responds with a non-2xx status', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { message: 'model response failed schema validation' } }),
+      } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new AiEngineClientService(config);
+
+      await expect(client.draftVocabularyItem(request)).rejects.toThrow(
+        'ai-engine returned 500 drafting a vocabulary item: model response failed schema validation',
+      );
+    });
+  });
 });

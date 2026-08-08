@@ -19,6 +19,12 @@ import {
   type ContentDraftLesson,
   type DraftLessonRequest,
 } from '@linguaai/validation/content';
+import {
+  draftVocabularyItemRequestSchema,
+  vocabularyItemDraftSchema,
+  type DraftVocabularyItemRequest,
+  type VocabularyItemDraft,
+} from '@linguaai/validation/vocabulary';
 
 import { AI_ENGINE_CLIENT_CONFIG } from './ai-engine-client.config.js';
 import type { AiEngineClientEnv } from '@linguaai/config';
@@ -172,6 +178,33 @@ export class AiEngineClientService {
       );
     }
     return contentDraftLessonSchema.parse(await response.json());
+  }
+
+  /**
+   * Calls `services/ai-engine`'s `POST /v1/content-authoring/draft-vocabulary-item`
+   * endpoint (`ContentDraftingController.draftVocabularyItem()`, E9 T4,
+   * §6.4). Returns a proposal only; nothing is ever persisted on this call
+   * path — the caller submits the (possibly edited) draft through the real
+   * `POST /v1/admin/vocabulary-items` endpoint (§6.1) explicitly.
+   */
+  async draftVocabularyItem(input: DraftVocabularyItemRequest): Promise<VocabularyItemDraft> {
+    const response = await fetch(
+      `${this.config.AI_ENGINE_URL}/v1/content-authoring/draft-vocabulary-item`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(draftVocabularyItemRequestSchema.parse(input)),
+      },
+    );
+    if (!response.ok) {
+      const errorBody = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      throw new Error(
+        `ai-engine returned ${response.status} drafting a vocabulary item: ${errorBody?.error?.message ?? 'unknown error'}`,
+      );
+    }
+    return vocabularyItemDraftSchema.parse(await response.json());
   }
 
   async endSession(sessionId: string): Promise<void> {

@@ -4,23 +4,33 @@ import {
   type ContentDraftLesson,
   type DraftLessonRequest,
 } from '@linguaai/validation/content';
+import {
+  vocabularyItemDraftSchema,
+  type DraftVocabularyItemRequest,
+  type VocabularyItemDraft,
+} from '@linguaai/validation/vocabulary';
 
 import { RouterService } from '../gateway/router.service.js';
 import { renderTemplate } from '../prompts/render-template.js';
 import { SafetyLayerService } from '../safety/safety-layer.service.js';
 import { contentDraftingPromptTemplate } from './content-drafting.prompt.js';
+import { vocabularyDraftingPromptTemplate } from './vocabulary-drafting.prompt.js';
 
 /**
- * `services/ai-engine/src/content-authoring/` (E8 T4, §6.4, ADR-041).
- * Deliberately not routed through `OrchestratorService`/`AIAgentSession` —
- * a one-shot, structured-output task with no session, memory, or
- * multi-turn concept, the same reasoning `AssessmentScoringService`
- * (ADR-039) already established for its own one-shot scoring task.
- * Composes `RouterService` (T1) and `SafetyLayerService` (T8) directly.
- * No `RagRetrievalService` grounding here, unlike `AssessmentScoringService`
- * — a lesson draft is creative generation an `ADMIN` will review and edit,
- * not a factual/scoring claim `AI_SYSTEM.md` §2's own RAG-grounding
- * requirement applies to.
+ * `services/ai-engine/src/content-authoring/` (E8 T4, §6.4, ADR-041; E9 T4
+ * extends it with `draftVocabularyItem()` rather than a new service — the
+ * same "'content' AiRequestClass, admin-review-gated, never auto-published"
+ * shape applies identically to a vocabulary item as to a lesson, no
+ * materially different cost/latency/safety profile to justify a separate
+ * home, E9 design doc §3.7). Deliberately not routed through
+ * `OrchestratorService`/`AIAgentSession` — a one-shot, structured-output
+ * task with no session, memory, or multi-turn concept, the same reasoning
+ * `AssessmentScoringService` (ADR-039) already established for its own
+ * one-shot scoring task. Composes `RouterService` (T1) and
+ * `SafetyLayerService` (T8) directly. No `RagRetrievalService` grounding
+ * here, unlike `AssessmentScoringService` — a draft is creative generation
+ * an `ADMIN` will review and edit, not a factual/scoring claim `AI_SYSTEM.md`
+ * §2's own RAG-grounding requirement applies to.
  */
 @Injectable()
 export class ContentDraftingService {
@@ -51,8 +61,26 @@ export class ContentDraftingService {
       temperature: 0.7,
     });
 
-    const draft = this.parseAndValidate(response.content);
-    return this.sanitizeDraft(draft);
+    const draft = this.parseAndValidateLessonDraft(response.content);
+    return this.sanitizeLessonDraft(draft);
+  }
+
+  /** Mirrors `draftLesson()` exactly (E9 T4, §6.4) — same `'content'` request class, same no-`delimitUntrustedContent` reasoning (the caller is always an authenticated `ADMIN`, never an anonymous learner), same mandatory `sanitizeOutput` on every model-generated free-text field. */
+  async draftVocabularyItem(input: DraftVocabularyItemRequest): Promise<VocabularyItemDraft> {
+    const systemPrompt = renderTemplate(vocabularyDraftingPromptTemplate.template, {
+      targetLanguageName: input.targetLanguageName,
+      cefrLevel: input.cefrLevel,
+      term: input.term,
+    });
+
+    const response = await this.router.generate('content', {
+      systemPrompt,
+      messages: [{ role: 'user', content: `Draft a vocabulary catalog entry for: ${input.term}` }],
+      temperature: 0.7,
+    });
+
+    const draft = this.parseAndValidateVocabularyDraft(response.content);
+    return this.sanitizeVocabularyDraft(draft);
   }
 
   /**
@@ -64,20 +92,8 @@ export class ContentDraftingService {
    * doc comment this mirrors, including tolerating a ```json markdown
    * fence, a well-known real-model quirk).
    */
-  private parseAndValidate(rawContent: string): ContentDraftLesson {
-    const unfenced = rawContent
-      .trim()
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```$/, '');
-
-    let parsedJson: unknown;
-    try {
-      parsedJson = JSON.parse(unfenced);
-    } catch {
-      throw new Error(
-        'ContentDraftingService: model response was not valid JSON — refusing to guess a draft',
-      );
-    }
+  private parseAndValidateLessonDraft(rawContent: string): ContentDraftLesson {
+    const parsedJson = parseJsonTolerantOfMarkdownFence(rawContent);
 
     const result = contentDraftLessonSchema.safeParse(parsedJson);
     if (!result.success) {
@@ -89,7 +105,7 @@ export class ContentDraftingService {
   }
 
   /** Every model-generated free-text field is sanitized (AI_GOVERNANCE.md §7) before this draft is ever returned to `apps/api` — the exercise prompt/activity title/lesson description are all rendered as rich text once an ADMIN reviews the draft, the same "AI output rendered as rich content is sanitized before rendering" rule every other model-generated text in this platform already carries. */
-  private sanitizeDraft(draft: ContentDraftLesson): ContentDraftLesson {
+  private sanitizeLessonDraft(draft: ContentDraftLesson): ContentDraftLesson {
     return {
       ...draft,
       description: this.safetyLayer.sanitizeOutput(draft.description),
@@ -102,5 +118,54 @@ export class ContentDraftingService {
         })),
       })),
     };
+  }
+
+  /** Same "not valid JSON" / "fails schema validation" discipline as `parseAndValidateLessonDraft` (E9 T4). */
+  private parseAndValidateVocabularyDraft(rawContent: string): VocabularyItemDraft {
+    const parsedJson = parseJsonTolerantOfMarkdownFence(rawContent);
+
+    const result = vocabularyItemDraftSchema.safeParse(parsedJson);
+    if (!result.success) {
+      throw new Error(
+        `ContentDraftingService: model response failed schema validation: ${result.error.message}`,
+      );
+    }
+    return result.data;
+  }
+
+  /** Every model-generated free-text field is sanitized (AI_GOVERNANCE.md §7) — `term` is admin-supplied input, never model-generated, so it is deliberately not sanitized here (it is validated/persisted as-is by the real create endpoint, §6.1, the same way it always is). */
+  private sanitizeVocabularyDraft(draft: VocabularyItemDraft): VocabularyItemDraft {
+    return {
+      ...draft,
+      translations: Object.fromEntries(
+        Object.entries(draft.translations).map(([lang, value]) => [
+          lang,
+          this.safetyLayer.sanitizeOutput(value),
+        ]),
+      ),
+      exampleSentences: draft.exampleSentences?.map((example) => ({
+        sentence: this.safetyLayer.sanitizeOutput(example.sentence),
+        translation:
+          example.translation !== undefined
+            ? this.safetyLayer.sanitizeOutput(example.translation)
+            : undefined,
+      })),
+    };
+  }
+}
+
+/** Shared by both draft parsers (E9 T4) — tolerates a ```json markdown-fenced response, a well-known real-model quirk, then attempts a real `JSON.parse`, throwing a clear error rather than ever guessing at malformed output. */
+function parseJsonTolerantOfMarkdownFence(rawContent: string): unknown {
+  const unfenced = rawContent
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '');
+
+  try {
+    return JSON.parse(unfenced);
+  } catch {
+    throw new Error(
+      'ContentDraftingService: model response was not valid JSON — refusing to guess a draft',
+    );
   }
 }
