@@ -24,6 +24,7 @@ describe('VocabularyModule (e2e)', () => {
   const createdUserIds: string[] = [];
   const createdLanguageIds: string[] = [];
   const createdVocabularyItemIds: string[] = [];
+  const createdPersonalDictionaryIds: string[] = [];
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
@@ -36,6 +37,11 @@ describe('VocabularyModule (e2e)', () => {
   });
 
   afterAll(async () => {
+    if (createdPersonalDictionaryIds.length > 0) {
+      await setupPrisma.personalDictionary.deleteMany({
+        where: { id: { in: createdPersonalDictionaryIds } },
+      });
+    }
     if (createdVocabularyItemIds.length > 0) {
       await setupPrisma.vocabularyItem.deleteMany({
         where: { id: { in: createdVocabularyItemIds } },
@@ -208,6 +214,180 @@ describe('VocabularyModule (e2e)', () => {
         .get(`/v1/vocabulary-items?languageId=${languageId}`)
         .set('Authorization', `Bearer ${learner.accessToken}`);
       expect(listAfterDeleteRes.body.data.map((i: { id: string }) => i.id)).not.toContain(itemId);
+    });
+  });
+
+  describe('POST /v1/vocabulary/personal-dictionary', () => {
+    it('rejects an unauthenticated request with 401', async () => {
+      const languageId = await freshLanguage();
+      const res = await request(app.getHttpServer())
+        .post('/v1/vocabulary/personal-dictionary')
+        .send({ languageId, term: 'perro', source: 'MANUAL' });
+      expect(res.status).toBe(401);
+    });
+
+    it('saves a freeform term with no vocabularyItemId link', async () => {
+      const learner = await freshSession();
+      const languageId = await freshLanguage();
+
+      const res = await request(app.getHttpServer())
+        .post('/v1/vocabulary/personal-dictionary')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ languageId, term: 'perro', translation: 'dog', source: 'CAMERA_TRANSLATION' });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        userId: learner.userId,
+        languageId,
+        term: 'perro',
+        translation: 'dog',
+        source: 'CAMERA_TRANSLATION',
+        vocabularyItemId: null,
+      });
+      createdPersonalDictionaryIds.push(res.body.id);
+    });
+
+    it('returns 404 when the supplied vocabularyItemId does not reference a real catalog item, and creates nothing', async () => {
+      const learner = await freshSession();
+      const languageId = await freshLanguage();
+
+      const res = await request(app.getHttpServer())
+        .post('/v1/vocabulary/personal-dictionary')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({
+          languageId,
+          term: 'perro',
+          source: 'MANUAL',
+          vocabularyItemId: randomUUID(),
+        });
+
+      expect(res.status).toBe(404);
+
+      const listRes = await request(app.getHttpServer())
+        .get(`/v1/vocabulary/personal-dictionary?languageId=${languageId}`)
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+      expect(listRes.body.data).toHaveLength(0);
+    });
+
+    it('links to a real catalog VocabularyItem when a valid vocabularyItemId is supplied', async () => {
+      const admin = await freshAdminSession();
+      const learner = await freshSession();
+      const languageId = await freshLanguage();
+
+      const catalogRes = await request(app.getHttpServer())
+        .post('/v1/admin/vocabulary-items')
+        .set('Authorization', `Bearer ${admin.accessToken}`)
+        .send({ languageId, term: 'perro', partOfSpeech: 'NOUN', translations: { en: 'dog' } });
+      const vocabularyItemId = catalogRes.body.id as string;
+      createdVocabularyItemIds.push(vocabularyItemId);
+
+      const res = await request(app.getHttpServer())
+        .post('/v1/vocabulary/personal-dictionary')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ languageId, term: 'perro', source: 'CONVERSATION', vocabularyItemId });
+
+      expect(res.status).toBe(201);
+      expect(res.body.vocabularyItemId).toBe(vocabularyItemId);
+      createdPersonalDictionaryIds.push(res.body.id);
+    });
+  });
+
+  describe('GET /v1/vocabulary/personal-dictionary', () => {
+    it("only ever lists the caller's own entries, cursor-paginated, filterable by languageId", async () => {
+      const owner = await freshSession();
+      const otherUser = await freshSession();
+      const languageId = await freshLanguage();
+      const otherLanguageId = await freshLanguage();
+
+      const terms = ['uno', 'dos', 'tres'];
+      for (const term of terms) {
+        const res = await request(app.getHttpServer())
+          .post('/v1/vocabulary/personal-dictionary')
+          .set('Authorization', `Bearer ${owner.accessToken}`)
+          .send({ languageId, term, source: 'MANUAL' });
+        createdPersonalDictionaryIds.push(res.body.id);
+      }
+      // A different-language entry for the same owner -- excluded by the languageId filter.
+      const otherLangRes = await request(app.getHttpServer())
+        .post('/v1/vocabulary/personal-dictionary')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ languageId: otherLanguageId, term: 'quattro', source: 'MANUAL' });
+      createdPersonalDictionaryIds.push(otherLangRes.body.id);
+      // A different owner's entry for the same language -- never visible to `owner`.
+      const otherUserRes = await request(app.getHttpServer())
+        .post('/v1/vocabulary/personal-dictionary')
+        .set('Authorization', `Bearer ${otherUser.accessToken}`)
+        .send({ languageId, term: 'cinco', source: 'MANUAL' });
+      createdPersonalDictionaryIds.push(otherUserRes.body.id);
+
+      const firstPage = await request(app.getHttpServer())
+        .get(`/v1/vocabulary/personal-dictionary?languageId=${languageId}&limit=2`)
+        .set('Authorization', `Bearer ${owner.accessToken}`);
+      expect(firstPage.status).toBe(200);
+      expect(firstPage.body.data).toHaveLength(2);
+      expect(firstPage.body.meta.nextCursor).not.toBeNull();
+      expect(firstPage.body.data.every((e: { term: string }) => terms.includes(e.term))).toBe(true);
+
+      const secondPage = await request(app.getHttpServer())
+        .get(
+          `/v1/vocabulary/personal-dictionary?languageId=${languageId}&limit=2&cursor=${firstPage.body.meta.nextCursor}`,
+        )
+        .set('Authorization', `Bearer ${owner.accessToken}`);
+      expect(secondPage.status).toBe(200);
+      expect(secondPage.body.data).toHaveLength(1);
+      expect(secondPage.body.meta.nextCursor).toBeNull();
+
+      const allTermsSeen = [...firstPage.body.data, ...secondPage.body.data].map(
+        (e: { term: string }) => e.term,
+      );
+      expect(allTermsSeen.sort()).toEqual([...terms].sort());
+    });
+  });
+
+  describe('DELETE /v1/vocabulary/personal-dictionary/:id', () => {
+    it("removes the caller's own entry, which then no longer appears in the list", async () => {
+      const learner = await freshSession();
+      const languageId = await freshLanguage();
+
+      const createRes = await request(app.getHttpServer())
+        .post('/v1/vocabulary/personal-dictionary')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ languageId, term: 'seis', source: 'MANUAL' });
+      const entryId = createRes.body.id as string;
+
+      const deleteRes = await request(app.getHttpServer())
+        .delete(`/v1/vocabulary/personal-dictionary/${entryId}`)
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+      expect(deleteRes.status).toBe(204);
+
+      const listRes = await request(app.getHttpServer())
+        .get(`/v1/vocabulary/personal-dictionary?languageId=${languageId}`)
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+      expect(listRes.body.data.map((e: { id: string }) => e.id)).not.toContain(entryId);
+    });
+
+    it("returns 404 (not 403) for another user's entry, never leaking its existence", async () => {
+      const owner = await freshSession();
+      const otherUser = await freshSession();
+      const languageId = await freshLanguage();
+
+      const createRes = await request(app.getHttpServer())
+        .post('/v1/vocabulary/personal-dictionary')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ languageId, term: 'siete', source: 'MANUAL' });
+      const entryId = createRes.body.id as string;
+      createdPersonalDictionaryIds.push(entryId);
+
+      const deleteRes = await request(app.getHttpServer())
+        .delete(`/v1/vocabulary/personal-dictionary/${entryId}`)
+        .set('Authorization', `Bearer ${otherUser.accessToken}`);
+      expect(deleteRes.status).toBe(404);
+
+      // Still there -- the cross-user delete attempt never touched it.
+      const listRes = await request(app.getHttpServer())
+        .get(`/v1/vocabulary/personal-dictionary?languageId=${languageId}`)
+        .set('Authorization', `Bearer ${owner.accessToken}`);
+      expect(listRes.body.data.map((e: { id: string }) => e.id)).toContain(entryId);
     });
   });
 });

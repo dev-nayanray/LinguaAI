@@ -5,7 +5,12 @@
 // context's own established schema-plus-drift-guard pattern.
 
 import { z } from 'zod';
-import { PARTS_OF_SPEECH, type VocabularyItem } from '@linguaai/types/vocabulary';
+import {
+  PARTS_OF_SPEECH,
+  VOCABULARY_SOURCES,
+  type PersonalDictionaryEntry,
+  type VocabularyItem,
+} from '@linguaai/types/vocabulary';
 
 /**
  * Compile-time-only drift guard (identical pattern to every other bounded
@@ -92,3 +97,49 @@ export const vocabularyItemListResponseSchema = z.object({
   }),
 });
 export type VocabularyItemListResponse = z.infer<typeof vocabularyItemListResponseSchema>;
+
+// --- Personal dictionary (E9-T2, §6.2) ---
+
+export const vocabularySourceSchema = z.enum(VOCABULARY_SOURCES);
+
+export const personalDictionaryEntrySchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  languageId: z.string().uuid(),
+  term: z.string(),
+  translation: z.string().nullable(),
+  source: vocabularySourceSchema,
+  notes: z.string().nullable(),
+  vocabularyItemId: z.string().uuid().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+assertExtends<PersonalDictionaryEntry, z.infer<typeof personalDictionaryEntrySchema>>();
+export type PersonalDictionaryEntryResponse = z.infer<typeof personalDictionaryEntrySchema>;
+
+/** `POST /v1/vocabulary/personal-dictionary` — `userId` is never client-supplied, always the caller's own id (set server-side). `vocabularyItemId`, when supplied, is validated server-side to reference a real, non-deleted `VocabularyItem` (design doc §6.2) — never trusted unchecked. */
+export const createPersonalDictionaryEntryRequestSchema = z.object({
+  languageId: z.string().uuid(),
+  term: z.string().min(1),
+  translation: z.string().min(1).optional(),
+  source: vocabularySourceSchema,
+  notes: z.string().min(1).optional(),
+  vocabularyItemId: z.string().uuid().optional(),
+});
+export type CreatePersonalDictionaryEntryRequest = z.infer<
+  typeof createPersonalDictionaryEntryRequestSchema
+>;
+
+/** `GET /v1/vocabulary/personal-dictionary` query params — cursor-paginated (API_GUIDELINES.md §4's own "any list that changes while being paged" case, a per-user list that grows over time), reusing `auditLogQuerySchema`'s own established `{cursor, limit}` shape (`@linguaai/validation/identity`) rather than inventing a new one. */
+export const personalDictionaryListQuerySchema = z.object({
+  languageId: z.string().uuid().optional(),
+  cursor: z.string().uuid().optional(),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+});
+export type PersonalDictionaryListQuery = z.infer<typeof personalDictionaryListQuerySchema>;
+
+export const personalDictionaryListResponseSchema = z.object({
+  data: z.array(personalDictionaryEntrySchema),
+  meta: z.object({ nextCursor: z.string().uuid().nullable() }),
+});
+export type PersonalDictionaryListResponse = z.infer<typeof personalDictionaryListResponseSchema>;
