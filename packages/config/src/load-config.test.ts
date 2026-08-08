@@ -10,6 +10,8 @@ import {
   databaseEnvSchema,
   nodeEnvSchema,
   redisEnvSchema,
+  speechProviderEnvSchema,
+  speechSessionTokenEnvSchema,
 } from './schemas.js';
 
 describe('loadConfig', () => {
@@ -141,6 +143,24 @@ describe('loadConfig', () => {
         AI_ENGINE_URL: 'http://localhost:4001',
       });
       expect(result.AI_ENGINE_URL).toBe('http://localhost:4001');
+    });
+
+    it('speechSessionTokenEnvSchema requires SPEECH_SESSION_TOKEN_SECRET', () => {
+      expect(() => loadConfig(speechSessionTokenEnvSchema, {})).toThrow(
+        /SPEECH_SESSION_TOKEN_SECRET/,
+      );
+
+      const result = loadConfig(speechSessionTokenEnvSchema, {
+        SPEECH_SESSION_TOKEN_SECRET: 'a-real-secret',
+      });
+      expect(result.SPEECH_SESSION_TOKEN_SECRET).toBe('a-real-secret');
+    });
+
+    it('speechProviderEnvSchema requires OPENAI_API_KEY', () => {
+      expect(() => loadConfig(speechProviderEnvSchema, {})).toThrow(/OPENAI_API_KEY/);
+
+      const result = loadConfig(speechProviderEnvSchema, { OPENAI_API_KEY: 'sk-test' });
+      expect(result.OPENAI_API_KEY).toBe('sk-test');
     });
 
     it('fragments merge together into one composite schema, as a consuming app would', () => {

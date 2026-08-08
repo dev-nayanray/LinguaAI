@@ -14,6 +14,8 @@ export {
   loginFailureEnvSchema,
   aiGatewayEnvSchema,
   aiEngineClientEnvSchema,
+  speechSessionTokenEnvSchema,
+  speechProviderEnvSchema,
   type NodeEnv,
   type ServerUrlEnv,
   type DatabaseEnv,
@@ -27,4 +29,6 @@ export {
   type LoginFailureEnv,
   type AiGatewayEnv,
   type AiEngineClientEnv,
+  type SpeechSessionTokenEnv,
+  type SpeechProviderEnv,
 } from './schemas.js';

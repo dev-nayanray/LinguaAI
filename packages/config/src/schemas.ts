@@ -180,6 +180,38 @@ export const aiEngineClientEnvSchema = z.object({
 });
 export type AiEngineClientEnv = z.infer<typeof aiEngineClientEnvSchema>;
 
+/**
+ * Consumed by both `apps/api` (signs, E10 T1/T2 `SpeakingModule`) and
+ * `services/speech-service` (verifies, T1) — the shared HMAC secret behind
+ * the short-lived internal token that authorizes a client's direct
+ * WebSocket connection to `speech-service` (design doc §6.2, ADR-043).
+ * Declared as its own minimal fragment rather than folded into
+ * `authEnvSchema` (a materially different purpose/rotation schedule from
+ * the user-facing access-token secret) — the same "own fragment per
+ * distinct secret" discipline `loginFailureEnvSchema`/`mfaEnvSchema`
+ * already established. A base64-encoded 32-byte key
+ * (`openssl rand -base64 32`), the same convention `MFA_SECRET_ENCRYPTION_KEY`
+ * already documents.
+ */
+export const speechSessionTokenEnvSchema = z.object({
+  SPEECH_SESSION_TOKEN_SECRET: z.string().min(1),
+});
+export type SpeechSessionTokenEnv = z.infer<typeof speechSessionTokenEnvSchema>;
+
+/**
+ * Consumed by `services/speech-service`'s own speech-provider module (E10
+ * T1, ADR-043) — reuses the platform's already-integrated `OPENAI_API_KEY`
+ * as its own independently-declared fragment (the same
+ * `appDatabaseEnvSchema`/`appRoleDatabaseEnvSchema` precedent: a service
+ * with no need for `aiGatewayEnvSchema`'s own wider surface — Anthropic
+ * key, per-request-class model names — is never required to configure
+ * credentials it will never use).
+ */
+export const speechProviderEnvSchema = z.object({
+  OPENAI_API_KEY: z.string().min(1),
+});
+export type SpeechProviderEnv = z.infer<typeof speechProviderEnvSchema>;
+
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
 export type ServerUrlEnv = z.infer<typeof serverUrlEnvSchema>;
 export type DatabaseEnv = z.infer<typeof databaseEnvSchema>;
