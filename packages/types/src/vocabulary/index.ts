@@ -1,10 +1,11 @@
 // Vocabulary intelligence bounded context (ARCHITECTURE.md §2.1, DATABASE.md
 // §2.4). First real content (E9-T1): the curated `VocabularyItem` catalog,
 // mirroring vocabulary.prisma field-for-field (E4 T4's schema). E9-T2 adds
-// `PersonalDictionary`. Timestamps are typed `string` (ISO 8601) —
-// wire/domain types consumed across the API boundary, not Prisma's own
-// generated `Date`-typed types (packages/database), the same convention
-// @linguaai/types/content already established.
+// `PersonalDictionary`; E9-T3 adds `UserVocabulary` (the SRS deck, ADR-042).
+// Timestamps are typed `string` (ISO 8601) — wire/domain types consumed
+// across the API boundary, not Prisma's own generated `Date`-typed types
+// (packages/database), the same convention @linguaai/types/content already
+// established.
 
 export const PARTS_OF_SPEECH = [
   'NOUN',
@@ -61,6 +62,27 @@ export interface PersonalDictionaryEntry {
   source: VocabularySource;
   notes: string | null;
   vocabularyItemId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Per-user SRS (spaced-repetition) state for a `VocabularyItem` (E9-T3,
+ * §6.3, ADR-042) — the SM-2-derivative scheduling algorithm's own state,
+ * mirroring vocabulary.prisma's `UserVocabulary` field-for-field. Unlike
+ * `PersonalDictionaryEntry`, `vocabularyItemId` here is never nullable — a
+ * card can only be reviewed against a real, curated catalog entry (design
+ * doc §3.3's own found asymmetry).
+ */
+export interface UserVocabularyEntry {
+  id: string;
+  userId: string;
+  vocabularyItemId: string;
+  easeFactor: number;
+  intervalDays: number;
+  repetitions: number;
+  nextReviewAt: string;
+  lastReviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

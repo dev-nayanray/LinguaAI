@@ -9,6 +9,7 @@ import {
   PARTS_OF_SPEECH,
   VOCABULARY_SOURCES,
   type PersonalDictionaryEntry,
+  type UserVocabularyEntry,
   type VocabularyItem,
 } from '@linguaai/types/vocabulary';
 
@@ -143,3 +144,45 @@ export const personalDictionaryListResponseSchema = z.object({
   meta: z.object({ nextCursor: z.string().uuid().nullable() }),
 });
 export type PersonalDictionaryListResponse = z.infer<typeof personalDictionaryListResponseSchema>;
+
+// --- SRS review engine (E9-T3, §6.3, ADR-042) ---
+
+export const userVocabularyEntrySchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  vocabularyItemId: z.string().uuid(),
+  easeFactor: z.number(),
+  intervalDays: z.number().int(),
+  repetitions: z.number().int(),
+  nextReviewAt: z.string().datetime(),
+  lastReviewedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+assertExtends<UserVocabularyEntry, z.infer<typeof userVocabularyEntrySchema>>();
+export type UserVocabularyEntryResponse = z.infer<typeof userVocabularyEntrySchema>;
+
+/** `POST /v1/vocabulary/deck` — adds a real, non-deleted `VocabularyItem` to the caller's own SRS deck (validated the same way `CreatePersonalDictionaryEntryRequest.vocabularyItemId` is, §6.2); idempotent on an already-added item (§6.3's own design). */
+export const addToDeckRequestSchema = z.object({
+  vocabularyItemId: z.string().uuid(),
+});
+export type AddToDeckRequest = z.infer<typeof addToDeckRequestSchema>;
+
+/** `GET /v1/vocabulary/deck/due` query params — cursor-paginated, the same `{cursor, limit}` shape §6.2's personal-dictionary list already established; no `languageId` filter at MVP (§10's own deliberately-undesigned scope). */
+export const dueDeckListQuerySchema = z.object({
+  cursor: z.string().uuid().optional(),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+});
+export type DueDeckListQuery = z.infer<typeof dueDeckListQuerySchema>;
+
+export const dueDeckListResponseSchema = z.object({
+  data: z.array(userVocabularyEntrySchema),
+  meta: z.object({ nextCursor: z.string().uuid().nullable() }),
+});
+export type DueDeckListResponse = z.infer<typeof dueDeckListResponseSchema>;
+
+/** `POST /v1/vocabulary/deck/:id/reviews` — `quality` is the literal SM-2 input scale (0-5); mapping a friendlier button set onto this range is a UI concern, out of this backend epic's own scope (§3.5). */
+export const submitDeckReviewRequestSchema = z.object({
+  quality: z.number().int().min(0).max(5),
+});
+export type SubmitDeckReviewRequest = z.infer<typeof submitDeckReviewRequestSchema>;

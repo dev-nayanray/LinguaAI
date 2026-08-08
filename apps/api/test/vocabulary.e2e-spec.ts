@@ -25,6 +25,7 @@ describe('VocabularyModule (e2e)', () => {
   const createdLanguageIds: string[] = [];
   const createdVocabularyItemIds: string[] = [];
   const createdPersonalDictionaryIds: string[] = [];
+  const createdUserVocabularyIds: string[] = [];
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
@@ -37,6 +38,11 @@ describe('VocabularyModule (e2e)', () => {
   });
 
   afterAll(async () => {
+    if (createdUserVocabularyIds.length > 0) {
+      await setupPrisma.userVocabulary.deleteMany({
+        where: { id: { in: createdUserVocabularyIds } },
+      });
+    }
     if (createdPersonalDictionaryIds.length > 0) {
       await setupPrisma.personalDictionary.deleteMany({
         where: { id: { in: createdPersonalDictionaryIds } },
@@ -388,6 +394,201 @@ describe('VocabularyModule (e2e)', () => {
         .get(`/v1/vocabulary/personal-dictionary?languageId=${languageId}`)
         .set('Authorization', `Bearer ${owner.accessToken}`);
       expect(listRes.body.data.map((e: { id: string }) => e.id)).toContain(entryId);
+    });
+  });
+
+  /** Authors a real, non-deleted catalog VocabularyItem for the SRS deck tests to add. */
+  async function authorVocabularyItem(
+    admin: RegisteredSession,
+    languageId: string,
+  ): Promise<string> {
+    const res = await request(app.getHttpServer())
+      .post('/v1/admin/vocabulary-items')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ languageId, term: 'ocho', partOfSpeech: 'OTHER', translations: { en: 'eight' } });
+    createdVocabularyItemIds.push(res.body.id);
+    return res.body.id as string;
+  }
+
+  describe('POST /v1/vocabulary/deck', () => {
+    it('rejects an unauthenticated request with 401', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/v1/vocabulary/deck')
+        .send({ vocabularyItemId: randomUUID() });
+      expect(res.status).toBe(401);
+    });
+
+    it('adds a real catalog item to the deck at SM-2 defaults', async () => {
+      const admin = await freshAdminSession();
+      const learner = await freshSession();
+      const languageId = await freshLanguage();
+      const vocabularyItemId = await authorVocabularyItem(admin, languageId);
+
+      const res = await request(app.getHttpServer())
+        .post('/v1/vocabulary/deck')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ vocabularyItemId });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        userId: learner.userId,
+        vocabularyItemId,
+        easeFactor: 2.5,
+        intervalDays: 0,
+        repetitions: 0,
+        lastReviewedAt: null,
+      });
+      createdUserVocabularyIds.push(res.body.id);
+    });
+
+    it('is idempotent -- adding the same item twice returns the same row, not a duplicate', async () => {
+      const admin = await freshAdminSession();
+      const learner = await freshSession();
+      const languageId = await freshLanguage();
+      const vocabularyItemId = await authorVocabularyItem(admin, languageId);
+
+      const first = await request(app.getHttpServer())
+        .post('/v1/vocabulary/deck')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ vocabularyItemId });
+      createdUserVocabularyIds.push(first.body.id);
+
+      const second = await request(app.getHttpServer())
+        .post('/v1/vocabulary/deck')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ vocabularyItemId });
+
+      expect(second.status).toBe(201);
+      expect(second.body.id).toBe(first.body.id);
+
+      const count = await setupPrisma.userVocabulary.count({
+        where: { userId: learner.userId, vocabularyItemId },
+      });
+      expect(count).toBe(1);
+    });
+
+    it('returns 404 for an invalid vocabularyItemId, and creates nothing', async () => {
+      const learner = await freshSession();
+
+      const res = await request(app.getHttpServer())
+        .post('/v1/vocabulary/deck')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ vocabularyItemId: randomUUID() });
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe('GET /v1/vocabulary/deck/due', () => {
+    it('only lists cards actually due (nextReviewAt <= now), excluding a card scheduled in the future', async () => {
+      const admin = await freshAdminSession();
+      const learner = await freshSession();
+      const languageId = await freshLanguage();
+      const dueItemId = await authorVocabularyItem(admin, languageId);
+      const notDueItemId = await authorVocabularyItem(admin, languageId);
+
+      const dueRes = await request(app.getHttpServer())
+        .post('/v1/vocabulary/deck')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ vocabularyItemId: dueItemId });
+      createdUserVocabularyIds.push(dueRes.body.id);
+
+      const notDueRes = await request(app.getHttpServer())
+        .post('/v1/vocabulary/deck')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ vocabularyItemId: notDueItemId });
+      createdUserVocabularyIds.push(notDueRes.body.id);
+      // Push this one's own next review ten days into the future -- directly
+      // via Prisma, since the API itself has no way to schedule a card
+      // early (only a real review submission ever changes `nextReviewAt`).
+      await setupPrisma.userVocabulary.update({
+        where: { id: notDueRes.body.id },
+        data: { nextReviewAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000) },
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/v1/vocabulary/deck/due')
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+
+      expect(res.status).toBe(200);
+      const ids = res.body.data.map((e: { id: string }) => e.id);
+      expect(ids).toContain(dueRes.body.id);
+      expect(ids).not.toContain(notDueRes.body.id);
+    });
+  });
+
+  describe('POST /v1/vocabulary/deck/:id/reviews', () => {
+    it('applies the SM-2 transition and persists it -- a first successful review reaches repetitions=1, intervalDays=1', async () => {
+      const admin = await freshAdminSession();
+      const learner = await freshSession();
+      const languageId = await freshLanguage();
+      const vocabularyItemId = await authorVocabularyItem(admin, languageId);
+
+      const addRes = await request(app.getHttpServer())
+        .post('/v1/vocabulary/deck')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ vocabularyItemId });
+      const deckEntryId = addRes.body.id as string;
+      createdUserVocabularyIds.push(deckEntryId);
+
+      const reviewRes = await request(app.getHttpServer())
+        .post(`/v1/vocabulary/deck/${deckEntryId}/reviews`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ quality: 4 });
+
+      expect(reviewRes.status).toBe(201);
+      expect(reviewRes.body.repetitions).toBe(1);
+      expect(reviewRes.body.intervalDays).toBe(1);
+      expect(reviewRes.body.lastReviewedAt).not.toBeNull();
+      expect(new Date(reviewRes.body.nextReviewAt).getTime()).toBeGreaterThan(Date.now());
+
+      // A subsequent failed review (quality < 3) resets progress back to 0/1.
+      const failedReviewRes = await request(app.getHttpServer())
+        .post(`/v1/vocabulary/deck/${deckEntryId}/reviews`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ quality: 1 });
+      expect(failedReviewRes.status).toBe(201);
+      expect(failedReviewRes.body.repetitions).toBe(0);
+      expect(failedReviewRes.body.intervalDays).toBe(1);
+    });
+
+    it('returns 400 for an out-of-range quality', async () => {
+      const admin = await freshAdminSession();
+      const learner = await freshSession();
+      const languageId = await freshLanguage();
+      const vocabularyItemId = await authorVocabularyItem(admin, languageId);
+      const addRes = await request(app.getHttpServer())
+        .post('/v1/vocabulary/deck')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ vocabularyItemId });
+      createdUserVocabularyIds.push(addRes.body.id);
+
+      const res = await request(app.getHttpServer())
+        .post(`/v1/vocabulary/deck/${addRes.body.id}/reviews`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ quality: 6 });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 404 (not 403) for another user's deck entry, never leaking its existence", async () => {
+      const admin = await freshAdminSession();
+      const owner = await freshSession();
+      const otherUser = await freshSession();
+      const languageId = await freshLanguage();
+      const vocabularyItemId = await authorVocabularyItem(admin, languageId);
+
+      const addRes = await request(app.getHttpServer())
+        .post('/v1/vocabulary/deck')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ vocabularyItemId });
+      const deckEntryId = addRes.body.id as string;
+      createdUserVocabularyIds.push(deckEntryId);
+
+      const res = await request(app.getHttpServer())
+        .post(`/v1/vocabulary/deck/${deckEntryId}/reviews`)
+        .set('Authorization', `Bearer ${otherUser.accessToken}`)
+        .send({ quality: 4 });
+      expect(res.status).toBe(404);
     });
   });
 });
