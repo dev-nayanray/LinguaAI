@@ -17,7 +17,8 @@
       "@linguaai/types/identity": ["../types/dist-cjs/identity/index.d.ts"],
       "@linguaai/types/learning": ["../types/dist-cjs/learning/index.d.ts"],
       "@linguaai/types/ai-coaching": ["../types/dist-cjs/ai-coaching/index.d.ts"],
-      "@linguaai/types/content": ["../types/dist-cjs/content/index.d.ts"]
+      "@linguaai/types/content": ["../types/dist-cjs/content/index.d.ts"],
+      "@linguaai/types/vocabulary": ["../types/dist-cjs/vocabulary/index.d.ts"]
     }
   }
 }
