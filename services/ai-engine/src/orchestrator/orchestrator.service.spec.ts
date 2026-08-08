@@ -64,6 +64,7 @@ function fakePrisma(overrides: { session?: Partial<AIAgentSession>; messages?: A
   return {
     aIAgentSession: {
       create: jest.fn().mockResolvedValue(session),
+      findUnique: jest.fn().mockResolvedValue(session),
       findUniqueOrThrow: jest.fn().mockResolvedValue(session),
       update: jest.fn().mockResolvedValue(session),
     },
@@ -72,7 +73,12 @@ function fakePrisma(overrides: { session?: Partial<AIAgentSession>; messages?: A
       findMany: jest.fn().mockResolvedValue(overrides.messages ?? []),
     },
   } as unknown as PrismaClient & {
-    aIAgentSession: { create: jest.Mock; findUniqueOrThrow: jest.Mock; update: jest.Mock };
+    aIAgentSession: {
+      create: jest.Mock;
+      findUnique: jest.Mock;
+      findUniqueOrThrow: jest.Mock;
+      update: jest.Mock;
+    };
     aIMessage: { create: jest.Mock; findMany: jest.Mock };
   };
 }
@@ -478,13 +484,52 @@ describe('OrchestratorService', () => {
         fakeCostMeter() as unknown as CostMeterService,
       );
 
-      await service.endSession({ sessionId: 'session-1' });
+      await service.endSession({ sessionId: 'session-1', userId: 'user-1' });
 
       expect(prisma.aIAgentSession.update).toHaveBeenCalledWith({
         where: { id: 'session-1' },
         data: { status: 'ENDED', endedAt: expect.any(Date) },
       });
       expect(cache.get('session-1')).toBeUndefined();
+    });
+
+    it('404s (not a silent no-op) when the caller is not the session owner, and never updates it', async () => {
+      const prisma = fakePrisma();
+      const service = new OrchestratorService(
+        prisma,
+        fakeRouter() as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await expect(
+        service.endSession({ sessionId: 'session-1', userId: 'a-different-user' }),
+      ).rejects.toThrow('AI agent session not found');
+      expect(prisma.aIAgentSession.update).not.toHaveBeenCalled();
+    });
+
+    it('404s when the session does not exist', async () => {
+      const prisma = fakePrisma();
+      prisma.aIAgentSession.findUnique.mockResolvedValue(null);
+      const service = new OrchestratorService(
+        prisma,
+        fakeRouter() as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await expect(
+        service.endSession({ sessionId: 'session-1', userId: 'user-1' }),
+      ).rejects.toThrow('AI agent session not found');
+      expect(prisma.aIAgentSession.update).not.toHaveBeenCalled();
     });
   });
 

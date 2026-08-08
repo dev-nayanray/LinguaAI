@@ -192,27 +192,44 @@ describe('AiEngineClientService', () => {
   });
 
   describe('endSession', () => {
-    it('POSTs to the end endpoint', async () => {
+    it('POSTs the caller userId to the end endpoint', async () => {
       const fetchMock = fakeFetch();
       fetchMock.mockResolvedValue({ ok: true, status: 204 } as unknown as Response);
       global.fetch = fetchMock;
       const client = new AiEngineClientService(config);
 
-      await client.endSession('session-1');
+      await client.endSession('session-1', '11111111-1111-1111-1111-111111111111');
 
       expect(fetchMock).toHaveBeenCalledWith(
         'http://ai-engine.internal:4001/v1/agent-sessions/session-1/end',
-        { method: 'POST' },
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: '11111111-1111-1111-1111-111111111111' }),
+        },
       );
     });
 
-    it('throws a clear error when ai-engine responds with a non-2xx status', async () => {
+    it('throws NotFoundException when ai-engine responds 404 (missing or not owned)', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({ ok: false, status: 404 } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new AiEngineClientService(config);
+
+      await expect(
+        client.endSession('session-1', '11111111-1111-1111-1111-111111111111'),
+      ).rejects.toThrow('Speaking session not found');
+    });
+
+    it('throws a clear error when ai-engine responds with another non-2xx status', async () => {
       const fetchMock = fakeFetch();
       fetchMock.mockResolvedValue({ ok: false, status: 500 } as unknown as Response);
       global.fetch = fetchMock;
       const client = new AiEngineClientService(config);
 
-      await expect(client.endSession('session-1')).rejects.toThrow('ai-engine returned 500');
+      await expect(
+        client.endSession('session-1', '11111111-1111-1111-1111-111111111111'),
+      ).rejects.toThrow('ai-engine returned 500');
     });
   });
 

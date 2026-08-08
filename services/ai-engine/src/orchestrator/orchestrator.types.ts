@@ -34,8 +34,16 @@ export interface SendMessageResult {
   modelId: string;
 }
 
+/**
+ * `userId` (E10 T2) closes a real hole a bare `sessionId`-only end call
+ * would otherwise leave open — `OrchestratorService.endSession` verifies it
+ * against the session's own owner and 404s on a mismatch, mirroring
+ * `startSession`'s own established "caller-supplied `userId`, `apps/api`'s
+ * already-authenticated request is the trust boundary" pattern (ADR-033).
+ */
 export interface EndSessionInput {
   sessionId: string;
+  userId: string;
 }
 
 /**

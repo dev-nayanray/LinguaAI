@@ -1,6 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   agentMessageStreamEventSchema,
+  endAgentSessionRequestSchema,
   scoreWritingRequestSchema,
   sendAgentMessageRequestSchema,
   startAgentSessionRequestSchema,
@@ -207,13 +208,28 @@ export class AiEngineClientService {
     return vocabularyItemDraftSchema.parse(await response.json());
   }
 
-  async endSession(sessionId: string): Promise<void> {
+  /**
+   * `userId` (E10 T2) is forwarded so ai-engine's own `endSession` can
+   * enforce ownership (§7, ADR-043's session-lifecycle half) — a 404
+   * response means either the session doesn't exist or isn't the caller's
+   * own (API_GUIDELINES.md §3's no-existence-leak rule), translated here
+   * into a real `NotFoundException` rather than the generic `Error` every
+   * other non-2xx ai-engine response throws, so `SpeakingController`'s own
+   * `DELETE /v1/speaking-sessions/:id` can return a real 404 instead of a
+   * misleading 500.
+   */
+  async endSession(sessionId: string, userId: string): Promise<void> {
     const response = await fetch(
       `${this.config.AI_ENGINE_URL}/v1/agent-sessions/${sessionId}/end`,
       {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(endAgentSessionRequestSchema.parse({ userId })),
       },
     );
+    if (response.status === 404) {
+      throw new NotFoundException('Speaking session not found');
+    }
     if (!response.ok) {
       throw new Error(`ai-engine returned ${response.status} ending session "${sessionId}"`);
     }

@@ -6,12 +6,12 @@ import { AiEngineClientService } from './ai-engine-client.service.js';
 /**
  * ADR-033 (T10). `scoreWriting()` (E6 T5) has a real consumer as of E6-T7
  * (`AssessmentModule` imports this module to score WRITING responses);
- * `startSession()`/`streamMessage()`/`endSession()` remain registered but
- * unconsumed — building a user-facing AI chat endpoint is each consuming
- * feature epic's own scope, e.g. the Personal AI Language Teacher epic, per
- * ROADMAP.md — not this internal-contract task's, same "build the real
- * mechanism, flag the not-yet-wired consumer" precedent E5 T7's RAG
- * Retrieval Layer already set.
+ * `startSession()`/`endSession()` get their first real consumer as of
+ * E10 T2 (`SpeakingModule`). `streamMessage()` remains registered but
+ * unconsumed — a user-facing text-chat endpoint is a separate, not-yet-
+ * built feature epic's own scope (the Personal AI Language Teacher epic,
+ * per ROADMAP.md), same "build the real mechanism, flag the not-yet-wired
+ * consumer" precedent E5 T7's RAG Retrieval Layer already set.
  */
 @Module({
   providers: [

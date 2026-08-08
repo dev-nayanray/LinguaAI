@@ -14,6 +14,7 @@ import { AuthModule } from './modules/auth/index.js';
 import { CourseModule } from './modules/course/index.js';
 import { OrganizationsModule } from './modules/organizations/index.js';
 import { RecommendationsModule } from './modules/recommendations/index.js';
+import { SpeakingModule } from './modules/speaking/index.js';
 import { UsersModule } from './modules/users/index.js';
 import { VocabularyModule } from './modules/vocabulary/index.js';
 
@@ -30,6 +31,7 @@ import { VocabularyModule } from './modules/vocabulary/index.js';
     RecommendationsModule,
     CourseModule,
     VocabularyModule,
+    SpeakingModule,
     AuditModule,
     AiEngineClientModule,
   ],

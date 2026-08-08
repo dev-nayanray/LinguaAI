@@ -18,6 +18,7 @@ export default defineConfig({
         'src/ai-coaching/**',
         'src/content/**',
         'src/vocabulary/**',
+        'src/speaking/**',
         'src/commerce/**',
         'src/community/**',
         'src/enterprise/**',

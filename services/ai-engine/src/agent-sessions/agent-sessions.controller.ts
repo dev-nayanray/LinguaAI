@@ -1,9 +1,11 @@
 import { Body, Controller, HttpCode, HttpStatus, Param, Post, Res } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
+  endAgentSessionRequestSchema,
   sendAgentMessageRequestSchema,
   startAgentSessionRequestSchema,
   type AgentMessageStreamEvent,
+  type EndAgentSessionRequest,
   type SendAgentMessageRequest,
   type StartAgentSessionRequest,
   type StartAgentSessionResponse,
@@ -97,7 +99,10 @@ export class AgentSessionsController {
   @Post(':id/end')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'End an AI agent session' })
-  async end(@Param('id') sessionId: string): Promise<void> {
-    await this.orchestrator.endSession({ sessionId });
+  async end(
+    @Param('id') sessionId: string,
+    @Body(new ZodValidationPipe(endAgentSessionRequestSchema)) dto: EndAgentSessionRequest,
+  ): Promise<void> {
+    await this.orchestrator.endSession({ sessionId, userId: dto.userId });
   }
 }

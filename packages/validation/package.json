@@ -84,6 +84,16 @@
         "default": "./dist-cjs/vocabulary/index.js"
       }
     },
+    "./speaking": {
+      "import": {
+        "types": "./dist/speaking/index.d.ts",
+        "default": "./dist/speaking/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/speaking/index.d.ts",
+        "default": "./dist-cjs/speaking/index.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "scripts": {

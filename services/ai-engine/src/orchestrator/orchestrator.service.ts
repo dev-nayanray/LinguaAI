@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AIAgentSession,
   AIMessage,
@@ -254,7 +254,20 @@ export class OrchestratorService {
     return { assistantMessage: sanitizedContent, promptVersion, modelId: response.modelId };
   }
 
+  /**
+   * 404 (not a silent no-op, and not 403 — API_GUIDELINES.md §3's no-
+   * existence-leak rule) on a missing session or an owner mismatch — the
+   * ownership check T2 added on top of what was previously a blind,
+   * unauthenticated update by id alone.
+   */
   async endSession(input: EndSessionInput): Promise<void> {
+    const session = await this.prisma.aIAgentSession.findUnique({
+      where: { id: input.sessionId },
+    });
+    if (!session || session.userId !== input.userId) {
+      throw new NotFoundException('AI agent session not found');
+    }
+
     await this.prisma.aIAgentSession.update({
       where: { id: input.sessionId },
       data: { status: 'ENDED', endedAt: new Date() },

@@ -193,9 +193,12 @@ describe('AgentSessionsController', () => {
         orchestrator as unknown as OrchestratorService,
       );
 
-      await controller.end('session-1');
+      await controller.end('session-1', { userId: '11111111-1111-1111-1111-111111111111' });
 
-      expect(orchestrator.endSession).toHaveBeenCalledWith({ sessionId: 'session-1' });
+      expect(orchestrator.endSession).toHaveBeenCalledWith({
+        sessionId: 'session-1',
+        userId: '11111111-1111-1111-1111-111111111111',
+      });
     });
   });
 });

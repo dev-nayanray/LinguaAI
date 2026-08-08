@@ -65,6 +65,22 @@ export const startAgentSessionResponseSchema = z.object({
 export type StartAgentSessionResponse = z.infer<typeof startAgentSessionResponseSchema>;
 
 /**
+ * `POST /v1/agent-sessions/:id/end` request body (E10 T2) — extends
+ * `startAgentSessionRequestSchema`'s own established "`userId` is caller-
+ * supplied, `apps/api`'s own already-authenticated request is the trust
+ * boundary" pattern (ADR-033) to session-ending too. Closes a real hole a
+ * bare, unauthenticated `sessionId`-only end call would otherwise leave
+ * open — any caller able to guess/observe another user's session UUID
+ * could end their active session. `OrchestratorService.endSession` 404s
+ * (not silently succeeds) on a `userId` mismatch, the same no-existence-
+ * leak discipline `AssessmentService.getOwnedAttempt` already established.
+ */
+export const endAgentSessionRequestSchema = z.object({
+  userId: z.string().uuid(),
+});
+export type EndAgentSessionRequest = z.infer<typeof endAgentSessionRequestSchema>;
+
+/**
  * `POST /v1/agent-sessions/:id/messages` request body.
  * `userMessage`'s 8000-character cap is a flagged, undocumented-elsewhere
  * defensive bound (no doc numerically specifies a max turn length) — large
