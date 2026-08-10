@@ -37,3 +37,64 @@ export const startSpeakingSessionResponseSchema = z.object({
   expiresInSeconds: z.number().int().positive(),
 });
 export type StartSpeakingSessionResponse = z.infer<typeof startSpeakingSessionResponseSchema>;
+
+// --- Real-time WebSocket message catalog (T3, API.md §7 / API_GUIDELINES.md
+// §9) — the JSON control-message half of the connection between a client
+// and `speech-service`'s `/realtime/speaking-sessions/:sessionId` endpoint.
+// Binary WebSocket frames (the raw audio chunks themselves) carry no
+// envelope/schema of their own — only the JSON control messages below do.
+// `type` values are namespaced by domain exactly as API_GUIDELINES.md §9
+// specifies; only the types this task's own real scope emits/accepts are
+// declared here (`speech.partial-transcript`/`speech.final-transcript`/`ack`
+// server→client, `speech.end-of-turn` client→server) — `ai.token`/`ai.done`
+// (T4) and `speech.degraded` (T6) are each that later task's own scope to
+// add, not speculatively pre-declared here.
+
+const realtimeMessageFields = {
+  sessionId: z.string().uuid(),
+  ts: z.number(),
+};
+
+/**
+ * Client→server: signals that the current turn's audio is complete —
+ * `speech-service`'s own signal to stop buffering and run the accumulated
+ * audio through `SttProvider.streamTranscribe()` (§6.3 step 1). An empty,
+ * `.strict()` payload — this message type carries no data of its own, only
+ * the envelope's own `sessionId`/`ts`.
+ */
+export const speechEndOfTurnClientMessageSchema = z.object({
+  type: z.literal('speech.end-of-turn'),
+  payload: z.object({}).strict(),
+  ...realtimeMessageFields,
+});
+export type SpeechEndOfTurnClientMessage = z.infer<typeof speechEndOfTurnClientMessageSchema>;
+
+/**
+ * Server→client: acknowledges one received binary audio chunk
+ * (API_GUIDELINES.md §9 — "every client-sent chunk gets a server
+ * acknowledgment... so the client can detect and resend on a dropped ack
+ * within a defined timeout"). `forSeq` is the server-assigned, per-
+ * connection, arrival-order sequence number (WebSocket-over-TCP already
+ * guarantees ordered delivery, so the server assigning it — rather than
+ * requiring the client to stamp every binary frame with an explicit
+ * counter — is a real, deliberate simplification with no correctness cost).
+ */
+export const ackServerMessageSchema = z.object({
+  type: z.literal('ack'),
+  payload: z.object({ forSeq: z.number().int().nonnegative() }),
+  ...realtimeMessageFields,
+});
+export type AckServerMessage = z.infer<typeof ackServerMessageSchema>;
+
+/**
+ * Server→client: a partial or final transcript for the current turn (§6.3
+ * step 2). `text` is always the *full* text accumulated so far, never an
+ * incremental delta — mirroring `TranscriptChunk.text`'s own documented
+ * shape (`services/speech-service/src/speech-provider/speech-provider.interface.ts`).
+ */
+export const speechTranscriptServerMessageSchema = z.object({
+  type: z.enum(['speech.partial-transcript', 'speech.final-transcript']),
+  payload: z.object({ text: z.string() }),
+  ...realtimeMessageFields,
+});
+export type SpeechTranscriptServerMessage = z.infer<typeof speechTranscriptServerMessageSchema>;
