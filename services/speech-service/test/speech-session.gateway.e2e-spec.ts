@@ -236,4 +236,61 @@ describe('SpeechSessionGateway (e2e)', () => {
       expect.stringContaining(`speaking-sessions/${sessionId}/1-assistant.mp3`),
     );
   }, 15000);
+
+  it('(T6) degrades to text-only on a real TTS failure mid-session -- the client is honestly notified and the session survives', async () => {
+    const sessionId = randomUUID();
+    const userId = randomUUID();
+    const token = signSpeechSessionToken({ sessionId, userId }, SESSION_TOKEN_SECRET);
+    const ws = connect(`/realtime/speaking-sessions/${sessionId}?token=${token}`);
+    await waitForEvent(ws, 'open');
+
+    const messages: unknown[] = [];
+    ws.on('message', (data: Buffer) => messages.push(JSON.parse(data.toString('utf8'))));
+
+    ttsProvider.streamSynthesize.mockImplementationOnce(
+      // eslint-disable-next-line require-yield -- deliberately throws before any yield, simulating a real provider outage.
+      async function* (): AsyncGenerator<AudioChunk> {
+        throw new Error('simulated TTS outage');
+      },
+    );
+
+    ws.send(Buffer.from('hola'));
+    ws.send(JSON.stringify({ type: 'speech.end-of-turn', payload: {}, sessionId, ts: Date.now() }));
+
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: 'speech.degraded',
+        payload: { reason: 'tts_failure' },
+      }),
+    );
+    // The turn's own text still made it through -- degradation is text-only,
+    // not a dropped connection or a failed turn.
+    expect(messages).toContainEqual(
+      expect.objectContaining({ type: 'ai.token', payload: { delta: 'You said: hola.' } }),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({ type: 'ai.done', payload: { text: 'You said: hola.' } }),
+    );
+    expect(messages.some((m) => (m as { type?: string }).type === 'speech.audio-chunk')).toBe(
+      false,
+    );
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+
+    // The session really survives: a second, ordinary turn after degrading
+    // still gets a real reply (still text-only -- no further TTS attempts).
+    ws.send(Buffer.from('adios'));
+    ws.send(JSON.stringify({ type: 'speech.end-of-turn', payload: {}, sessionId, ts: Date.now() }));
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    ws.close();
+
+    expect(messages).toContainEqual(
+      expect.objectContaining({ type: 'ai.token', payload: { delta: 'You said: adios.' } }),
+    );
+    const degradedMessages = messages.filter(
+      (m) => (m as { type?: string }).type === 'speech.degraded',
+    );
+    expect(degradedMessages).toHaveLength(1);
+  }, 15000);
 });

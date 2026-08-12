@@ -4,6 +4,7 @@ import {
   aiTokenServerMessageSchema,
   ackServerMessageSchema,
   speechAudioChunkServerMessageSchema,
+  speechDegradedServerMessageSchema,
   speechEndOfTurnClientMessageSchema,
   speechTranscriptServerMessageSchema,
   type SpeechEndOfTurnClientMessage,
@@ -84,6 +85,15 @@ export class SpeechSessionConnection {
   private currentTurnNumber = 0;
 
   /**
+   * Once a real STT/TTS provider failure occurs, the connection degrades to
+   * text-only for its own remainder (T6, §6.5) — sticky for the life of this
+   * connection, never reset. `sendDegraded` is the only place this is set,
+   * guaranteeing the client-facing `speech.degraded` notice is sent at most
+   * once even if further provider calls keep failing afterward.
+   */
+  private degraded = false;
+
+  /**
    * `runTurn` is started exactly once per queue, *at creation* — never
    * re-invoked once that queue later completes. A real, found-and-fixed
    * bug lived here: calling `runTurn` a second time in the `speech.end-of-turn`
@@ -157,7 +167,30 @@ export class SpeechSessionConnection {
     return result.data;
   }
 
+  /**
+   * A degraded connection (T6) stops attempting transcription for the
+   * remainder of the session — this queue's audio is simply drained and
+   * discarded, matching §6.5's own "stops attempting audio synthesis/
+   * transcription" wording. A real, honestly-flagged limitation this
+   * implies (not silently glossed over): once STT has failed, this
+   * WebSocket protocol has no client→server *text* message of its own
+   * (§3.6 scopes the actual conversation-session UI to a later epic), so a
+   * session degraded by an STT failure specifically has no further way to
+   * receive new turns at all — only a TTS-only degrade leaves the
+   * conversation itself still fully functional (text in, text replies out,
+   * silently skipping synthesis).
+   */
   private runTurn(queue: AudioChunkQueue, rawAudioChunks: Buffer[], turnNumber: number): void {
+    if (this.degraded) {
+      // Drained and discarded — no provider call is attempted.
+      void (async () => {
+        const iterator = queue[Symbol.asyncIterator]();
+        for (let result = await iterator.next(); !result.done; result = await iterator.next()) {
+          // no-op
+        }
+      })();
+      return;
+    }
     void (async () => {
       try {
         for await (const transcript of this.deps.sttProvider.streamTranscribe(queue)) {
@@ -171,6 +204,7 @@ export class SpeechSessionConnection {
           { err: error, sessionId: this.sessionId },
           'STT streaming failed for a speaking session turn',
         );
+        this.sendDegraded('stt_failure');
       }
     })();
   }
@@ -232,7 +266,9 @@ export class SpeechSessionConnection {
     if (trailing) {
       await this.synthesizeAndStream(trailing, assistantAudioChunks);
     }
-    this.sendAudioChunk(Buffer.alloc(0), true);
+    if (!this.degraded) {
+      this.sendAudioChunk(Buffer.alloc(0), true);
+    }
 
     if (messageId && assistantAudioChunks.length > 0) {
       const assistantAudioUrl = (
@@ -251,16 +287,38 @@ export class SpeechSessionConnection {
   }
 
   private async synthesizeAndStream(sentence: string, accumulator: Buffer[]): Promise<void> {
-    if (!sentence.trim()) {
+    if (!sentence.trim() || this.degraded) {
       return;
     }
-    for await (const chunk of this.deps.ttsProvider.streamSynthesize(sentence)) {
-      if (chunk.done) {
-        continue;
+    try {
+      for await (const chunk of this.deps.ttsProvider.streamSynthesize(sentence)) {
+        if (chunk.done) {
+          continue;
+        }
+        accumulator.push(chunk.data);
+        this.sendAudioChunk(chunk.data, false);
       }
-      accumulator.push(chunk.data);
-      this.sendAudioChunk(chunk.data, false);
+    } catch (error) {
+      this.deps.logger.error(
+        { err: error, sessionId: this.sessionId },
+        'TTS synthesis failed for a speaking session turn',
+      );
+      this.sendDegraded('tts_failure');
     }
+  }
+
+  /** Sent at most once per connection (T6, §6.5) — a real, honest client-facing notice, not repeated on every subsequent failed attempt. */
+  private sendDegraded(reason: 'stt_failure' | 'tts_failure'): void {
+    if (this.degraded) {
+      return;
+    }
+    this.degraded = true;
+    this.sendJson(speechDegradedServerMessageSchema, {
+      type: 'speech.degraded',
+      payload: { reason },
+      sessionId: this.sessionId,
+      ts: Date.now(),
+    });
   }
 
   private sendAck(forSeq: number): void {

@@ -164,6 +164,146 @@ describe('SpeechSessionConnection', () => {
     );
   });
 
+  describe('graceful degradation on a real STT/TTS failure (T6, §6.5)', () => {
+    function throwingStt(): SttProvider {
+      return {
+        name: 'openai',
+        streamTranscribe: jest.fn().mockImplementation(
+          // eslint-disable-next-line require-yield -- deliberately throws before any yield.
+          async function* (): AsyncGenerator<TranscriptChunk> {
+            throw new Error('stt boom');
+          },
+        ),
+      };
+    }
+
+    it('sends a speech.degraded (stt_failure) message once the STT provider fails', async () => {
+      const client = fakeClient();
+      const deps = baseDeps({ sttProvider: throwingStt() });
+      new SpeechSessionConnection(client, UUID, deps);
+
+      await flush();
+
+      expect(sentMessages(client)).toContainEqual(
+        expect.objectContaining({
+          type: 'speech.degraded',
+          payload: { reason: 'stt_failure' },
+          sessionId: UUID,
+        }),
+      );
+    });
+
+    it('stops attempting STT for subsequent turns once degraded, and never sends a second speech.degraded message', async () => {
+      const client = fakeClient();
+      const sttProvider = throwingStt();
+      const deps = baseDeps({ sttProvider });
+      const connection = new SpeechSessionConnection(client, UUID, deps);
+      await flush();
+
+      connection.handleMessage(endOfTurnMessage(UUID), false);
+      await flush();
+
+      expect(sttProvider.streamTranscribe).toHaveBeenCalledTimes(1);
+      const degradedMessages = sentMessages(client).filter(
+        (message) => (message as { type?: string }).type === 'speech.degraded',
+      );
+      expect(degradedMessages).toHaveLength(1);
+    });
+
+    it('sends a speech.degraded (tts_failure) message when TTS synthesis fails, but still relays ai.token/ai.done as text', async () => {
+      async function* agentEvents(): AsyncGenerator<AgentMessageStreamEvent> {
+        yield { type: 'token', delta: 'Hola. ' };
+        yield {
+          type: 'done',
+          messageId: 'assistant-msg-1',
+          assistantMessage: 'Hola.',
+          promptVersion: 'v1',
+          modelId: 'model',
+        };
+      }
+      const ttsProvider: TtsProvider = {
+        name: 'openai',
+        streamSynthesize: jest.fn().mockImplementation(
+          // eslint-disable-next-line require-yield -- deliberately throws before any yield.
+          async function* (): AsyncGenerator<{ data: Buffer; done: boolean }> {
+            throw new Error('tts boom');
+          },
+        ),
+      };
+      const aiEngineClient: AiEngineClientLike = {
+        streamMessage: jest.fn().mockReturnValue(agentEvents()),
+        updateMessageAudioUrl: jest.fn(),
+      };
+      const client = fakeClient();
+      const deps = baseDeps({
+        sttProvider: finalTranscriptAfterDrain('hola'),
+        ttsProvider,
+        aiEngineClient,
+      });
+      new SpeechSessionConnection(client, UUID, deps).handleMessage(endOfTurnMessage(UUID), false);
+      await flush(10);
+
+      const messages = sentMessages(client);
+      expect(messages).toContainEqual(
+        expect.objectContaining({
+          type: 'speech.degraded',
+          payload: { reason: 'tts_failure' },
+        }),
+      );
+      expect(messages).toContainEqual(
+        expect.objectContaining({ type: 'ai.token', payload: { delta: 'Hola. ' } }),
+      );
+      expect(messages).toContainEqual(
+        expect.objectContaining({ type: 'ai.done', payload: { text: 'Hola.' } }),
+      );
+      // No further speech.* audio messages once degraded, including the
+      // whole-turn "done" marker `completeTurn` would otherwise always send.
+      expect(messages.some((m) => (m as { type?: string }).type === 'speech.audio-chunk')).toBe(
+        false,
+      );
+      expect(aiEngineClient.updateMessageAudioUrl).not.toHaveBeenCalled();
+    });
+
+    it('never even calls the TTS provider again on a later turn once degraded', async () => {
+      const ttsProvider: TtsProvider = {
+        name: 'openai',
+        streamSynthesize: jest.fn().mockImplementation(
+          // eslint-disable-next-line require-yield -- deliberately throws before any yield.
+          async function* (): AsyncGenerator<{ data: Buffer; done: boolean }> {
+            throw new Error('tts boom');
+          },
+        ),
+      };
+      async function* agentEvents(): AsyncGenerator<AgentMessageStreamEvent> {
+        yield { type: 'token', delta: 'Hola.' };
+        yield {
+          type: 'done',
+          messageId: 'assistant-msg-1',
+          assistantMessage: 'Hola.',
+          promptVersion: 'v1',
+          modelId: 'model',
+        };
+      }
+      const deps = baseDeps({
+        sttProvider: finalTranscriptAfterDrain('hola'),
+        ttsProvider,
+        aiEngineClient: {
+          streamMessage: jest.fn(() => agentEvents()),
+          updateMessageAudioUrl: jest.fn(),
+        },
+      });
+      const connection = new SpeechSessionConnection(fakeClient(), UUID, deps);
+      connection.handleMessage(endOfTurnMessage(UUID), false);
+      await flush(10);
+      expect(ttsProvider.streamSynthesize).toHaveBeenCalledTimes(1);
+
+      connection.handleMessage(endOfTurnMessage(UUID), false);
+      await flush(10);
+
+      expect(ttsProvider.streamSynthesize).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('ends the current turn on handleClose, so a pending STT stream completes rather than hanging', async () => {
     let drainedPromise: Promise<Buffer[]> | undefined;
     const deps = baseDeps({

@@ -150,6 +150,21 @@ export const speechAudioChunkServerMessageSchema = z.object({
 export type SpeechAudioChunkServerMessage = z.infer<typeof speechAudioChunkServerMessageSchema>;
 
 /**
+ * Server→client: a real STT/TTS provider failure mid-session degrades the
+ * connection to text-only for the remainder of the session, rather than
+ * ending it (T6, §6.5, AI_GOVERNANCE.md §7's own already-decided fallback).
+ * Sent at most once per connection (`SpeechSessionConnection`'s own
+ * idempotent-degrade guard) — the client's own UI shows a real, honest
+ * status rather than the stream silently going quiet.
+ */
+export const speechDegradedServerMessageSchema = z.object({
+  type: z.literal('speech.degraded'),
+  payload: z.object({ reason: z.enum(['stt_failure', 'tts_failure']) }),
+  ...realtimeMessageFields,
+});
+export type SpeechDegradedServerMessage = z.infer<typeof speechDegradedServerMessageSchema>;
+
+/**
  * `speech.session.ended`'s real payload (E10 T5, design doc §6.4) —
  * refines `EVENT_ARCHITECTURE.md`'s own pre-existing placeholder row for
  * this event (found already cataloged, producer `services/speech-service`,
