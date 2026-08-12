@@ -59,6 +59,7 @@ describe('AgentSessionsController', () => {
             { type: 'token', delta: 'lo' },
             {
               type: 'done',
+              messageId: 'assistant-msg-1',
               assistantMessage: 'hello',
               promptVersion: 'v1',
               modelId: 'claude-teacher-model',
@@ -81,6 +82,7 @@ describe('AgentSessionsController', () => {
         sessionId: 'session-1',
         userMessage: 'hi',
         variables: {},
+        userAudioUrl: undefined,
       });
       expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/event-stream');
       expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-cache');
@@ -98,12 +100,49 @@ describe('AgentSessionsController', () => {
         3,
         `data: ${JSON.stringify({
           type: 'done',
+          messageId: 'assistant-msg-1',
           assistantMessage: 'hello',
           promptVersion: 'v1',
           modelId: 'claude-teacher-model',
         })}\n\n`,
       );
       expect(res.end).toHaveBeenCalled();
+    });
+
+    it('forwards a caller-supplied audioUrl as userAudioUrl', async () => {
+      const orchestrator = {
+        streamMessage: jest.fn().mockReturnValue(
+          fakeEventStream([
+            {
+              type: 'done',
+              messageId: 'assistant-msg-1',
+              assistantMessage: 'hello',
+              promptVersion: 'v1',
+              modelId: 'claude-teacher-model',
+            },
+          ]),
+        ),
+      };
+      const controller = new AgentSessionsController(
+        orchestrator as unknown as OrchestratorService,
+      );
+
+      await controller.sendMessage(
+        'session-1',
+        {
+          userMessage: 'hi',
+          variables: {},
+          audioUrl: 'https://storage.example.com/user-turn-1.webm',
+        },
+        fakeRes() as unknown as Response,
+      );
+
+      expect(orchestrator.streamMessage).toHaveBeenCalledWith({
+        sessionId: 'session-1',
+        userMessage: 'hi',
+        variables: {},
+        userAudioUrl: 'https://storage.example.com/user-turn-1.webm',
+      });
     });
 
     it('propagates a pre-stream failure (e.g. HARD_STOP) as a thrown error without writing anything to the response', async () => {
@@ -198,6 +237,25 @@ describe('AgentSessionsController', () => {
       expect(orchestrator.endSession).toHaveBeenCalledWith({
         sessionId: 'session-1',
         userId: '11111111-1111-1111-1111-111111111111',
+      });
+    });
+  });
+
+  describe('updateMessageAudioUrl', () => {
+    it('delegates to OrchestratorService.updateMessageAudioUrl', async () => {
+      const orchestrator = { updateMessageAudioUrl: jest.fn().mockResolvedValue(undefined) };
+      const controller = new AgentSessionsController(
+        orchestrator as unknown as OrchestratorService,
+      );
+
+      await controller.updateMessageAudioUrl('session-1', 'assistant-msg-1', {
+        audioUrl: 'https://storage.example.com/assistant-msg-1.mp3',
+      });
+
+      expect(orchestrator.updateMessageAudioUrl).toHaveBeenCalledWith({
+        sessionId: 'session-1',
+        messageId: 'assistant-msg-1',
+        audioUrl: 'https://storage.example.com/assistant-msg-1.mp3',
       });
     });
   });

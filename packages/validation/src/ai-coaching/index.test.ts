@@ -112,6 +112,7 @@ describe('agentMessageStreamEventSchema', () => {
   it('accepts a done event', () => {
     const result = agentMessageDoneEventSchema.safeParse({
       type: 'done',
+      messageId: '11111111-1111-1111-1111-111111111111',
       assistantMessage: 'hello',
       promptVersion: 'v1',
       modelId: 'claude-teacher-model',

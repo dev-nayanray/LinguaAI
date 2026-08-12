@@ -71,6 +71,7 @@ function fakePrisma(overrides: { session?: Partial<AIAgentSession>; messages?: A
     aIMessage: {
       create: jest.fn().mockResolvedValue({ id: 'assistant-msg-1' }),
       findMany: jest.fn().mockResolvedValue(overrides.messages ?? []),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
   } as unknown as PrismaClient & {
     aIAgentSession: {
@@ -79,7 +80,7 @@ function fakePrisma(overrides: { session?: Partial<AIAgentSession>; messages?: A
       findUniqueOrThrow: jest.Mock;
       update: jest.Mock;
     };
-    aIMessage: { create: jest.Mock; findMany: jest.Mock };
+    aIMessage: { create: jest.Mock; findMany: jest.Mock; updateMany: jest.Mock };
   };
 }
 
@@ -235,6 +236,7 @@ describe('OrchestratorService', () => {
         },
       });
       expect(result).toEqual({
+        messageId: 'assistant-msg-1',
         assistantMessage: 'welcome back',
         promptVersion: 'v1',
         modelId: 'claude-teacher-model',
@@ -533,6 +535,56 @@ describe('OrchestratorService', () => {
     });
   });
 
+  describe('updateMessageAudioUrl', () => {
+    it('attaches the audioUrl to the message, scoped to its own session', async () => {
+      const prisma = fakePrisma();
+      const service = new OrchestratorService(
+        prisma,
+        fakeRouter() as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await service.updateMessageAudioUrl({
+        sessionId: 'session-1',
+        messageId: 'assistant-msg-1',
+        audioUrl: 'https://storage.example.com/assistant-msg-1.mp3',
+      });
+
+      expect(prisma.aIMessage.updateMany).toHaveBeenCalledWith({
+        where: { id: 'assistant-msg-1', sessionId: 'session-1' },
+        data: { audioUrl: 'https://storage.example.com/assistant-msg-1.mp3' },
+      });
+    });
+
+    it('404s (not a silent no-op) when the message does not exist or belongs to a different session', async () => {
+      const prisma = fakePrisma();
+      prisma.aIMessage.updateMany.mockResolvedValue({ count: 0 });
+      const service = new OrchestratorService(
+        prisma,
+        fakeRouter() as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await expect(
+        service.updateMessageAudioUrl({
+          sessionId: 'session-1',
+          messageId: 'not-real',
+          audioUrl: 'https://storage.example.com/not-real.mp3',
+        }),
+      ).rejects.toThrow('AI message not found');
+    });
+  });
+
   describe('Safety Layer integration (T8)', () => {
     it('sanitizes the model output before storing and returning it', async () => {
       const prisma = fakePrisma({ messages: buildMessages(1) });
@@ -768,6 +820,7 @@ describe('OrchestratorService', () => {
         { type: 'token', delta: 'lo' },
         {
           type: 'done',
+          messageId: 'assistant-msg-1',
           assistantMessage: 'hello',
           promptVersion: 'v1',
           modelId: 'claude-teacher-model',

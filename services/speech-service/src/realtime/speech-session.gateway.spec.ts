@@ -6,7 +6,9 @@ import type { SpeechSessionTokenVerification } from '@linguaai/utils';
 
 import type { WebSocketServer } from 'ws';
 
-import type { SttProvider } from '../speech-provider/speech-provider.interface.js';
+import type { AiEngineClientService } from '../ai-engine-client/ai-engine-client.service.js';
+import type { AudioStorageProvider } from '../audio-storage/audio-storage.interface.js';
+import type { SttProvider, TtsProvider } from '../speech-provider/speech-provider.interface.js';
 import type { SessionTokenService } from '../session-token/session-token.service.js';
 import { SpeechSessionGateway } from './speech-session.gateway.js';
 
@@ -30,6 +32,21 @@ function fakeSttProvider(): SttProvider {
   return { name: 'openai', streamTranscribe: jest.fn() };
 }
 
+function fakeTtsProvider(): TtsProvider {
+  return { name: 'openai', streamSynthesize: jest.fn() };
+}
+
+function fakeAiEngineClient(): AiEngineClientService {
+  return {
+    streamMessage: jest.fn(),
+    updateMessageAudioUrl: jest.fn(),
+  } as unknown as AiEngineClientService;
+}
+
+function fakeAudioStorage(): AudioStorageProvider {
+  return { upload: jest.fn() };
+}
+
 describe('SpeechSessionGateway', () => {
   function build(sessionTokens: Pick<SessionTokenService, 'verify'>): {
     gateway: SpeechSessionGateway;
@@ -40,6 +57,9 @@ describe('SpeechSessionGateway', () => {
       httpAdapterHost,
       sessionTokens as SessionTokenService,
       fakeSttProvider(),
+      fakeTtsProvider(),
+      fakeAiEngineClient(),
+      fakeAudioStorage(),
       fakeLogger(),
     );
     gateway.onApplicationBootstrap();

@@ -34,6 +34,7 @@ import type {
   SendMessageStreamEvent,
   StartSessionInput,
   StartSessionResult,
+  UpdateMessageAudioUrlInput,
 } from './orchestrator.types.js';
 
 const AI_MESSAGE_ROLE_TO_CHAT_ROLE: Record<AIMessageRole, ChatRole> = {
@@ -177,7 +178,12 @@ export class OrchestratorService {
     }
 
     await this.prisma.aIMessage.create({
-      data: { sessionId: input.sessionId, role: 'USER', content: input.userMessage },
+      data: {
+        sessionId: input.sessionId,
+        role: 'USER',
+        content: input.userMessage,
+        audioUrl: input.userAudioUrl,
+      },
     });
 
     const allMessages = await this.prisma.aIMessage.findMany({
@@ -251,7 +257,33 @@ export class OrchestratorService {
       messageId: assistantMessage.id,
     });
 
-    return { assistantMessage: sanitizedContent, promptVersion, modelId: response.modelId };
+    return {
+      messageId: assistantMessage.id,
+      assistantMessage: sanitizedContent,
+      promptVersion,
+      modelId: response.modelId,
+    };
+  }
+
+  /**
+   * 404 (not a silent no-op, and not 403 — API_GUIDELINES.md §3's no-
+   * existence-leak rule) on a missing/not-owned message — `speech-service`'s
+   * own second call for this turn (E10 T4), attaching the assistant's
+   * synthesized-audio URL once TTS finishes onto the exact row
+   * `finalizeAssistantReply` already wrote. `updateMany` (not `update`) is
+   * deliberate — `AIMessage`'s own composite primary key
+   * (`@@id([id, createdAt])`, ADR-035's partitioning) can't be satisfied by
+   * `id` alone the way a plain `update`/`findUnique` requires, but a
+   * globally-unique UUID `id` alone is still a safe, unambiguous filter.
+   */
+  async updateMessageAudioUrl(input: UpdateMessageAudioUrlInput): Promise<void> {
+    const result = await this.prisma.aIMessage.updateMany({
+      where: { id: input.messageId, sessionId: input.sessionId },
+      data: { audioUrl: input.audioUrl },
+    });
+    if (result.count === 0) {
+      throw new NotFoundException('AI message not found');
+    }
   }
 
   /**

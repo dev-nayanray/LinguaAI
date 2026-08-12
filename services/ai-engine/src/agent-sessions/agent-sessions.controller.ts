@@ -1,14 +1,16 @@
-import { Body, Controller, HttpCode, HttpStatus, Param, Post, Res } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Param, Patch, Post, Res } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   endAgentSessionRequestSchema,
   sendAgentMessageRequestSchema,
   startAgentSessionRequestSchema,
+  updateAgentMessageAudioRequestSchema,
   type AgentMessageStreamEvent,
   type EndAgentSessionRequest,
   type SendAgentMessageRequest,
   type StartAgentSessionRequest,
   type StartAgentSessionResponse,
+  type UpdateAgentMessageAudioRequest,
 } from '@linguaai/validation/ai-coaching';
 import type { Response } from 'express';
 
@@ -66,6 +68,7 @@ export class AgentSessionsController {
       sessionId,
       userMessage: dto.userMessage,
       variables: dto.variables,
+      userAudioUrl: dto.audioUrl,
     });
 
     const first = await stream.next();
@@ -104,5 +107,22 @@ export class AgentSessionsController {
     @Body(new ZodValidationPipe(endAgentSessionRequestSchema)) dto: EndAgentSessionRequest,
   ): Promise<void> {
     await this.orchestrator.endSession({ sessionId, userId: dto.userId });
+  }
+
+  /**
+   * E10 T4 (design doc §6.3 step 4) — attaches the assistant's own
+   * synthesized-speech URL once TTS finishes, onto the exact `AIMessage`
+   * row the `done` SSE event's own `messageId` already named.
+   */
+  @Patch(':id/messages/:messageId/audio-url')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Attach a synthesized-audio URL to an assistant AIMessage' })
+  async updateMessageAudioUrl(
+    @Param('id') sessionId: string,
+    @Param('messageId') messageId: string,
+    @Body(new ZodValidationPipe(updateAgentMessageAudioRequestSchema))
+    dto: UpdateAgentMessageAudioRequest,
+  ): Promise<void> {
+    await this.orchestrator.updateMessageAudioUrl({ sessionId, messageId, audioUrl: dto.audioUrl });
   }
 }

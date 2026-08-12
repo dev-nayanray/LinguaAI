@@ -212,6 +212,31 @@ export const speechProviderEnvSchema = z.object({
 });
 export type SpeechProviderEnv = z.infer<typeof speechProviderEnvSchema>;
 
+/**
+ * Consumed by `services/speech-service`'s own audio-storage module (E10 T4,
+ * ADR-047) — this platform's first real consumer of the S3-compatible
+ * object-storage config `.env`/`.env.example` have declared as plumbing
+ * since E1 (`S3_ENDPOINT`/`S3_BUCKET`/etc., DATABASE.md's own object-
+ * storage target) but no code has ever read until now, the same
+ * "pattern specified, value left open" gap ADR-031/043 already closed for
+ * the embedding model / speech providers. `S3_FORCE_PATH_STYLE` defaults to
+ * `false` (real AWS S3's own default — virtual-hosted-style URLs) via a
+ * string-to-boolean transform; local dev's own `.env` sets it `true`
+ * (MinIO requires path-style addressing).
+ */
+export const objectStorageEnvSchema = z.object({
+  S3_ENDPOINT: z.string().url(),
+  S3_REGION: z.string().min(1),
+  S3_BUCKET: z.string().min(1),
+  S3_ACCESS_KEY_ID: z.string().min(1),
+  S3_SECRET_ACCESS_KEY: z.string().min(1),
+  S3_FORCE_PATH_STYLE: z
+    .string()
+    .default('false')
+    .transform((value) => value === 'true'),
+});
+export type ObjectStorageEnv = z.infer<typeof objectStorageEnvSchema>;
+
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
 export type ServerUrlEnv = z.infer<typeof serverUrlEnvSchema>;
 export type DatabaseEnv = z.infer<typeof databaseEnvSchema>;

@@ -26,12 +26,33 @@ export interface SendMessageInput {
    * entirely.
    */
   variables: Record<string, string>;
+  /**
+   * The caller's own already-uploaded recording of this turn's spoken
+   * input (E10 T4, design doc §6.3 step 3, ADR-047) — persisted directly
+   * onto the USER `AIMessage` row `prepareGeneration` creates. Undefined
+   * for a text-only turn.
+   */
+  userAudioUrl?: string;
 }
 
 export interface SendMessageResult {
+  /** The real, persisted assistant `AIMessage.id` (E10 T4) — threaded back so a caller can later attach that same row's own synthesized-audio URL once TTS completes (`updateMessageAudioUrl`). */
+  messageId: string;
   assistantMessage: string;
   promptVersion: string;
   modelId: string;
+}
+
+/**
+ * `PATCH /v1/agent-sessions/:id/messages/:messageId/audio-url`'s own input
+ * (E10 T4) — `messageId` must belong to `sessionId`, checked by
+ * `OrchestratorService.updateMessageAudioUrl` (404, not a silent no-op, on
+ * a mismatch or a missing message).
+ */
+export interface UpdateMessageAudioUrlInput {
+  sessionId: string;
+  messageId: string;
+  audioUrl: string;
 }
 
 /**

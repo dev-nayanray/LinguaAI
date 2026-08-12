@@ -16,6 +16,7 @@ export {
   aiEngineClientEnvSchema,
   speechSessionTokenEnvSchema,
   speechProviderEnvSchema,
+  objectStorageEnvSchema,
   type NodeEnv,
   type ServerUrlEnv,
   type DatabaseEnv,
@@ -31,4 +32,5 @@ export {
   type AiEngineClientEnv,
   type SpeechSessionTokenEnv,
   type SpeechProviderEnv,
+  type ObjectStorageEnv,
 } from './schemas.js';

@@ -7,9 +7,12 @@ import type { Logger } from '@linguaai/observability';
 import { LOGGER } from '@linguaai/observability/nestjs';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 
+import { AiEngineClientService } from '../ai-engine-client/ai-engine-client.service.js';
+import { AUDIO_STORAGE_PROVIDER } from '../audio-storage/audio-storage.config.js';
+import type { AudioStorageProvider } from '../audio-storage/audio-storage.interface.js';
 import { SessionTokenService } from '../session-token/session-token.service.js';
-import { STT_PROVIDER } from '../speech-provider/speech-provider.config.js';
-import type { SttProvider } from '../speech-provider/speech-provider.interface.js';
+import { STT_PROVIDER, TTS_PROVIDER } from '../speech-provider/speech-provider.config.js';
+import type { SttProvider, TtsProvider } from '../speech-provider/speech-provider.interface.js';
 import { SpeechSessionConnection } from './speech-session-connection.js';
 
 const REALTIME_PATH_PREFIX = '/realtime/speaking-sessions/';
@@ -39,7 +42,9 @@ interface ConnectionRequest {
  * completes, never after — and a binary-audio/JSON-control frame split
  * neither abstraction models well). Per-connection message routing/business
  * logic lives in `SpeechSessionConnection`, a framework-agnostic class this
- * gateway merely instantiates and wires to the real socket's events.
+ * gateway merely instantiates and wires to the real socket's events —
+ * `TTS_PROVIDER`/`AiEngineClientService`/`AUDIO_STORAGE_PROVIDER` (T4) are
+ * this gateway's own dependencies too, just passed straight through.
  */
 @Injectable()
 export class SpeechSessionGateway implements OnApplicationBootstrap {
@@ -49,6 +54,9 @@ export class SpeechSessionGateway implements OnApplicationBootstrap {
     private readonly httpAdapterHost: HttpAdapterHost,
     private readonly sessionTokens: SessionTokenService,
     @Inject(STT_PROVIDER) private readonly sttProvider: SttProvider,
+    @Inject(TTS_PROVIDER) private readonly ttsProvider: TtsProvider,
+    private readonly aiEngineClient: AiEngineClientService,
+    @Inject(AUDIO_STORAGE_PROVIDER) private readonly audioStorage: AudioStorageProvider,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
 
@@ -116,6 +124,9 @@ export class SpeechSessionGateway implements OnApplicationBootstrap {
     this.logger.info({ sessionId, userId }, 'speaking session connected');
     const connection = new SpeechSessionConnection(client, sessionId, {
       sttProvider: this.sttProvider,
+      ttsProvider: this.ttsProvider,
+      aiEngineClient: this.aiEngineClient,
+      audioStorage: this.audioStorage,
       logger: this.logger,
     });
 

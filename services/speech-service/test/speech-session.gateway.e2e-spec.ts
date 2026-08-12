@@ -4,16 +4,24 @@ import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { signSpeechSessionToken } from '@linguaai/utils';
+import type {
+  AgentMessageStreamEvent,
+  SendAgentMessageRequest,
+} from '@linguaai/validation/ai-coaching';
 import { WebSocket } from 'ws';
 
 import { AppModule } from '../src/app.module.js';
+import { AiEngineClientService } from '../src/ai-engine-client/ai-engine-client.service.js';
 import {
   SPEECH_PROVIDER_CONFIG,
   STT_PROVIDER,
+  TTS_PROVIDER,
 } from '../src/speech-provider/speech-provider.config.js';
 import type {
+  AudioChunk,
   SttProvider,
   TranscriptChunk,
+  TtsProvider,
 } from '../src/speech-provider/speech-provider.interface.js';
 
 const SESSION_TOKEN_SECRET = process.env.SPEECH_SESSION_TOKEN_SECRET;
@@ -44,6 +52,53 @@ function fakeSttProvider(): SttProvider & { streamTranscribe: jest.Mock } {
   };
 }
 
+/** A real, fixed-audio TTS stub — same RISK_REGISTER R-88 reasoning as the STT stub above. */
+function fakeTtsProvider(): TtsProvider & { streamSynthesize: jest.Mock } {
+  return {
+    name: 'openai',
+    streamSynthesize: jest.fn((): AsyncGenerator<AudioChunk> =>
+      (async function* (): AsyncGenerator<AudioChunk> {
+        yield { data: Buffer.from('fake-tts-audio-bytes'), done: false };
+        yield { data: Buffer.alloc(0), done: true };
+      })(),
+    ),
+  };
+}
+
+/**
+ * A real, in-process ai-engine stub — `services/ai-engine` is a separately
+ * deployed process this test environment doesn't run (mirrors
+ * `apps/api`'s own established "stub AiEngineClientService at the
+ * boundary" e2e discipline, e.g. `speaking.e2e-spec.ts`). Echoes the
+ * caller's own `userMessage` back as a one-token, one-sentence reply so the
+ * test can assert on exactly what the gateway relayed.
+ */
+function fakeAiEngineClient(): {
+  streamMessage: jest.Mock;
+  updateMessageAudioUrl: jest.Mock;
+} {
+  return {
+    streamMessage: jest.fn(
+      (
+        _sessionId: string,
+        input: SendAgentMessageRequest,
+      ): AsyncGenerator<AgentMessageStreamEvent> =>
+        (async function* (): AsyncGenerator<AgentMessageStreamEvent> {
+          const reply = `You said: ${input.userMessage}.`;
+          yield { type: 'token', delta: reply };
+          yield {
+            type: 'done',
+            messageId: '33333333-3333-3333-3333-333333333333',
+            assistantMessage: reply,
+            promptVersion: 'v1',
+            modelId: 'fake-model',
+          };
+        })(),
+    ),
+    updateMessageAudioUrl: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
 function waitForEvent<T = unknown>(target: WebSocket, event: string, timeoutMs = 3000): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
@@ -61,6 +116,8 @@ describe('SpeechSessionGateway (e2e)', () => {
   let app: INestApplication;
   let port: number;
   const sttProvider = fakeSttProvider();
+  const ttsProvider = fakeTtsProvider();
+  const aiEngineClient = fakeAiEngineClient();
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({ imports: [AppModule] })
@@ -68,6 +125,10 @@ describe('SpeechSessionGateway (e2e)', () => {
       .useValue({ openAiApiKey: 'test-dummy' })
       .overrideProvider(STT_PROVIDER)
       .useValue(sttProvider)
+      .overrideProvider(TTS_PROVIDER)
+      .useValue(ttsProvider)
+      .overrideProvider(AiEngineClientService)
+      .useValue(aiEngineClient)
       .compile();
     app = moduleRef.createNestApplication();
     await app.listen(0);
@@ -76,6 +137,9 @@ describe('SpeechSessionGateway (e2e)', () => {
 
   afterEach(() => {
     sttProvider.streamTranscribe.mockClear();
+    ttsProvider.streamSynthesize.mockClear();
+    aiEngineClient.streamMessage.mockClear();
+    aiEngineClient.updateMessageAudioUrl.mockClear();
   });
 
   afterAll(async () => {
@@ -110,7 +174,7 @@ describe('SpeechSessionGateway (e2e)', () => {
     ws.send(Buffer.from(' amigo'));
     ws.send(JSON.stringify({ type: 'speech.end-of-turn', payload: {}, sessionId, ts: Date.now() }));
 
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     ws.close();
 
     expect(messages).toContainEqual(
@@ -127,4 +191,49 @@ describe('SpeechSessionGateway (e2e)', () => {
     );
     expect(sttProvider.streamTranscribe).toHaveBeenCalledTimes(2);
   });
+
+  it("(T4) runs the full round trip: ai-engine's reply is relayed live, synthesized to real speech.audio-chunk messages, and the assistant's own audio is genuinely uploaded to local MinIO", async () => {
+    const sessionId = randomUUID();
+    const userId = randomUUID();
+    const token = signSpeechSessionToken({ sessionId, userId }, SESSION_TOKEN_SECRET);
+    const ws = connect(`/realtime/speaking-sessions/${sessionId}?token=${token}`);
+    await waitForEvent(ws, 'open');
+
+    const messages: unknown[] = [];
+    ws.on('message', (data: Buffer) => messages.push(JSON.parse(data.toString('utf8'))));
+
+    ws.send(Buffer.from('hola'));
+    ws.send(JSON.stringify({ type: 'speech.end-of-turn', payload: {}, sessionId, ts: Date.now() }));
+
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    ws.close();
+
+    expect(aiEngineClient.streamMessage).toHaveBeenCalledWith(
+      sessionId,
+      expect.objectContaining({ userMessage: 'hola', audioUrl: expect.stringContaining('http') }),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({ type: 'ai.token', payload: { delta: 'You said: hola.' } }),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({ type: 'ai.done', payload: { text: 'You said: hola.' } }),
+    );
+    const audioChunkMessages = messages.filter(
+      (message): message is { type: string; payload: { audio: string; done: boolean } } =>
+        (message as { type?: string }).type === 'speech.audio-chunk',
+    );
+    expect(audioChunkMessages.some((message) => message.payload.audio.length > 0)).toBe(true);
+    expect(audioChunkMessages.some((message) => message.payload.done)).toBe(true);
+
+    // The assistant's own synthesized audio was really uploaded to local
+    // MinIO (no override on AUDIO_STORAGE_PROVIDER, RISK_REGISTER note in
+    // ADR-047: S3 upload needs no live AI credentials, unlike STT/TTS) --
+    // a real, non-empty URL was attached back onto the AIMessage row via
+    // the stubbed ai-engine client.
+    expect(aiEngineClient.updateMessageAudioUrl).toHaveBeenCalledWith(
+      sessionId,
+      '33333333-3333-3333-3333-333333333333',
+      expect.stringContaining(`speaking-sessions/${sessionId}/1-assistant.mp3`),
+    );
+  }, 15000);
 });

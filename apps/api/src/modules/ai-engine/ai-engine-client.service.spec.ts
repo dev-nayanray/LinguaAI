@@ -96,6 +96,7 @@ describe('AiEngineClientService', () => {
       const tokenEvent = JSON.stringify({ type: 'token', delta: 'hel' });
       const doneEvent = JSON.stringify({
         type: 'done',
+        messageId: '33333333-3333-3333-3333-333333333333',
         assistantMessage: 'hello',
         promptVersion: 'v1',
         modelId: 'claude-teacher-model',
@@ -121,6 +122,7 @@ describe('AiEngineClientService', () => {
         { type: 'token', delta: 'hel' },
         {
           type: 'done',
+          messageId: '33333333-3333-3333-3333-333333333333',
           assistantMessage: 'hello',
           promptVersion: 'v1',
           modelId: 'claude-teacher-model',

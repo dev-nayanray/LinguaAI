@@ -90,9 +90,18 @@ export type EndAgentSessionRequest = z.infer<typeof endAgentSessionRequestSchema
  * defaults to `{}` rather than being required, since not every persona
  * needs template variables on every turn.
  */
+/**
+ * `audioUrl` (E10 T4, design doc §6.3 step 3) — the caller's own already-
+ * uploaded recording of this turn's spoken input (`speech-service` uploads
+ * to object storage *before* calling this endpoint, ADR-047), persisted
+ * directly onto the USER `AIMessage` row `prepareGeneration` creates.
+ * Optional: a text-only turn (no future UI built yet, E5 T10's own original
+ * scope) never has one.
+ */
 export const sendAgentMessageRequestSchema = z.object({
   userMessage: z.string().min(1).max(8000),
   variables: z.record(z.string()).default({}),
+  audioUrl: z.string().url().optional(),
 });
 export type SendAgentMessageRequest = z.infer<typeof sendAgentMessageRequestSchema>;
 
@@ -111,8 +120,18 @@ export const agentMessageTokenEventSchema = z.object({
 });
 export type AgentMessageTokenEvent = z.infer<typeof agentMessageTokenEventSchema>;
 
+/**
+ * `messageId` (E10 T4) — the real, persisted assistant `AIMessage.id` this
+ * turn's reply was written as. Threaded through so the caller (`speech-service`,
+ * T4) can attach that same row's own synthesized-audio URL after TTS
+ * completes (`PATCH /v1/agent-sessions/:id/messages/:messageId/audio-url`)
+ * — text generation and audio synthesis finish at different times, so the
+ * row is written first (here) and its `audioUrl` filled in later, never the
+ * reverse.
+ */
 export const agentMessageDoneEventSchema = z.object({
   type: z.literal('done'),
+  messageId: z.string().uuid(),
   assistantMessage: z.string(),
   promptVersion: z.string(),
   modelId: z.string(),
@@ -141,6 +160,20 @@ export const agentMessageStreamEventSchema = z.discriminatedUnion('type', [
   agentMessageErrorEventSchema,
 ]);
 export type AgentMessageStreamEvent = z.infer<typeof agentMessageStreamEventSchema>;
+
+/**
+ * `PATCH /v1/agent-sessions/:id/messages/:messageId/audio-url` request body
+ * (E10 T4, design doc §6.3 step 4) — attaches the assistant's own
+ * synthesized-speech URL once TTS finishes, onto the exact `AIMessage` row
+ * `agentMessageDoneEventSchema.messageId` already named. `messageId` must
+ * belong to the session named in the URL path — `OrchestratorService.updateMessageAudioUrl`
+ * 404s otherwise, the same no-existence-leak discipline `endAgentSessionRequestSchema`
+ * already established for this controller.
+ */
+export const updateAgentMessageAudioRequestSchema = z.object({
+  audioUrl: z.string().url(),
+});
+export type UpdateAgentMessageAudioRequest = z.infer<typeof updateAgentMessageAudioRequestSchema>;
 
 export const cefrLevelSchema = z.enum(CEFR_LEVELS);
 

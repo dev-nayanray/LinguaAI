@@ -8,3 +8,4 @@ export {
   type SpeechSessionTokenClaims,
   type SpeechSessionTokenVerification,
 } from './crypto/speech-session-token.js';
+export { parseSseStream } from './http/parse-sse-stream.js';

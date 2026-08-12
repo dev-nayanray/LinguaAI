@@ -9,6 +9,7 @@ import {
   appRoleDatabaseEnvSchema,
   databaseEnvSchema,
   nodeEnvSchema,
+  objectStorageEnvSchema,
   redisEnvSchema,
   speechProviderEnvSchema,
   speechSessionTokenEnvSchema,
@@ -161,6 +162,31 @@ describe('loadConfig', () => {
 
       const result = loadConfig(speechProviderEnvSchema, { OPENAI_API_KEY: 'sk-test' });
       expect(result.OPENAI_API_KEY).toBe('sk-test');
+    });
+
+    it('objectStorageEnvSchema requires every S3 var and defaults S3_FORCE_PATH_STYLE to false', () => {
+      expect(() => loadConfig(objectStorageEnvSchema, {})).toThrow(/S3_ENDPOINT/);
+
+      const result = loadConfig(objectStorageEnvSchema, {
+        S3_ENDPOINT: 'http://localhost:9000',
+        S3_REGION: 'us-east-1',
+        S3_BUCKET: 'linguaai-media',
+        S3_ACCESS_KEY_ID: 'linguaai',
+        S3_SECRET_ACCESS_KEY: 'linguaai_dev_password',
+      });
+      expect(result.S3_FORCE_PATH_STYLE).toBe(false);
+    });
+
+    it('objectStorageEnvSchema parses S3_FORCE_PATH_STYLE="true" to a real boolean', () => {
+      const result = loadConfig(objectStorageEnvSchema, {
+        S3_ENDPOINT: 'http://localhost:9000',
+        S3_REGION: 'us-east-1',
+        S3_BUCKET: 'linguaai-media',
+        S3_ACCESS_KEY_ID: 'linguaai',
+        S3_SECRET_ACCESS_KEY: 'linguaai_dev_password',
+        S3_FORCE_PATH_STYLE: 'true',
+      });
+      expect(result.S3_FORCE_PATH_STYLE).toBe(true);
     });
 
     it('fragments merge together into one composite schema, as a consuming app would', () => {

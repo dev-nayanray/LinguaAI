@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { parseSseStream } from '@linguaai/utils';
 import {
   agentMessageStreamEventSchema,
   endAgentSessionRequestSchema,
@@ -29,41 +30,6 @@ import {
 
 import { AI_ENGINE_CLIENT_CONFIG } from './ai-engine-client.config.js';
 import type { AiEngineClientEnv } from '@linguaai/config';
-
-/**
- * Parses a `text/event-stream` response body (one JSON value per
- * `data: ...\n\n` line — API_GUIDELINES.md §13) into the raw, not-yet-
- * validated payloads it carries. A separate, small function rather than
- * inline in `streamMessage()` so the wire-format parsing and the
- * ai-coaching-specific schema validation stay independently testable.
- */
-async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncGenerator<unknown> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-
-      let boundary = buffer.indexOf('\n\n');
-      while (boundary !== -1) {
-        const rawEvent = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        const dataLine = rawEvent.split('\n').find((line) => line.startsWith('data: '));
-        if (dataLine) {
-          yield JSON.parse(dataLine.slice('data: '.length)) as unknown;
-        }
-        boundary = buffer.indexOf('\n\n');
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
 
 /**
  * ADR-033 (T10, extended in E6 T5): `apps/api`'s typed client for

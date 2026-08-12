@@ -44,11 +44,11 @@ export type StartSpeakingSessionResponse = z.infer<typeof startSpeakingSessionRe
 // Binary WebSocket frames (the raw audio chunks themselves) carry no
 // envelope/schema of their own — only the JSON control messages below do.
 // `type` values are namespaced by domain exactly as API_GUIDELINES.md §9
-// specifies; only the types this task's own real scope emits/accepts are
-// declared here (`speech.partial-transcript`/`speech.final-transcript`/`ack`
-// server→client, `speech.end-of-turn` client→server) — `ai.token`/`ai.done`
-// (T4) and `speech.degraded` (T6) are each that later task's own scope to
-// add, not speculatively pre-declared here.
+// specifies. T3 declared `speech.partial-transcript`/`speech.final-transcript`/
+// `ack` (server→client) and `speech.end-of-turn` (client→server); T4 adds
+// `ai.token`/`ai.done`/`speech.audio-chunk` (server→client, §6.3 steps 3-4)
+// — `speech.degraded` (T6) remains that later task's own scope to add, not
+// speculatively pre-declared here.
 
 const realtimeMessageFields = {
   sessionId: z.string().uuid(),
@@ -98,3 +98,51 @@ export const speechTranscriptServerMessageSchema = z.object({
   ...realtimeMessageFields,
 });
 export type SpeechTranscriptServerMessage = z.infer<typeof speechTranscriptServerMessageSchema>;
+
+/**
+ * Server→client: a live token delta of the assistant's own reply (T4,
+ * §6.3 step 3) — relayed immediately as `ai-engine`'s own SSE `token`
+ * events arrive, the same "streamed, never buffered-then-sent-whole"
+ * discipline §6.3 step 5 states explicitly.
+ */
+export const aiTokenServerMessageSchema = z.object({
+  type: z.literal('ai.token'),
+  payload: z.object({ delta: z.string() }),
+  ...realtimeMessageFields,
+});
+export type AiTokenServerMessage = z.infer<typeof aiTokenServerMessageSchema>;
+
+/**
+ * Server→client: the assistant's complete reply text, once `ai-engine`'s
+ * own SSE stream reaches its `done` event (T4). The underlying `AIMessage.id`
+ * (`agentMessageDoneEventSchema.messageId`) is deliberately *not* included
+ * here — internal DB-id bookkeeping `SpeechSessionConnection` keeps to
+ * itself for the later `speech.audio-chunk`/audioUrl-attach step, never a
+ * client-facing concern.
+ */
+export const aiDoneServerMessageSchema = z.object({
+  type: z.literal('ai.done'),
+  payload: z.object({ text: z.string() }),
+  ...realtimeMessageFields,
+});
+export type AiDoneServerMessage = z.infer<typeof aiDoneServerMessageSchema>;
+
+/**
+ * Server→client: one chunk of synthesized assistant speech (T4, §6.3 step
+ * 4) — base64-encoded, unlike client-sent audio's own raw binary frames
+ * (T3). Client audio-in is many small, frequent, latency-sensitive
+ * microphone chunks (binary frames avoid both base64's ~33% overhead and a
+ * second parse path); assistant audio-out is comparatively coarse
+ * (per-sentence, T4's own `SentenceChunker`), so staying inside the one
+ * uniform JSON envelope every other server→client message already uses
+ * outweighs that overhead here. `done: true` marks the *whole turn's*
+ * synthesized audio as complete (every sentence flushed, `audio: ''`) —
+ * not `TtsProvider.streamSynthesize()`'s own per-call `AudioChunk.done`,
+ * which only marks one sentence's own synthesis call as finished.
+ */
+export const speechAudioChunkServerMessageSchema = z.object({
+  type: z.literal('speech.audio-chunk'),
+  payload: z.object({ audio: z.string(), done: z.boolean() }),
+  ...realtimeMessageFields,
+});
+export type SpeechAudioChunkServerMessage = z.infer<typeof speechAudioChunkServerMessageSchema>;
