@@ -15,9 +15,16 @@ import type {
   CourseListResponse,
   ExercisePublicView,
   LessonDetailResponse,
+  MatchedReadingActivitiesQuery,
+  MatchedReadingActivitiesResponse,
+  MatchedReadingActivity,
 } from '@linguaai/validation/content';
+import { CEFR_LEVELS, type CefrLevel } from '@linguaai/types/learning';
 
 import { APP_PRISMA_CLIENT } from '../../database/index.js';
+import type { RequestUser } from '../auth/strategies/jwt.strategy.js';
+
+const DEFAULT_MATCH_CEFR_LEVEL: CefrLevel = 'A1';
 
 function toWireCourseSummary(course: Course): CourseListResponse['data'][number] {
   return {
@@ -67,6 +74,27 @@ function toWireQuiz(quiz: Quiz): LessonDetailResponse['activities'][number]['qui
     order: quiz.order,
     createdAt: quiz.createdAt.toISOString(),
     updatedAt: quiz.updatedAt.toISOString(),
+  };
+}
+
+type ReadingActivityWithContext = Activity & {
+  lesson: { title: string; unit: { level: { courseId: string } } };
+};
+
+function toWireMatchedReadingActivity(
+  activity: ReadingActivityWithContext,
+): MatchedReadingActivity {
+  return {
+    id: activity.id,
+    lessonId: activity.lessonId,
+    type: activity.type,
+    title: activity.title,
+    content: activity.content as Record<string, unknown>,
+    order: activity.order,
+    createdAt: activity.createdAt.toISOString(),
+    updatedAt: activity.updatedAt.toISOString(),
+    courseId: activity.lesson.unit.level.courseId,
+    lessonTitle: activity.lesson.title,
   };
 }
 
@@ -195,5 +223,75 @@ export class CourseCatalogService {
     }
 
     return { ...toWireLesson(lesson), activities: lesson.activities.map(toWireActivity) };
+  }
+
+  /**
+   * E12 T2 (§6.3) — published `READING` activities for `languageId`,
+   * ordered by nearest-CEFR-band distance to the caller's own current
+   * `READING`-skill `ProficiencyLevel`. A real, working v1 (nearest-band
+   * match), not a sophisticated recommendation algorithm — matching the
+   * design doc's own stated scope. A learner with no `ProficiencyLevel`
+   * yet (never assessed) defaults to `A1`, the same safe-beginner default
+   * `Level.cefrLevel`'s own ordering already treats as the entry point.
+   * The whole published-for-this-language set is fetched and sorted in
+   * application code (not pushed into SQL) since `content.cefrLevel` lives
+   * inside a JSON column with no index to sort by — an acceptable v1 cost
+   * given a real course catalog's own bounded-per-language scale (the same
+   * "bounded, rarely-changing" reasoning `courseListQuerySchema`'s own doc
+   * comment already used to justify offset pagination here).
+   */
+  async getMatchedReadingActivities(
+    caller: RequestUser,
+    query: MatchedReadingActivitiesQuery,
+  ): Promise<MatchedReadingActivitiesResponse> {
+    const proficiency = await this.appPrisma.proficiencyLevel.findUnique({
+      where: {
+        userId_languageId_skill: {
+          userId: caller.userId,
+          languageId: query.languageId,
+          skill: 'READING',
+        },
+      },
+    });
+    const matchedCefrLevel: CefrLevel = proficiency?.cefrLevel ?? DEFAULT_MATCH_CEFR_LEVEL;
+    const targetIndex = CEFR_LEVELS.indexOf(matchedCefrLevel);
+
+    const activities = await this.appPrisma.activity.findMany({
+      where: {
+        type: 'READING',
+        deletedAt: null,
+        lesson: {
+          deletedAt: null,
+          unit: {
+            deletedAt: null,
+            level: {
+              deletedAt: null,
+              course: { languageId: query.languageId, publishedAt: { not: null }, deletedAt: null },
+            },
+          },
+        },
+      },
+      include: {
+        lesson: { include: { unit: { select: { level: { select: { courseId: true } } } } } },
+      },
+    });
+
+    const sorted = activities
+      .map((activity) => {
+        const content = activity.content as { cefrLevel?: unknown };
+        const contentIndex = CEFR_LEVELS.indexOf(content.cefrLevel as CefrLevel);
+        const distance =
+          contentIndex === -1 ? Number.MAX_SAFE_INTEGER : Math.abs(contentIndex - targetIndex);
+        return { activity, distance };
+      })
+      .sort((a, b) => a.distance - b.distance || a.activity.title.localeCompare(b.activity.title));
+
+    const total = sorted.length;
+    const page = sorted.slice((query.page - 1) * query.pageSize, query.page * query.pageSize);
+
+    return {
+      data: page.map(({ activity }) => toWireMatchedReadingActivity(activity)),
+      meta: { page: query.page, pageSize: query.pageSize, total, matchedCefrLevel },
+    };
   }
 }

@@ -8,6 +8,7 @@ function fakeService(): jest.Mocked<CourseCatalogService> {
     listCourses: jest.fn(),
     getCourseDetail: jest.fn(),
     getLessonDetail: jest.fn(),
+    getMatchedReadingActivities: jest.fn(),
   } as unknown as jest.Mocked<CourseCatalogService>;
 }
 
@@ -41,5 +42,19 @@ describe('CourseCatalogController', () => {
     await controller.getLessonDetail('lesson-1');
 
     expect(service.getLessonDetail).toHaveBeenCalledWith('lesson-1');
+  });
+
+  it('getMatchedReadingActivities delegates to the service with the caller and query', async () => {
+    const service = fakeService();
+    const controller = new CourseCatalogController(service);
+    const user = { userId: 'user-1', role: 'USER', organizationId: null, orgRole: null };
+    const query = { languageId: 'lang-1', page: 1, pageSize: 20 };
+
+    await controller.getMatchedReadingActivities(
+      { user } as unknown as Parameters<typeof controller.getMatchedReadingActivities>[0],
+      query,
+    );
+
+    expect(service.getMatchedReadingActivities).toHaveBeenCalledWith(user, query);
   });
 });

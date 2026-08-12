@@ -19,6 +19,27 @@ function fakePrisma() {
   return {
     course: { findMany: jest.fn(), count: jest.fn(), findUnique: jest.fn() },
     lesson: { findUnique: jest.fn() },
+    proficiencyLevel: { findUnique: jest.fn() },
+    activity: { findMany: jest.fn() },
+  };
+}
+
+function readingActivity(
+  id: string,
+  cefrLevel: string,
+  overrides: Partial<Record<string, unknown>> = {},
+) {
+  return {
+    id,
+    lessonId: 'lesson-1',
+    type: 'READING',
+    title: `Passage ${id}`,
+    content: { passage: 'Hola', cefrLevel },
+    order: 1,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    lesson: { title: 'Lesson', unit: { level: { courseId: 'course-1' } } },
+    ...overrides,
   };
 }
 
@@ -200,6 +221,102 @@ describe('CourseCatalogService', () => {
       const service = new CourseCatalogService(prisma as unknown as PrismaClient);
 
       await expect(service.getLessonDetail('missing')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('getMatchedReadingActivities', () => {
+    const caller = { userId: 'user-1', role: 'USER', organizationId: null, orgRole: null };
+
+    it("orders published READING activities by nearest CEFR distance to the caller's own ProficiencyLevel", async () => {
+      const prisma = fakePrisma();
+      prisma.proficiencyLevel.findUnique.mockResolvedValue({ cefrLevel: 'B1' });
+      prisma.activity.findMany.mockResolvedValue([
+        readingActivity('far', 'C2'),
+        readingActivity('exact', 'B1'),
+        readingActivity('near', 'B2'),
+      ]);
+      const service = new CourseCatalogService(prisma as unknown as PrismaClient);
+
+      const result = await service.getMatchedReadingActivities(caller, {
+        languageId: 'lang-1',
+        page: 1,
+        pageSize: 20,
+      });
+
+      expect(prisma.proficiencyLevel.findUnique).toHaveBeenCalledWith({
+        where: {
+          userId_languageId_skill: { userId: 'user-1', languageId: 'lang-1', skill: 'READING' },
+        },
+      });
+      expect(result.data.map((a) => a.id)).toEqual(['exact', 'near', 'far']);
+      expect(result.meta).toEqual({ page: 1, pageSize: 20, total: 3, matchedCefrLevel: 'B1' });
+    });
+
+    it('defaults to A1 when the caller has no ProficiencyLevel yet', async () => {
+      const prisma = fakePrisma();
+      prisma.proficiencyLevel.findUnique.mockResolvedValue(null);
+      prisma.activity.findMany.mockResolvedValue([readingActivity('a', 'A1')]);
+      const service = new CourseCatalogService(prisma as unknown as PrismaClient);
+
+      const result = await service.getMatchedReadingActivities(caller, {
+        languageId: 'lang-1',
+        page: 1,
+        pageSize: 20,
+      });
+
+      expect(result.meta.matchedCefrLevel).toBe('A1');
+    });
+
+    it('only queries published, non-deleted READING activities for the requested language', async () => {
+      const prisma = fakePrisma();
+      prisma.proficiencyLevel.findUnique.mockResolvedValue(null);
+      prisma.activity.findMany.mockResolvedValue([]);
+      const service = new CourseCatalogService(prisma as unknown as PrismaClient);
+
+      await service.getMatchedReadingActivities(caller, {
+        languageId: 'lang-1',
+        page: 1,
+        pageSize: 20,
+      });
+
+      expect(prisma.activity.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            type: 'READING',
+            deletedAt: null,
+            lesson: {
+              deletedAt: null,
+              unit: {
+                deletedAt: null,
+                level: {
+                  deletedAt: null,
+                  course: { languageId: 'lang-1', publishedAt: { not: null }, deletedAt: null },
+                },
+              },
+            },
+          },
+        }),
+      );
+    });
+
+    it('paginates the sorted result', async () => {
+      const prisma = fakePrisma();
+      prisma.proficiencyLevel.findUnique.mockResolvedValue({ cefrLevel: 'A1' });
+      prisma.activity.findMany.mockResolvedValue([
+        readingActivity('a', 'A1'),
+        readingActivity('b', 'A2'),
+        readingActivity('c', 'B1'),
+      ]);
+      const service = new CourseCatalogService(prisma as unknown as PrismaClient);
+
+      const result = await service.getMatchedReadingActivities(caller, {
+        languageId: 'lang-1',
+        page: 2,
+        pageSize: 1,
+      });
+
+      expect(result.data.map((a) => a.id)).toEqual(['b']);
+      expect(result.meta.total).toBe(3);
     });
   });
 });

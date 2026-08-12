@@ -425,6 +425,42 @@ export const lessonDetailResponseSchema = lessonSchema.extend({
 export type LessonDetailResponse = z.infer<typeof lessonDetailResponseSchema>;
 
 /**
+ * `GET /v1/reading-activities/matched` (E12 T2, §6.3) — published `READING`
+ * activities ordered by how closely their own `content.cefrLevel` matches
+ * the caller's own current `READING`-skill `ProficiencyLevel` for
+ * `languageId`. `courseId`/`lessonTitle` are included so a learner can tell
+ * where a matched passage actually lives, since this list spans lessons —
+ * unlike `lessonDetailResponseSchema`'s own single-lesson scope.
+ */
+export const matchedReadingActivitySchema = activityBaseSchema
+  .extend({
+    courseId: z.string().uuid(),
+    lessonTitle: z.string(),
+  })
+  .superRefine(refinePersistedActivityContent);
+export type MatchedReadingActivity = z.infer<typeof matchedReadingActivitySchema>;
+
+export const matchedReadingActivitiesQuerySchema = z.object({
+  languageId: z.string().uuid(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type MatchedReadingActivitiesQuery = z.infer<typeof matchedReadingActivitiesQuerySchema>;
+
+export const matchedReadingActivitiesResponseSchema = z.object({
+  data: z.array(matchedReadingActivitySchema),
+  meta: z.object({
+    page: z.number().int(),
+    pageSize: z.number().int(),
+    total: z.number().int(),
+    matchedCefrLevel: cefrLevelSchema,
+  }),
+});
+export type MatchedReadingActivitiesResponse = z.infer<
+  typeof matchedReadingActivitiesResponseSchema
+>;
+
+/**
  * `POST /v1/exercises/:id/attempts` request body — `response`'s shape is
  * keyed by the *exercise's own* `type`, looked up server-side, never a
  * client-supplied discriminant (the same scoring-integrity discipline
