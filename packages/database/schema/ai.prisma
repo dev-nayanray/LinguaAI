@@ -23,19 +23,19 @@
 // (composite) primary key, not what AIMessage references on a
 // non-partitioned table with a normal single-column key.
 //
-// FLAGGED GAP (not silently resolved): DATABASE.md §2.5 describes
-// PronunciationScore as "tied to an AIMessage or a dedicated Pronunciation
-// Lab attempt," but no "Pronunciation Lab attempt" entity exists anywhere
-// in DATABASE.md's domain-by-domain list (§2.1-§2.11) — that table has
-// never been designed. PronunciationScore below models this as a
-// polymorphic (sourceType, sourceId) pointer with no DB-level FK (same
-// shape as T2's ContentVersion, for the same structural reason: the
-// pointed-to table varies, and one of the two variants doesn't exist yet
-// to reference; separately, AIMessage's composite primary key would also
-// require a denormalized createdAt column here to form a real FK, which
-// no current need justifies adding speculatively). Whichever future epic
-// designs the real Pronunciation Lab module owns closing this gap for
-// real, not this schema.
+// GAP CLOSED (E11 T2): DATABASE.md §2.5 describes PronunciationScore as
+// "tied to an AIMessage or a dedicated Pronunciation Lab attempt" — the
+// "Pronunciation Lab attempt" entity this file's own header previously
+// flagged as missing since E4 T5 is now PronunciationLabAttempt, below.
+// PronunciationScore itself still models the reference as a polymorphic
+// (sourceType, sourceId) pointer with no DB-level FK (same shape as T2's
+// ContentVersion, for the same structural reason: the pointed-to table
+// varies by sourceType, and AIMessage's own composite primary key would
+// need a denormalized createdAt column here to form a real FK, which no
+// current need justifies adding speculatively) — only the
+// PRONUNCIATION_LAB_ATTEMPT variant's own missing-table half of the
+// original gap is now closed; the polymorphic-pointer shape itself is
+// unchanged.
 //
 // PROVISIONAL PARAMETER (not silently decided): DATABASE.md §4 and this
 // epic's own §6.3 are explicit that embedding dimensionality is
@@ -265,6 +265,31 @@ model PronunciationScore {
   @@index([userId, createdAt])
   @@index([sourceType, sourceId])
   @@map("PronunciationScore")
+}
+
+/// E11 T2 — the "Pronunciation Lab attempt" entity this file's own header
+/// comment (above) flagged as missing since E4 T5: a learner's recorded
+/// attempt at a known target phrase, scored via `speech-service`'s
+/// `PronunciationProvider` (ADR-049) and persisted by `apps/api` directly
+/// (ADR-050 — no direct Postgres access for `speech-service` itself,
+/// mirroring ADR-044's own principle). `PronunciationScore.sourceId`
+/// (`sourceType: PRONUNCIATION_LAB_ATTEMPT`) points at this table's own
+/// `id` — still no DB-level FK (`PronunciationScore`'s own polymorphic
+/// shape is unchanged by this task), but the pointed-to table now
+/// genuinely exists.
+model PronunciationLabAttempt {
+  id           String @id @default(uuid()) @db.Uuid
+  userId       String @db.Uuid
+  languageId   String @db.Uuid
+  targetPhrase String
+
+  createdAt DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language Language @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("PronunciationLabAttempt")
 }
 
 /// Session-level speaking-practice scoring — ties to AIAgentSession (not

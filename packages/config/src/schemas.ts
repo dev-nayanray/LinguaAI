@@ -184,6 +184,20 @@ export const aiEngineClientEnvSchema = z.object({
 export type AiEngineClientEnv = z.infer<typeof aiEngineClientEnvSchema>;
 
 /**
+ * Consumed by `apps/api`'s own new `PronunciationModule` (E11 T2) —
+ * `SPEECH_SERVICE_URL` has existed in `.env`/`.env.example` since E1 but,
+ * confirmed by a full-repo search, was never consumed by any real
+ * application code until now (only a health-check e2e script referenced
+ * it). This is `apps/api`'s first-ever direct HTTP client relationship to
+ * `speech-service` — previously `apps/api` only ever minted a token for
+ * the *client* to connect to `speech-service` directly (E10 T2, ADR-043).
+ */
+export const speechServiceClientEnvSchema = z.object({
+  SPEECH_SERVICE_URL: z.string().url(),
+});
+export type SpeechServiceClientEnv = z.infer<typeof speechServiceClientEnvSchema>;
+
+/**
  * Consumed by both `apps/api` (signs, E10 T1/T2 `SpeakingModule`) and
  * `services/speech-service` (verifies, T1) — the shared HMAC secret behind
  * the short-lived internal token that authorizes a client's direct

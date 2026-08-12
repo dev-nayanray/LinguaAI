@@ -13,6 +13,7 @@ import {
   pronunciationProviderEnvSchema,
   redisEnvSchema,
   speechProviderEnvSchema,
+  speechServiceClientEnvSchema,
   speechSessionTokenEnvSchema,
 } from './schemas.js';
 
@@ -148,6 +149,15 @@ describe('loadConfig', () => {
         AI_ENGINE_URL: 'http://localhost:4001',
       });
       expect(result.AI_ENGINE_URL).toBe('http://localhost:4001');
+    });
+
+    it('speechServiceClientEnvSchema requires a valid SPEECH_SERVICE_URL', () => {
+      expect(() => loadConfig(speechServiceClientEnvSchema, {})).toThrow(/SPEECH_SERVICE_URL/);
+
+      const result = loadConfig(speechServiceClientEnvSchema, {
+        SPEECH_SERVICE_URL: 'http://localhost:4002',
+      });
+      expect(result.SPEECH_SERVICE_URL).toBe('http://localhost:4002');
     });
 
     it('speechSessionTokenEnvSchema requires SPEECH_SESSION_TOKEN_SECRET', () => {
