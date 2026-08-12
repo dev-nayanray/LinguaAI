@@ -40,6 +40,7 @@ function fakeAiEngineClient(): AiEngineClientService {
   return {
     streamMessage: jest.fn(),
     updateMessageAudioUrl: jest.fn(),
+    abandonSession: jest.fn().mockResolvedValue(undefined),
   } as unknown as AiEngineClientService;
 }
 
@@ -61,6 +62,7 @@ describe('SpeechSessionGateway', () => {
       fakeAiEngineClient(),
       fakeAudioStorage(),
       fakeLogger(),
+      60_000,
     );
     gateway.onApplicationBootstrap();
     return { gateway, httpServer };

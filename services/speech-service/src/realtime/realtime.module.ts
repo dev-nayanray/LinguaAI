@@ -4,13 +4,15 @@ import { AiEngineClientModule } from '../ai-engine-client/ai-engine-client.modul
 import { AudioStorageModule } from '../audio-storage/audio-storage.module.js';
 import { SessionTokenModule } from '../session-token/session-token.module.js';
 import { SpeechProviderModule } from '../speech-provider/speech-provider.module.js';
-import { SpeechSessionGateway } from './speech-session.gateway.js';
+import { RECONNECTION_GRACE_WINDOW_MS, SpeechSessionGateway } from './speech-session.gateway.js';
+
+const RECONNECTION_GRACE_WINDOW_DEFAULT_MS = 60_000;
 
 /**
- * `services/speech-service`'s real-time WebSocket surface (E10 T3/T4,
+ * `services/speech-service`'s real-time WebSocket surface (E10 T3/T4/T7,
  * ADR-045/047) — imports `SessionTokenModule` (handshake auth, T1),
  * `SpeechProviderModule` (`STT_PROVIDER`/`TTS_PROVIDER`, T1),
- * `AiEngineClientModule` (the conversational-turn round trip, T4), and
+ * `AiEngineClientModule` (the conversational-turn round trip, T4/T7), and
  * `AudioStorageModule` (`AUDIO_STORAGE_PROVIDER`, T4). `SpeechSessionGateway`
  * itself has no HTTP routes of its own (`@nestjs/common`'s controller model
  * doesn't apply here) — it attaches directly to the app's own HTTP server
@@ -18,6 +20,9 @@ import { SpeechSessionGateway } from './speech-session.gateway.js';
  */
 @Module({
   imports: [SessionTokenModule, SpeechProviderModule, AiEngineClientModule, AudioStorageModule],
-  providers: [SpeechSessionGateway],
+  providers: [
+    SpeechSessionGateway,
+    { provide: RECONNECTION_GRACE_WINDOW_MS, useValue: RECONNECTION_GRACE_WINDOW_DEFAULT_MS },
+  ],
 })
 export class RealtimeModule {}

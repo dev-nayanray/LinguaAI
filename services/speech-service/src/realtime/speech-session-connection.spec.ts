@@ -304,7 +304,7 @@ describe('SpeechSessionConnection', () => {
     });
   });
 
-  it('ends the current turn on handleClose, so a pending STT stream completes rather than hanging', async () => {
+  it('does NOT end the current turn on handleClose (T7) -- a dropped socket may still be resumed within the grace window', async () => {
     let drainedPromise: Promise<Buffer[]> | undefined;
     const deps = baseDeps({
       sttProvider: {
@@ -324,8 +324,48 @@ describe('SpeechSessionConnection', () => {
     const connection = new SpeechSessionConnection(fakeClient(), UUID, deps);
 
     connection.handleClose();
+    connection.handleMessage(Buffer.from('chunk-after-close'), true);
+    connection.abandon();
+
+    await expect(drainedPromise).resolves.toEqual([Buffer.from('chunk-after-close')]);
+  });
+
+  it('abandon() ends the current turn, so a pending STT stream completes rather than hanging (T7, called only once the reconnection grace window truly elapses)', async () => {
+    let drainedPromise: Promise<Buffer[]> | undefined;
+    const deps = baseDeps({
+      sttProvider: {
+        name: 'openai',
+        streamTranscribe: jest.fn((queue: AsyncIterable<Buffer>) => {
+          drainedPromise = (async () => {
+            const drained: Buffer[] = [];
+            for await (const chunk of queue) {
+              drained.push(chunk);
+            }
+            return drained;
+          })();
+          return emptyAsyncIterable();
+        }),
+      },
+    });
+    const connection = new SpeechSessionConnection(fakeClient(), UUID, deps);
+
+    connection.abandon();
 
     await expect(drainedPromise).resolves.toEqual([]);
+  });
+
+  it('rebindClient() redirects all future outbound messages to the new socket', () => {
+    const oldClient = fakeClient();
+    const newClient = fakeClient();
+    const connection = new SpeechSessionConnection(oldClient, UUID, baseDeps());
+
+    connection.rebindClient(newClient);
+    connection.handleMessage(Buffer.from('chunk'), true);
+
+    expect(oldClient.send).not.toHaveBeenCalled();
+    expect(newClient.send).toHaveBeenCalledWith(
+      expect.stringContaining('"type":"ack"') as unknown as string,
+    );
   });
 
   describe('the T4 round trip (final transcript -> ai-engine -> TTS)', () => {

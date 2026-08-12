@@ -131,4 +131,35 @@ describe('AiEngineClientService', () => {
       ).rejects.toThrow('ai-engine returned 404');
     });
   });
+
+  describe('abandonSession', () => {
+    it('POSTs the validated userId', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({ ok: true, status: 204 } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new AiEngineClientService(config);
+
+      await client.abandonSession('session-1', '11111111-1111-1111-1111-111111111111');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://ai-engine.internal:4001/v1/agent-sessions/session-1/abandon',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: '11111111-1111-1111-1111-111111111111' }),
+        },
+      );
+    });
+
+    it('throws a clear error when ai-engine responds with a non-2xx status', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({ ok: false, status: 500 } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new AiEngineClientService(config);
+
+      await expect(
+        client.abandonSession('session-1', '11111111-1111-1111-1111-111111111111'),
+      ).rejects.toThrow('ai-engine returned 500 abandoning session "session-1"');
+    });
+  });
 });

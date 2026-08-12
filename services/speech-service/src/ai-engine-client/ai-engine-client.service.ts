@@ -3,6 +3,7 @@ import type { AiEngineClientEnv } from '@linguaai/config';
 import { parseSseStream } from '@linguaai/utils';
 import {
   agentMessageStreamEventSchema,
+  endAgentSessionRequestSchema,
   sendAgentMessageRequestSchema,
   updateAgentMessageAudioRequestSchema,
   type AgentMessageStreamEvent,
@@ -73,6 +74,26 @@ export class AiEngineClientService {
       throw new Error(
         `ai-engine returned ${response.status} attaching audioUrl to message "${messageId}"`,
       );
+    }
+  }
+
+  /**
+   * T7 (§6.5) — called once the gateway's own 60s reconnection grace-window
+   * timer expires without a resume, transitioning the session to
+   * `ABANDONED`. `userId` is this connection's own already-verified token
+   * claim (`SessionTokenService.verify`), never client-suppliable.
+   */
+  async abandonSession(sessionId: string, userId: string): Promise<void> {
+    const response = await fetch(
+      `${this.config.AI_ENGINE_URL}/v1/agent-sessions/${sessionId}/abandon`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(endAgentSessionRequestSchema.parse({ userId })),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`ai-engine returned ${response.status} abandoning session "${sessionId}"`);
     }
   }
 }

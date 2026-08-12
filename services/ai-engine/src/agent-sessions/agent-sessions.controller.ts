@@ -110,6 +110,24 @@ export class AgentSessionsController {
   }
 
   /**
+   * E10 T7 (§6.5) — `speech-service`'s own reconnection grace-window timer
+   * calls this once a dropped WebSocket connection goes unresumed for 60
+   * seconds. Same request body shape as `end` (`userId` is the caller's
+   * own already-authenticated identity, never client-suppliable) — reuses
+   * `endAgentSessionRequestSchema` rather than a redundant, identically-
+   * shaped duplicate.
+   */
+  @Post(':id/abandon')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Abandon an AI agent session (unresumed after a WebSocket drop)' })
+  async abandon(
+    @Param('id') sessionId: string,
+    @Body(new ZodValidationPipe(endAgentSessionRequestSchema)) dto: EndAgentSessionRequest,
+  ): Promise<void> {
+    await this.orchestrator.abandonSession({ sessionId, userId: dto.userId });
+  }
+
+  /**
    * E10 T4 (design doc §6.3 step 4) — attaches the assistant's own
    * synthesized-speech URL once TTS finishes, onto the exact `AIMessage`
    * row the `done` SSE event's own `messageId` already named.

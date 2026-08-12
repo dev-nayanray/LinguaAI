@@ -241,6 +241,22 @@ describe('AgentSessionsController', () => {
     });
   });
 
+  describe('abandon', () => {
+    it('delegates to OrchestratorService.abandonSession', async () => {
+      const orchestrator = { abandonSession: jest.fn().mockResolvedValue(undefined) };
+      const controller = new AgentSessionsController(
+        orchestrator as unknown as OrchestratorService,
+      );
+
+      await controller.abandon('session-1', { userId: '11111111-1111-1111-1111-111111111111' });
+
+      expect(orchestrator.abandonSession).toHaveBeenCalledWith({
+        sessionId: 'session-1',
+        userId: '11111111-1111-1111-1111-111111111111',
+      });
+    });
+  });
+
   describe('updateMessageAudioUrl', () => {
     it('delegates to OrchestratorService.updateMessageAudioUrl', async () => {
       const orchestrator = { updateMessageAudioUrl: jest.fn().mockResolvedValue(undefined) };

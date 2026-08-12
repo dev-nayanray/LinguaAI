@@ -12,6 +12,7 @@ import { WebSocket } from 'ws';
 
 import { AppModule } from '../src/app.module.js';
 import { AiEngineClientService } from '../src/ai-engine-client/ai-engine-client.service.js';
+import { RECONNECTION_GRACE_WINDOW_MS } from '../src/realtime/speech-session.gateway.js';
 import {
   SPEECH_PROVIDER_CONFIG,
   STT_PROVIDER,
@@ -23,6 +24,16 @@ import type {
   TranscriptChunk,
   TtsProvider,
 } from '../src/speech-provider/speech-provider.interface.js';
+
+/**
+ * T7 (§6.5) tests need a genuinely short reconnection grace window — the
+ * real spec'd value is 60s (API_GUIDELINES.md §9), which would make this
+ * suite absurdly slow to wait out for real. `RECONNECTION_GRACE_WINDOW_MS`
+ * is a DI value provider precisely so this override is possible without
+ * faking timers around a real WebSocket/HTTP server, which real socket
+ * teardown/reconnect timing doesn't tolerate well.
+ */
+const TEST_GRACE_WINDOW_MS = 300;
 
 const SESSION_TOKEN_SECRET = process.env.SPEECH_SESSION_TOKEN_SECRET;
 if (!SESSION_TOKEN_SECRET) {
@@ -76,6 +87,7 @@ function fakeTtsProvider(): TtsProvider & { streamSynthesize: jest.Mock } {
 function fakeAiEngineClient(): {
   streamMessage: jest.Mock;
   updateMessageAudioUrl: jest.Mock;
+  abandonSession: jest.Mock;
 } {
   return {
     streamMessage: jest.fn(
@@ -96,6 +108,7 @@ function fakeAiEngineClient(): {
         })(),
     ),
     updateMessageAudioUrl: jest.fn().mockResolvedValue(undefined),
+    abandonSession: jest.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -129,6 +142,8 @@ describe('SpeechSessionGateway (e2e)', () => {
       .useValue(ttsProvider)
       .overrideProvider(AiEngineClientService)
       .useValue(aiEngineClient)
+      .overrideProvider(RECONNECTION_GRACE_WINDOW_MS)
+      .useValue(TEST_GRACE_WINDOW_MS)
       .compile();
     app = moduleRef.createNestApplication();
     await app.listen(0);
@@ -140,6 +155,7 @@ describe('SpeechSessionGateway (e2e)', () => {
     ttsProvider.streamSynthesize.mockClear();
     aiEngineClient.streamMessage.mockClear();
     aiEngineClient.updateMessageAudioUrl.mockClear();
+    aiEngineClient.abandonSession.mockClear();
   });
 
   afterAll(async () => {
@@ -292,5 +308,82 @@ describe('SpeechSessionGateway (e2e)', () => {
       (m) => (m as { type?: string }).type === 'speech.degraded',
     );
     expect(degradedMessages).toHaveLength(1);
+  }, 15000);
+
+  it('(T7) resumes the same in-flight turn when the client reconnects within the grace window -- the session is never abandoned', async () => {
+    const sessionId = randomUUID();
+    const userId = randomUUID();
+    const token = signSpeechSessionToken({ sessionId, userId }, SESSION_TOKEN_SECRET);
+
+    const ws1 = connect(`/realtime/speaking-sessions/${sessionId}?token=${token}`);
+    await waitForEvent(ws1, 'open');
+    ws1.send(Buffer.from('hola'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    ws1.close();
+    await waitForEvent(ws1, 'close');
+
+    // Reconnect well within the (test-shortened) grace window.
+    await new Promise((resolve) => setTimeout(resolve, TEST_GRACE_WINDOW_MS / 3));
+    const ws2 = connect(`/realtime/speaking-sessions/${sessionId}?token=${token}`);
+    await waitForEvent(ws2, 'open');
+    const messages: unknown[] = [];
+    ws2.on('message', (data: Buffer) => messages.push(JSON.parse(data.toString('utf8'))));
+
+    ws2.send(Buffer.from(' amigo'));
+    ws2.send(
+      JSON.stringify({ type: 'speech.end-of-turn', payload: {}, sessionId, ts: Date.now() }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // The same turn's own queue survived the drop -- both chunks (sent on
+    // two different physical sockets) were transcribed together as one
+    // turn, proving real state continuity, not a fresh session.
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: 'speech.final-transcript',
+        payload: { text: 'hola amigo' },
+      }),
+    );
+    // 2, not 1 -- the *resumed* turn's own single streamTranscribe call
+    // (proving no second, competing call was started for it across the
+    // reconnect), plus the always-pre-started next turn's own call that
+    // `speech.end-of-turn` itself triggers (T3/T4's own established
+    // "runTurn starts exactly once per queue, at creation" behavior,
+    // unrelated to T7 -- this turn 2 is simply never given any audio).
+    expect(sttProvider.streamTranscribe).toHaveBeenCalledTimes(2);
+
+    // Wait past the *original* grace window (measured from the first
+    // socket's own close, well before ws2 was ever opened) to prove that
+    // timer was genuinely cancelled by the reconnect, not merely still
+    // pending -- deliberately without closing ws2 first, since doing so
+    // would start its own, unrelated grace-window timer that would also
+    // still be live at this point.
+    //
+    // Asserted for *this* sessionId specifically, not "never called at
+    // all" -- other tests in this same file each leave their own socket's
+    // grace-window timer running past their own test body (a real,
+    // accepted trade-off: waiting each one out would slow every earlier
+    // test down for no real benefit), so a same-suite, different-session
+    // call landing during this test's own window is expected background
+    // noise, not a sign this test's own reconnect logic failed.
+    await new Promise((resolve) => setTimeout(resolve, TEST_GRACE_WINDOW_MS));
+    expect(aiEngineClient.abandonSession).not.toHaveBeenCalledWith(sessionId, userId);
+    ws2.close();
+  }, 15000);
+
+  it('(T7) abandons the session once the grace window elapses with no reconnect', async () => {
+    const sessionId = randomUUID();
+    const userId = randomUUID();
+    const token = signSpeechSessionToken({ sessionId, userId }, SESSION_TOKEN_SECRET);
+
+    const ws = connect(`/realtime/speaking-sessions/${sessionId}?token=${token}`);
+    await waitForEvent(ws, 'open');
+    ws.send(Buffer.from('hola'));
+    ws.close();
+    await waitForEvent(ws, 'close');
+
+    await new Promise((resolve) => setTimeout(resolve, TEST_GRACE_WINDOW_MS + 200));
+
+    expect(aiEngineClient.abandonSession).toHaveBeenCalledWith(sessionId, userId);
   }, 15000);
 });

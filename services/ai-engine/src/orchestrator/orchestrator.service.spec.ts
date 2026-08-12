@@ -535,6 +535,90 @@ describe('OrchestratorService', () => {
     });
   });
 
+  describe('abandonSession', () => {
+    it('marks the session ABANDONED with an endedAt timestamp, and clears its rolling summary cache entry', async () => {
+      const prisma = fakePrisma();
+      const cache = new RollingSummaryCache();
+      cache.set('session-1', { summary: 'x', summarizedThroughCreatedAt: new Date() });
+
+      const service = new OrchestratorService(
+        prisma,
+        fakeRouter() as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        cache,
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await service.abandonSession({ sessionId: 'session-1', userId: 'user-1' });
+
+      expect(prisma.aIAgentSession.update).toHaveBeenCalledWith({
+        where: { id: 'session-1' },
+        data: { status: 'ABANDONED', endedAt: expect.any(Date) },
+      });
+      expect(cache.get('session-1')).toBeUndefined();
+    });
+
+    it('is a silent no-op (never a second write) when the session already transitioned out of ACTIVE', async () => {
+      const prisma = fakePrisma({ session: { status: 'ENDED' } });
+      const service = new OrchestratorService(
+        prisma,
+        fakeRouter() as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await service.abandonSession({ sessionId: 'session-1', userId: 'user-1' });
+
+      expect(prisma.aIAgentSession.update).not.toHaveBeenCalled();
+    });
+
+    it('404s (not a silent no-op) when the caller is not the session owner, and never updates it', async () => {
+      const prisma = fakePrisma();
+      const service = new OrchestratorService(
+        prisma,
+        fakeRouter() as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await expect(
+        service.abandonSession({ sessionId: 'session-1', userId: 'a-different-user' }),
+      ).rejects.toThrow('AI agent session not found');
+      expect(prisma.aIAgentSession.update).not.toHaveBeenCalled();
+    });
+
+    it('404s when the session does not exist', async () => {
+      const prisma = fakePrisma();
+      prisma.aIAgentSession.findUnique.mockResolvedValue(null);
+      const service = new OrchestratorService(
+        prisma,
+        fakeRouter() as unknown as RouterService,
+        fakePromptManager() as unknown as PromptManagerService,
+        fakeMemoryManager() as unknown as MemoryManagerService,
+        realSafetyLayer(),
+        new RollingSummaryCache(),
+        fakeCircuitBreaker() as unknown as CircuitBreakerService,
+        fakeCostMeter() as unknown as CostMeterService,
+      );
+
+      await expect(
+        service.abandonSession({ sessionId: 'session-1', userId: 'user-1' }),
+      ).rejects.toThrow('AI agent session not found');
+      expect(prisma.aIAgentSession.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('updateMessageAudioUrl', () => {
     it('attaches the audioUrl to the message, scoped to its own session', async () => {
       const prisma = fakePrisma();

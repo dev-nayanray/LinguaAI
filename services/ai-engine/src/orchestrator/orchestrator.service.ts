@@ -308,6 +308,38 @@ export class OrchestratorService {
   }
 
   /**
+   * T7 (§6.5) — `speech-service`'s own reconnection grace-window timer
+   * calls this once a dropped WebSocket connection is *not* resumed within
+   * 60 seconds, transitioning the session to `ABANDONED` (an already-real
+   * enum value with no prior writer through E1-E10 T6, confirmed by direct
+   * inspection) rather than leaving it `ACTIVE` forever with no further
+   * writer. Same 404-on-mismatch ownership discipline as `endSession`.
+   * Idempotent against an already-`ENDED`/`ABANDONED` session — a real,
+   * genuine race exists between this call and a legitimate `endSession`
+   * landing at nearly the same moment (the client explicitly ends the
+   * session in the same window its socket happens to drop); whichever
+   * lands first wins, and the second is a silent no-op, never an error or
+   * a second write.
+   */
+  async abandonSession(input: EndSessionInput): Promise<void> {
+    const session = await this.prisma.aIAgentSession.findUnique({
+      where: { id: input.sessionId },
+    });
+    if (!session || session.userId !== input.userId) {
+      throw new NotFoundException('AI agent session not found');
+    }
+    if (session.status !== 'ACTIVE') {
+      return;
+    }
+
+    await this.prisma.aIAgentSession.update({
+      where: { id: input.sessionId },
+      data: { status: 'ABANDONED', endedAt: new Date() },
+    });
+    this.rollingSummaryCache.clear(input.sessionId);
+  }
+
+  /**
    * Returns the messages to actually send to the model plus an optional
    * summary suffix to append to the persona's own system prompt. Once the
    * not-yet-summarized tail grows past the trigger, the older portion is

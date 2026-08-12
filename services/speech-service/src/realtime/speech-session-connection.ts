@@ -108,12 +108,36 @@ export class SpeechSessionConnection {
    * chunks — between two callers instead of one seeing all of them.
    */
   constructor(
-    private readonly client: WebSocketLike,
+    private client: WebSocketLike,
     private readonly sessionId: string,
     private readonly deps: SpeechSessionConnectionDeps,
   ) {
     this.currentTurnNumber = this.nextTurnNumber();
     this.runTurn(this.currentTurn, this.currentTurnRawAudio, this.currentTurnNumber);
+  }
+
+  /**
+   * A reconnect within `SpeechSessionGateway`'s own 60s grace window (T7,
+   * §6.5) resumes this *same* connection instance rather than creating a
+   * new one — the old socket is dead, but every other piece of in-memory
+   * state (the current turn's own `AudioChunkQueue`, `turnNumber`, etc.)
+   * carries over untouched. Only the outbound target changes.
+   */
+  rebindClient(newClient: WebSocketLike): void {
+    this.client = newClient;
+  }
+
+  /**
+   * Real teardown once the reconnection grace window elapses with no
+   * resume (T7, §6.5) — ends the current turn's queue so any pending STT
+   * stream resolves rather than hanging forever. This is the same
+   * protection `handleClose()` used to apply *immediately* on any socket
+   * close before T7; now it is bounded by the grace window instead of
+   * instant, so a genuine drop-and-reconnect doesn't lose an in-flight
+   * turn's already-buffered audio.
+   */
+  abandon(): void {
+    this.currentTurn.end();
   }
 
   handleMessage(data: Buffer, isBinary: boolean): void {
@@ -144,8 +168,15 @@ export class SpeechSessionConnection {
     }
   }
 
+  /**
+   * A socket closing is no longer treated as a definitive end (T7, §6.5) —
+   * it may be a genuine drop the client resumes within the grace window
+   * (`rebindClient`), so the current turn's queue is deliberately left
+   * open here. `SpeechSessionGateway` owns the grace-window timer and
+   * calls `abandon()` only once it truly elapses with no reconnect.
+   */
   handleClose(): void {
-    this.currentTurn.end();
+    // Intentionally a no-op — see the doc comment above.
   }
 
   private nextTurnNumber(): number {

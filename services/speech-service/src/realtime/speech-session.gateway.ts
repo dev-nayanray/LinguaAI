@@ -17,6 +17,16 @@ import { SpeechSessionConnection } from './speech-session-connection.js';
 
 const REALTIME_PATH_PREFIX = '/realtime/speaking-sessions/';
 
+/**
+ * T7 (§6.5, API_GUIDELINES.md §9) — how long a dropped WebSocket may be
+ * resumed by `sessionId` before its underlying `AIAgentSession` is
+ * abandoned. A DI value provider (`RealtimeModule`), not an env-driven
+ * config schema entry — this is a fixed protocol constant the spec itself
+ * names, not an operator-tunable value — kept overridable only so tests
+ * don't have to wait 60 real seconds to exercise the abandon path.
+ */
+export const RECONNECTION_GRACE_WINDOW_MS = Symbol('RECONNECTION_GRACE_WINDOW_MS');
+
 function toBuffer(data: RawData): Buffer {
   if (Buffer.isBuffer(data)) {
     return data;
@@ -46,9 +56,25 @@ interface ConnectionRequest {
  * `TTS_PROVIDER`/`AiEngineClientService`/`AUDIO_STORAGE_PROVIDER` (T4) are
  * this gateway's own dependencies too, just passed straight through.
  */
+interface LiveConnection {
+  connection: SpeechSessionConnection;
+  userId: string;
+  abandonTimer: ReturnType<typeof setTimeout> | null;
+}
+
 @Injectable()
 export class SpeechSessionGateway implements OnApplicationBootstrap {
   private readonly wss = new WebSocketServer({ noServer: true });
+
+  /**
+   * Keyed by `sessionId`, not per-socket — the whole point of T7's
+   * reconnection support is that a `sessionId` can outlive any one
+   * physical socket. Entries are removed either once the grace-window
+   * timer truly fires (abandoned) or never re-added once resumed (the
+   * same entry's `abandonTimer` is just cleared and its `connection`
+   * rebound to the new socket).
+   */
+  private readonly liveConnections = new Map<string, LiveConnection>();
 
   constructor(
     private readonly httpAdapterHost: HttpAdapterHost,
@@ -58,6 +84,7 @@ export class SpeechSessionGateway implements OnApplicationBootstrap {
     private readonly aiEngineClient: AiEngineClientService,
     @Inject(AUDIO_STORAGE_PROVIDER) private readonly audioStorage: AudioStorageProvider,
     @Inject(LOGGER) private readonly logger: Logger,
+    @Inject(RECONNECTION_GRACE_WINDOW_MS) private readonly graceWindowMs: number,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -120,7 +147,30 @@ export class SpeechSessionGateway implements OnApplicationBootstrap {
     return { sessionId, token };
   }
 
+  /**
+   * A reconnect within the grace window (a `sessionId` already present in
+   * `liveConnections`) resumes the *same* `SpeechSessionConnection`
+   * instance rather than starting a new one (T7, §6.5) — cancels the
+   * pending abandon timer and rebinds outbound messages to this new
+   * socket. Otherwise, a genuinely new connection is created and
+   * registered as usual.
+   */
   private handleConnection(client: WebSocket, sessionId: string, userId: string): void {
+    const existing = this.liveConnections.get(sessionId);
+    if (existing) {
+      if (existing.abandonTimer) {
+        clearTimeout(existing.abandonTimer);
+        existing.abandonTimer = null;
+      }
+      this.logger.info(
+        { sessionId, userId },
+        'speaking session resumed within the reconnection grace window',
+      );
+      existing.connection.rebindClient(client);
+      this.wireSocket(client, existing, sessionId, userId);
+      return;
+    }
+
     this.logger.info({ sessionId, userId }, 'speaking session connected');
     const connection = new SpeechSessionConnection(client, sessionId, {
       sttProvider: this.sttProvider,
@@ -129,14 +179,46 @@ export class SpeechSessionGateway implements OnApplicationBootstrap {
       audioStorage: this.audioStorage,
       logger: this.logger,
     });
+    const live: LiveConnection = { connection, userId, abandonTimer: null };
+    this.liveConnections.set(sessionId, live);
+    this.wireSocket(client, live, sessionId, userId);
+  }
 
+  /**
+   * On close, this socket's own event listeners are already spent — the
+   * grace-window timer here is what actually decides this connection's
+   * fate, not `handleClose()` (now a deliberate no-op, T7). If the window
+   * elapses with no reconnect, the current turn is really ended
+   * (`abandon()`) and `ai-engine` is told to mark the session `ABANDONED`
+   * — a failure to reach `ai-engine` for that call is logged, not thrown
+   * (there is no request/response cycle left to propagate an error to).
+   */
+  private wireSocket(
+    client: WebSocket,
+    live: LiveConnection,
+    sessionId: string,
+    userId: string,
+  ): void {
     client.on('message', (data: RawData, isBinary: boolean) => {
-      connection.handleMessage(toBuffer(data), isBinary);
+      live.connection.handleMessage(toBuffer(data), isBinary);
     });
 
     client.on('close', () => {
-      connection.handleClose();
-      this.logger.info({ sessionId, userId }, 'speaking session disconnected');
+      live.connection.handleClose();
+      this.logger.info(
+        { sessionId, userId },
+        'speaking session socket closed -- starting reconnection grace window',
+      );
+      live.abandonTimer = setTimeout(() => {
+        this.liveConnections.delete(sessionId);
+        live.connection.abandon();
+        this.aiEngineClient.abandonSession(sessionId, userId).catch((err: unknown) => {
+          this.logger.error(
+            { err, sessionId, userId },
+            'failed to mark an unresumed speaking session ABANDONED',
+          );
+        });
+      }, this.graceWindowMs);
     });
   }
 }
