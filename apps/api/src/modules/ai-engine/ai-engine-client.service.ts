@@ -3,12 +3,15 @@ import { parseSseStream } from '@linguaai/utils';
 import {
   agentMessageStreamEventSchema,
   endAgentSessionRequestSchema,
+  scoreFluencyRequestSchema,
+  scoreFluencyResponseSchema,
   scoreWritingRequestSchema,
   sendAgentMessageRequestSchema,
   startAgentSessionRequestSchema,
   startAgentSessionResponseSchema,
   writingCritiqueSchema,
   type AgentMessageStreamEvent,
+  type ScoreFluencyResponse,
   type ScoreWritingRequest,
   type SendAgentMessageRequest,
   type StartAgentSessionRequest,
@@ -199,5 +202,21 @@ export class AiEngineClientService {
     if (!response.ok) {
       throw new Error(`ai-engine returned ${response.status} ending session "${sessionId}"`);
     }
+  }
+
+  /**
+   * E10 T5 (ADR-048, design doc §6.4) — wired into `SpeakingService.endSession()`,
+   * called after the underlying `AIAgentSession` is marked `ENDED`.
+   */
+  async scoreFluencyAndExtractVocabulary(sessionId: string): Promise<ScoreFluencyResponse> {
+    const response = await fetch(`${this.config.AI_ENGINE_URL}/v1/fluency-scoring`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(scoreFluencyRequestSchema.parse({ sessionId })),
+    });
+    if (!response.ok) {
+      throw new Error(`ai-engine returned ${response.status} scoring session "${sessionId}"`);
+    }
+    return scoreFluencyResponseSchema.parse(await response.json());
   }
 }

@@ -406,4 +406,52 @@ describe('AiEngineClientService', () => {
       );
     });
   });
+
+  describe('scoreFluencyAndExtractVocabulary', () => {
+    it('POSTs the sessionId and returns the parsed fluency-scoring response', async () => {
+      const responseBody = {
+        languageId: '22222222-2222-2222-2222-222222222222',
+        fluencyScore: {
+          overallScore: 78,
+          componentScores: { fluency: 80, coherence: 75, pronunciation: 70, grammar: 85 },
+          feedback: 'Solid conversational flow.',
+        },
+        extractedVocabulary: [{ term: 'hola', translation: 'hello' }],
+      };
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => responseBody,
+      } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new AiEngineClientService(config);
+
+      const sessionId = '33333333-3333-3333-3333-333333333333';
+      const result = await client.scoreFluencyAndExtractVocabulary(sessionId);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://ai-engine.internal:4001/v1/fluency-scoring',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      const [, init] = fetchMock.mock.calls[0]!;
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual({ sessionId });
+      expect(result).toEqual(responseBody);
+    });
+
+    it('throws a clear error when ai-engine responds with a non-2xx status', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({ ok: false, status: 500 } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new AiEngineClientService(config);
+      const sessionId = '33333333-3333-3333-3333-333333333333';
+
+      await expect(client.scoreFluencyAndExtractVocabulary(sessionId)).rejects.toThrow(
+        `ai-engine returned 500 scoring session "${sessionId}"`,
+      );
+    });
+  });
 });

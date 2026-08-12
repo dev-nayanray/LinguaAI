@@ -13,6 +13,7 @@ import {
 import { RouterService } from '../gateway/router.service.js';
 import { renderTemplate } from '../prompts/render-template.js';
 import { SafetyLayerService } from '../safety/safety-layer.service.js';
+import { parseJsonTolerantOfMarkdownFence } from '../shared/parse-json-tolerant-of-markdown-fence.util.js';
 import { contentDraftingPromptTemplate } from './content-drafting.prompt.js';
 import { vocabularyDraftingPromptTemplate } from './vocabulary-drafting.prompt.js';
 
@@ -93,7 +94,7 @@ export class ContentDraftingService {
    * fence, a well-known real-model quirk).
    */
   private parseAndValidateLessonDraft(rawContent: string): ContentDraftLesson {
-    const parsedJson = parseJsonTolerantOfMarkdownFence(rawContent);
+    const parsedJson = parseJsonTolerantOfMarkdownFence(rawContent, 'ContentDraftingService');
 
     const result = contentDraftLessonSchema.safeParse(parsedJson);
     if (!result.success) {
@@ -122,7 +123,7 @@ export class ContentDraftingService {
 
   /** Same "not valid JSON" / "fails schema validation" discipline as `parseAndValidateLessonDraft` (E9 T4). */
   private parseAndValidateVocabularyDraft(rawContent: string): VocabularyItemDraft {
-    const parsedJson = parseJsonTolerantOfMarkdownFence(rawContent);
+    const parsedJson = parseJsonTolerantOfMarkdownFence(rawContent, 'ContentDraftingService');
 
     const result = vocabularyItemDraftSchema.safeParse(parsedJson);
     if (!result.success) {
@@ -151,21 +152,5 @@ export class ContentDraftingService {
             : undefined,
       })),
     };
-  }
-}
-
-/** Shared by both draft parsers (E9 T4) — tolerates a ```json markdown-fenced response, a well-known real-model quirk, then attempts a real `JSON.parse`, throwing a clear error rather than ever guessing at malformed output. */
-function parseJsonTolerantOfMarkdownFence(rawContent: string): unknown {
-  const unfenced = rawContent
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '');
-
-  try {
-    return JSON.parse(unfenced);
-  } catch {
-    throw new Error(
-      'ContentDraftingService: model response was not valid JSON — refusing to guess a draft',
-    );
   }
 }

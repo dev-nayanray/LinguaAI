@@ -211,3 +211,75 @@ export const scoreWritingRequestSchema = z.object({
   learnerResponse: z.string().min(1).max(10000),
 });
 export type ScoreWritingRequest = z.infer<typeof scoreWritingRequestSchema>;
+
+// --- Session-end fluency scoring (E10 T5, design doc §6.4, ADR-048) ---
+
+/** `FluencyScore.componentScores`'s own real shape (the schema column itself only documents an *example* shape — this is the actual source of truth, per that column's own doc comment). */
+export const fluencyScoreComponentScoresSchema = z.object({
+  fluency: z.number().min(0).max(100),
+  coherence: z.number().min(0).max(100),
+  pronunciation: z.number().min(0).max(100),
+  grammar: z.number().min(0).max(100),
+});
+export type FluencyScoreComponentScores = z.infer<typeof fluencyScoreComponentScoresSchema>;
+
+/** A single term `FluencyScoringService` judged notable enough to extract from the transcript — persisted into the learner's own personal dictionary (`source: 'CONVERSATION'`, E9 T2) by the caller, never by `ai-engine` itself (ADR-044's own Postgres-access boundary). */
+export const extractedVocabularyItemSchema = z.object({
+  term: z.string().min(1),
+  translation: z.string().min(1).optional(),
+  notes: z.string().min(1).optional(),
+});
+export type ExtractedVocabularyItem = z.infer<typeof extractedVocabularyItemSchema>;
+
+/**
+ * What the model must return for `FluencyScoringService`'s own structured-
+ * output call (E10 T5, ADR-048) — a malformed or schema-violating response
+ * is a thrown error, never silently passed through as a guessed score, the
+ * same "reproducible scoring" bar `writingCritiqueSchema` already
+ * established. Capped at 10 extracted terms per session — a defensive
+ * bound against a pathological over-long transcript producing an unbounded
+ * vocabulary list, not a claim that 10 is a tuned pedagogical maximum.
+ */
+export const fluencyScoringModelOutputSchema = z.object({
+  overallScore: z.number().min(0).max(100),
+  componentScores: fluencyScoreComponentScoresSchema,
+  feedback: z.string().min(1),
+  vocabulary: z.array(extractedVocabularyItemSchema).max(10),
+});
+export type FluencyScoringModelOutput = z.infer<typeof fluencyScoringModelOutputSchema>;
+
+/**
+ * `POST /v1/fluency-scoring` request body — `sessionId` only.
+ * `FluencyScoringService` reads that session's own already-persisted
+ * `AIMessage` history directly (`ai-engine` already owns it, ADR-044) —
+ * deliberately not a caller-supplied transcript, unlike `scoreWritingRequestSchema`'s
+ * own fresh-essay-per-call shape (a session-level score is about existing
+ * history, not new content the caller hands over).
+ */
+export const scoreFluencyRequestSchema = z.object({
+  sessionId: z.string().uuid(),
+});
+export type ScoreFluencyRequest = z.infer<typeof scoreFluencyRequestSchema>;
+
+export const fluencyScoreSchema = z.object({
+  overallScore: z.number().min(0).max(100),
+  componentScores: fluencyScoreComponentScoresSchema,
+  feedback: z.string().min(1),
+});
+export type FluencyScoreSchema = z.infer<typeof fluencyScoreSchema>;
+
+/**
+ * `fluencyScore` is `null` when the session had no real conversational
+ * content to score (e.g. a session ended immediately with no assistant
+ * turns) — a real, legitimate no-op outcome, not an error condition.
+ * `languageId` is included so the caller (`apps/api`'s `SpeakingService`)
+ * doesn't need a second round trip just to learn the session's own
+ * language before saving extracted vocabulary into the learner's personal
+ * dictionary.
+ */
+export const scoreFluencyResponseSchema = z.object({
+  languageId: z.string().uuid(),
+  fluencyScore: fluencyScoreSchema.nullable(),
+  extractedVocabulary: z.array(extractedVocabularyItemSchema),
+});
+export type ScoreFluencyResponse = z.infer<typeof scoreFluencyResponseSchema>;

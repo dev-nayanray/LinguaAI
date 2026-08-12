@@ -37,5 +37,11 @@ import { VocabularyCatalogService } from './vocabulary-catalog.service.js';
     VocabularyAuthoringController,
   ],
   providers: [VocabularyCatalogService, PersonalDictionaryService, SrsDeckService],
+  // `PersonalDictionaryService` (E10 T5) is the first cross-module export
+  // here — `SpeakingModule`'s own session-end vocabulary extraction
+  // (design doc §6.4) needs it directly, the same "consume a public
+  // export, never reach into another module's own internals" rule this
+  // repo's own dependency-boundary lint (ADR-015) already enforces.
+  exports: [PersonalDictionaryService],
 })
 export class VocabularyModule {}

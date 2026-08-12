@@ -11,6 +11,7 @@ import { AiEngineClientModule } from './modules/ai-engine/ai-engine-client.modul
 import { AssessmentModule } from './modules/assessment/index.js';
 import { AuditModule } from './modules/audit/index.js';
 import { AuthModule } from './modules/auth/index.js';
+import { AdminModule } from './modules/admin/index.js';
 import { CourseModule } from './modules/course/index.js';
 import { OrganizationsModule } from './modules/organizations/index.js';
 import { RecommendationsModule } from './modules/recommendations/index.js';
@@ -33,6 +34,7 @@ import { VocabularyModule } from './modules/vocabulary/index.js';
     VocabularyModule,
     SpeakingModule,
     AuditModule,
+    AdminModule,
     AiEngineClientModule,
   ],
   controllers: [HealthController],

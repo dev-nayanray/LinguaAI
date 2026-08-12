@@ -16,9 +16,11 @@ const config: AiGatewayModuleConfig = {
   teacherModel: 'claude-teacher-model',
   assessmentModel: 'claude-assessment-model',
   contentModel: 'claude-content-model',
+  fluencyModel: 'claude-fluency-model',
   teacherEconomyModel: undefined,
   assessmentEconomyModel: undefined,
   contentEconomyModel: undefined,
+  fluencyEconomyModel: undefined,
 };
 
 function fakeGenerateResponse(modelId: string): GenerateResponse {

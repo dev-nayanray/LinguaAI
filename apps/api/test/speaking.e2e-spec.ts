@@ -28,11 +28,21 @@ describe('SpeakingController (e2e)', () => {
   let app: INestApplication;
   const setupPrisma = getPrismaClient();
   const createdUserIds: string[] = [];
+  const createdLanguageIds: string[] = [];
   const startSession = jest.fn();
   const endSession = jest.fn();
-  const aiEngineClientStub: Pick<AiEngineClientService, 'startSession' | 'endSession'> = {
+  const scoreFluencyAndExtractVocabulary = jest.fn().mockResolvedValue({
+    languageId: '00000000-0000-0000-0000-000000000000',
+    fluencyScore: null,
+    extractedVocabulary: [],
+  });
+  const aiEngineClientStub: Pick<
+    AiEngineClientService,
+    'startSession' | 'endSession' | 'scoreFluencyAndExtractVocabulary'
+  > = {
     startSession,
     endSession,
+    scoreFluencyAndExtractVocabulary,
   };
   const sessionTokenSecret = process.env.SPEECH_SESSION_TOKEN_SECRET;
   if (!sessionTokenSecret) {
@@ -55,13 +65,21 @@ describe('SpeakingController (e2e)', () => {
   afterEach(() => {
     startSession.mockReset();
     endSession.mockReset();
+    scoreFluencyAndExtractVocabulary.mockReset();
+    scoreFluencyAndExtractVocabulary.mockResolvedValue({
+      languageId: '00000000-0000-0000-0000-000000000000',
+      fluencyScore: null,
+      extractedVocabulary: [],
+    });
   });
 
   afterAll(async () => {
+    await setupPrisma.personalDictionary.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.refreshToken.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.session.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.consentRecord.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    await setupPrisma.language.deleteMany({ where: { id: { in: createdLanguageIds } } });
     await setupPrisma.$disconnect();
     if (app) {
       await app.close();
@@ -72,6 +90,15 @@ describe('SpeakingController (e2e)', () => {
     const session = await registerAndLogin(app);
     createdUserIds.push(session.userId);
     return session;
+  }
+
+  /** Mirrors vocabulary.e2e-spec.ts's own established helper. */
+  async function freshLanguage(): Promise<string> {
+    const language = await setupPrisma.language.create({
+      data: { code: `e2e-${randomUUID().slice(0, 8)}`, name: 'E2E Test Language' },
+    });
+    createdLanguageIds.push(language.id);
+    return language.id;
   }
 
   describe('POST /v1/speaking-sessions', () => {
@@ -156,6 +183,50 @@ describe('SpeakingController (e2e)', () => {
         .set('Authorization', `Bearer ${session.accessToken}`);
 
       expect(res.status).toBe(404);
+    });
+
+    it('saves real PersonalDictionary rows (source CONVERSATION) for vocabulary ai-engine extracted (E10 T5)', async () => {
+      const session = await freshSession();
+      endSession.mockResolvedValue(undefined);
+      const languageId = await freshLanguage();
+      const sessionId = randomUUID();
+      scoreFluencyAndExtractVocabulary.mockResolvedValue({
+        languageId,
+        fluencyScore: {
+          overallScore: 78,
+          componentScores: { fluency: 80, coherence: 75, pronunciation: 70, grammar: 85 },
+          feedback: 'Solid effort.',
+        },
+        extractedVocabulary: [
+          { term: 'hola', translation: 'hello', notes: undefined },
+          { term: 'gracias', translation: undefined, notes: 'polite expression' },
+        ],
+      });
+
+      const res = await request(app.getHttpServer())
+        .delete(`/v1/speaking-sessions/${sessionId}`)
+        .set('Authorization', `Bearer ${session.accessToken}`);
+
+      expect(res.status).toBe(204);
+      expect(scoreFluencyAndExtractVocabulary).toHaveBeenCalledWith(sessionId);
+
+      const savedEntries = await setupPrisma.personalDictionary.findMany({
+        where: { userId: session.userId, languageId },
+        orderBy: { term: 'asc' },
+      });
+      expect(savedEntries).toHaveLength(2);
+      expect(savedEntries[0]).toMatchObject({
+        term: 'gracias',
+        translation: null,
+        notes: 'polite expression',
+        source: 'CONVERSATION',
+      });
+      expect(savedEntries[1]).toMatchObject({
+        term: 'hola',
+        translation: 'hello',
+        notes: null,
+        source: 'CONVERSATION',
+      });
     });
   });
 });

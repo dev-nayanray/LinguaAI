@@ -26,8 +26,12 @@ import type {
  * either conversational (`'teacher'`) or single-essay-scoring (`'assessment'`)
  * calls, so per-class cost monitoring (ADR-012's circuit breaker) stays
  * meaningful rather than conflating unrelated call shapes under one class.
+ * `'fluency'` (E10 T5, ADR-048) is the fourth — session-end speaking-practice
+ * scoring over a full conversation transcript, again a materially different
+ * shape from the other three (rubric-scored, one-shot, no session/memory
+ * concept of its own despite reading an existing session's history).
  */
-export type AiRequestClass = 'teacher' | 'assessment' | 'content';
+export type AiRequestClass = 'teacher' | 'assessment' | 'content' | 'fluency';
 
 /** ADR-034 (T9): 'economy' is the cost circuit breaker's DEGRADE target — falls back to 'default' per class if no economy model is configured, rather than failing the request over a config gap. */
 export type ModelTier = 'default' | 'economy';
@@ -57,6 +61,8 @@ export class RouterService {
         return this.config.assessmentModel;
       case 'content':
         return this.config.contentModel;
+      case 'fluency':
+        return this.config.fluencyModel;
     }
   }
 
@@ -68,6 +74,8 @@ export class RouterService {
         return this.config.assessmentEconomyModel;
       case 'content':
         return this.config.contentEconomyModel;
+      case 'fluency':
+        return this.config.fluencyEconomyModel;
     }
   }
 

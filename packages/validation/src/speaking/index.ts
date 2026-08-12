@@ -10,6 +10,8 @@
 
 import { z } from 'zod';
 
+import { fluencyScoreComponentScoresSchema } from '../ai-coaching/index.js';
+
 /**
  * `POST /v1/speaking-sessions` request body (T2, design doc §6.2,
  * ADR-043). `orchestratorAgent` is never client-supplied — always hardcoded
@@ -146,3 +148,27 @@ export const speechAudioChunkServerMessageSchema = z.object({
   ...realtimeMessageFields,
 });
 export type SpeechAudioChunkServerMessage = z.infer<typeof speechAudioChunkServerMessageSchema>;
+
+/**
+ * `speech.session.ended`'s real payload (E10 T5, design doc §6.4) —
+ * refines `EVENT_ARCHITECTURE.md`'s own pre-existing placeholder row for
+ * this event (found already cataloged, producer `services/speech-service`,
+ * payload `userId, durationSec, fluencyScore` — never implemented by any
+ * task through E1-E9), the same "real shape landed, refining this row's
+ * own placeholder summary" precedent `assessment.attempt.completed`/
+ * `learning.lesson.completed` already established, rather than inventing a
+ * second, redundant event name for the same real-world occurrence. Producer
+ * corrected to `apps/api` (Speaking module) — the actual owner of
+ * `DomainEventPublisher`/`PersonalDictionaryService`, neither of which
+ * `services/speech-service` has access to (ADR-044). `overallScore`/
+ * `componentScores` is `null` when the session had no real conversational
+ * content to score (`FluencyScoringService`'s own legitimate no-op case).
+ */
+export const speakingSessionEndedPayloadSchema = z.object({
+  sessionId: z.string().uuid(),
+  languageId: z.string().uuid(),
+  overallScore: z.number().min(0).max(100).nullable(),
+  componentScores: fluencyScoreComponentScoresSchema.nullable(),
+  vocabularyExtractedCount: z.number().int().nonnegative(),
+});
+export type SpeakingSessionEndedPayload = z.infer<typeof speakingSessionEndedPayloadSchema>;

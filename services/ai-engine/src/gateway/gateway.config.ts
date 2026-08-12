@@ -14,10 +14,13 @@ export interface AiGatewayModuleConfig {
   assessmentModel: string;
   /** E8 T4 (ADR-041) — the third `AiRequestClass`, AI-assisted content drafting. */
   contentModel: string;
+  /** E10 T5 (ADR-048) — the fourth `AiRequestClass`, session-end fluency scoring. */
+  fluencyModel: string;
   /** ADR-034 (T9): the circuit breaker's DEGRADE target per class — undefined when no economy model is configured for that class. */
   teacherEconomyModel: string | undefined;
   assessmentEconomyModel: string | undefined;
   contentEconomyModel: string | undefined;
+  fluencyEconomyModel: string | undefined;
 }
 
 /** Validated once, at module load (fail-fast, DEPLOYMENT.md §7) — same pattern as apps/api's auth.config.ts. */
@@ -30,8 +33,10 @@ export function resolveAiGatewayConfig(): AiGatewayModuleConfig {
     teacherModel: env.AI_MODEL_TEACHER_DEFAULT,
     assessmentModel: env.AI_MODEL_ASSESSMENT_DEFAULT,
     contentModel: env.AI_MODEL_CONTENT_DEFAULT,
+    fluencyModel: env.AI_MODEL_FLUENCY_DEFAULT,
     teacherEconomyModel: env.AI_MODEL_TEACHER_ECONOMY,
     assessmentEconomyModel: env.AI_MODEL_ASSESSMENT_ECONOMY,
     contentEconomyModel: env.AI_MODEL_CONTENT_ECONOMY,
+    fluencyEconomyModel: env.AI_MODEL_FLUENCY_ECONOMY,
   };
 }
