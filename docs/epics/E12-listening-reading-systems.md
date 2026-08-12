@@ -1,7 +1,7 @@
 # Epic E12 — Listening & Reading Systems
 
 **Epic ID:** E12 (ROADMAP.md)
-**Status:** Design phase — first single-pass design, not yet implemented.
+**Status:** Implementation in progress — T1 done (2026-08-13, ADR-051), T2 remaining.
 **Tech lead:** AI/Speech Engineering + Course Platform (TBD)
 **Gate owners assigned:** Architecture, Database, API, AI, Testing, Documentation (Frontend/Accessibility/Deployment gates apply to the later UI-focused epic that builds the actual listening-player/reading screens, not this backend-engine epic — see §3.5)
 
