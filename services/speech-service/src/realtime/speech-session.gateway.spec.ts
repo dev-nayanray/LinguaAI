@@ -4,6 +4,8 @@ import type { HttpAdapterHost } from '@nestjs/core';
 import type { Logger } from '@linguaai/observability';
 import type { SpeechSessionTokenVerification } from '@linguaai/utils';
 
+import type { WebSocketServer } from 'ws';
+
 import type { SttProvider } from '../speech-provider/speech-provider.interface.js';
 import type { SessionTokenService } from '../session-token/session-token.service.js';
 import { SpeechSessionGateway } from './speech-session.gateway.js';
@@ -113,7 +115,7 @@ describe('SpeechSessionGateway', () => {
     // gateway's own auth-routing reaches that point, not `ws`'s own
     // protocol handling.
     const handleUpgradeSpy = jest
-      .spyOn((gateway as any).wss, 'handleUpgrade')
+      .spyOn((gateway as unknown as { wss: WebSocketServer }).wss, 'handleUpgrade')
       .mockImplementation(() => {});
     const socket = fakeSocket();
     const head = Buffer.alloc(0);
