@@ -34,6 +34,115 @@ export const scriptDirectionSchema = z.enum(SCRIPT_DIRECTIONS);
 export const activityTypeSchema = z.enum(ACTIVITY_TYPES);
 export const exerciseTypeSchema = z.enum(EXERCISE_TYPES);
 
+/**
+ * `Activity.content`'s own real, type-specific shapes for `LISTENING`/
+ * `READING` (E12 T1, §3.1/§6.1) — `content.prisma`'s own header comment
+ * has always promised this is "validated at the application layer," a
+ * promise never kept for any `ActivityType` until now (confirmed by a
+ * full-repo search: every schema touching `content` was a bare
+ * `z.record`). Deliberately scoped to only these two types, the two E12's
+ * own PRD modules name — the other five `ActivityType`s remain untyped, a
+ * real, explicitly-tracked gap (E12 design doc §3.2/§11), not silently
+ * absorbed into this change.
+ *
+ * Two real, distinct moments each type's own content shape passes
+ * through: a *drafted* proposal (`ContentDraftingService`'s own AI
+ * output, real script/passage text only — no `audioUrl` exists yet, no
+ * `cefrLevel` is AI-assigned, E12 design doc §10 open question #2) and
+ * the *real, persisted* shape (after an ADMIN reviews/submits — the
+ * script has by then been synthesized to a real, uploaded `audioUrl`;
+ * the ADMIN has assigned a real `cefrLevel`).
+ */
+export const draftListeningActivityContentSchema = z.object({
+  script: z.string().min(1),
+});
+export type DraftListeningActivityContent = z.infer<typeof draftListeningActivityContentSchema>;
+
+export const listeningActivityContentSchema = z.object({
+  audioUrl: z.string().url(),
+  transcript: z.string().min(1),
+});
+export type ListeningActivityContent = z.infer<typeof listeningActivityContentSchema>;
+
+export const draftReadingActivityContentSchema = z.object({
+  passage: z.string().min(1),
+});
+export type DraftReadingActivityContent = z.infer<typeof draftReadingActivityContentSchema>;
+
+export const readingActivityContentSchema = z.object({
+  passage: z.string().min(1),
+  cefrLevel: cefrLevelSchema,
+});
+export type ReadingActivityContent = z.infer<typeof readingActivityContentSchema>;
+
+function addNestedContentIssues(
+  result: z.SafeParseReturnType<unknown, unknown>,
+  ctx: z.RefinementCtx,
+): void {
+  if (!result.success) {
+    for (const issue of result.error.issues) {
+      ctx.addIssue({ ...issue, path: ['content', ...issue.path] });
+    }
+  }
+}
+
+/**
+ * Applied via `.superRefine()` on `activitySchema` (a *real, persisted*
+ * row being read back) — `content`'s own static type stays
+ * `Record<string, unknown>` (so `assertExtends`'s own drift guard against
+ * `@linguaai/types/content`'s `Activity.content` still holds), but a
+ * `LISTENING`/`READING` activity now gets real runtime validation of its
+ * own persisted shape, every other type unchanged.
+ */
+function refinePersistedActivityContent(
+  data: { type: string; content: Record<string, unknown> },
+  ctx: z.RefinementCtx,
+): void {
+  if (data.type === 'LISTENING') {
+    addNestedContentIssues(listeningActivityContentSchema.safeParse(data.content), ctx);
+  } else if (data.type === 'READING') {
+    addNestedContentIssues(readingActivityContentSchema.safeParse(data.content), ctx);
+  }
+}
+
+/**
+ * Applied to `createActivityRequestSchema` only — a real, deliberate
+ * asymmetry between the two types this epic names, not an oversight.
+ * `LISTENING`'s own real `audioUrl` doesn't exist yet at request time
+ * (`apps/api`'s own `LessonContentService.createActivity` synthesizes it
+ * server-side, E12 design doc §6.2), so the caller supplies only the
+ * draft shape (`{ script }`); `READING` has no such server-side
+ * transform — the caller (an ADMIN) supplies the real, final shape
+ * directly, `cefrLevel` included (design doc §10 open question #2:
+ * admin-assigned, not AI-estimated).
+ * `updateActivityRequestSchema` is deliberately **not** refined at all —
+ * `type`/`content` are both optional there, so a content-only update
+ * can't be discriminated without a real DB read of the row's own current
+ * `type` first; a real, honest limitation, not silently glossed over.
+ */
+function refineCreateActivityContent(
+  data: { type: string; content: Record<string, unknown> },
+  ctx: z.RefinementCtx,
+): void {
+  if (data.type === 'LISTENING') {
+    addNestedContentIssues(draftListeningActivityContentSchema.safeParse(data.content), ctx);
+  } else if (data.type === 'READING') {
+    addNestedContentIssues(readingActivityContentSchema.safeParse(data.content), ctx);
+  }
+}
+
+/** Applied to `contentDraftActivitySchema` — `ContentDraftingService`'s own AI output, real script/passage text only, no `audioUrl`/`cefrLevel` yet either type. */
+function refineDraftActivityContent(
+  data: { type: string; content: Record<string, unknown> },
+  ctx: z.RefinementCtx,
+): void {
+  if (data.type === 'LISTENING') {
+    addNestedContentIssues(draftListeningActivityContentSchema.safeParse(data.content), ctx);
+  } else if (data.type === 'READING') {
+    addNestedContentIssues(draftReadingActivityContentSchema.safeParse(data.content), ctx);
+  }
+}
+
 // --- Entity (response) schemas ---
 
 export const courseSchema = z.object({
@@ -87,7 +196,8 @@ export const lessonSchema = z.object({
 assertExtends<Lesson, z.infer<typeof lessonSchema>>();
 export type LessonResponse = z.infer<typeof lessonSchema>;
 
-export const activitySchema = z.object({
+/** Unrefined base shape, kept separate from `activitySchema` below so downstream call sites can still `.extend()` it (a `ZodEffects`-wrapped schema, which `.superRefine()` produces, has no `.extend()`) — each such call site re-applies `refinePersistedActivityContent` itself. */
+export const activityBaseSchema = z.object({
   id: z.string().uuid(),
   lessonId: z.string().uuid(),
   type: activityTypeSchema,
@@ -97,6 +207,7 @@ export const activitySchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
+export const activitySchema = activityBaseSchema.superRefine(refinePersistedActivityContent);
 assertExtends<Activity, z.infer<typeof activitySchema>>();
 export type ActivityResponse = z.infer<typeof activitySchema>;
 
@@ -196,12 +307,14 @@ export const updateLessonRequestSchema = z.object({
 });
 export type UpdateLessonRequest = z.infer<typeof updateLessonRequestSchema>;
 
-export const createActivityRequestSchema = z.object({
-  type: activityTypeSchema,
-  title: z.string().min(1),
-  content: z.record(z.string(), z.unknown()),
-  order: z.number().int().min(0),
-});
+export const createActivityRequestSchema = z
+  .object({
+    type: activityTypeSchema,
+    title: z.string().min(1),
+    content: z.record(z.string(), z.unknown()),
+    order: z.number().int().min(0),
+  })
+  .superRefine(refineCreateActivityContent);
 export type CreateActivityRequest = z.infer<typeof createActivityRequestSchema>;
 
 export const updateActivityRequestSchema = z.object({
@@ -301,10 +414,12 @@ export type CourseDetailResponse = z.infer<typeof courseDetailResponseSchema>;
 /** `GET /v1/lessons/:id` — the real payload a learner needs to take a lesson: its own Activities, each with its own servable Exercises (public view, no answer key) and Quizzes. */
 export const lessonDetailResponseSchema = lessonSchema.extend({
   activities: z.array(
-    activitySchema.extend({
-      exercises: z.array(exercisePublicViewSchema),
-      quizzes: z.array(quizSchema),
-    }),
+    activityBaseSchema
+      .extend({
+        exercises: z.array(exercisePublicViewSchema),
+        quizzes: z.array(quizSchema),
+      })
+      .superRefine(refinePersistedActivityContent),
   ),
 });
 export type LessonDetailResponse = z.infer<typeof lessonDetailResponseSchema>;
@@ -369,12 +484,14 @@ export const contentDraftExerciseSchema = z.object({
 });
 export type ContentDraftExercise = z.infer<typeof contentDraftExerciseSchema>;
 
-export const contentDraftActivitySchema = z.object({
-  type: activityTypeSchema,
-  title: z.string().min(1),
-  content: z.record(z.string(), z.unknown()),
-  exercises: z.array(contentDraftExerciseSchema).min(1).max(5),
-});
+export const contentDraftActivitySchema = z
+  .object({
+    type: activityTypeSchema,
+    title: z.string().min(1),
+    content: z.record(z.string(), z.unknown()),
+    exercises: z.array(contentDraftExerciseSchema).min(1).max(5),
+  })
+  .superRefine(refineDraftActivityContent);
 export type ContentDraftActivity = z.infer<typeof contentDraftActivitySchema>;
 
 /**

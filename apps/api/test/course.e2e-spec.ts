@@ -223,7 +223,12 @@ describe('CourseModule (e2e)', () => {
     const lessonId = lessonRes.body.id as string;
     const activityRes = await auth(
       request(app.getHttpServer()).post(`/v1/admin/lessons/${lessonId}/activities`),
-    ).send({ type: 'READING', title: 'Basic Greetings', content: { text: 'Hola' }, order: 1 });
+    ).send({
+      type: 'READING',
+      title: 'Basic Greetings',
+      content: { passage: 'Hola, ¿cómo estás?', cefrLevel: 'A1' },
+      order: 1,
+    });
     const activityId = activityRes.body.id as string;
 
     async function createExercise(
@@ -340,7 +345,12 @@ describe('CourseModule (e2e)', () => {
 
       const activityRes = await auth(
         request(app.getHttpServer()).post(`/v1/admin/lessons/${lessonId}/activities`),
-      ).send({ type: 'READING', title: 'Basic Greetings', content: { text: 'Hola' }, order: 1 });
+      ).send({
+        type: 'READING',
+        title: 'Basic Greetings',
+        content: { passage: 'Hola, ¿cómo estás?', cefrLevel: 'A1' },
+        order: 1,
+      });
       expect(activityRes.status).toBe(201);
       const activityId = activityRes.body.id as string;
 
@@ -666,7 +676,12 @@ describe('CourseModule (e2e)', () => {
         request(app.getHttpServer()).post(
           `/v1/admin/lessons/${lessonRes.body.id as string}/activities`,
         ),
-      ).send({ type: 'READING', title: 'Activity 1', content: {}, order: 1 });
+      ).send({
+        type: 'READING',
+        title: 'Activity 1',
+        content: { passage: 'Hola', cefrLevel: 'A1' },
+        order: 1,
+      });
       const exerciseRes = await auth(
         request(app.getHttpServer()).post(
           `/v1/admin/activities/${activityRes.body.id as string}/exercises`,

@@ -306,7 +306,7 @@ describe('AiEngineClientService', () => {
         {
           type: 'READING',
           title: 'At the Restaurant',
-          content: {},
+          content: { passage: 'En el restaurante, el camarero pregunta qué quieres comer.' },
           exercises: [
             { type: 'MULTIPLE_CHOICE', prompt: 'Choose the right phrase', correctAnswer: {} },
           ],

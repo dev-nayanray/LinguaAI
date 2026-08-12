@@ -20,7 +20,7 @@ const STUB_DRAFT: ContentDraftLesson = {
     {
       type: 'READING',
       title: 'At the Restaurant',
-      content: { text: 'Quisiera una mesa para dos, por favor.' },
+      content: { passage: 'Quisiera una mesa para dos, por favor.' },
       exercises: [
         {
           type: 'MULTIPLE_CHOICE',
@@ -109,14 +109,12 @@ describe('ContentAuthoringController (e2e)', () => {
   }
 
   it('rejects an unauthenticated request with 401', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/v1/admin/lessons/ai-draft')
-      .send({
-        languageId: randomUUID(),
-        targetLanguageName: 'Spanish',
-        cefrLevel: 'A2',
-        topic: 'x',
-      });
+    const res = await request(app.getHttpServer()).post('/v1/admin/lessons/ai-draft').send({
+      languageId: randomUUID(),
+      targetLanguageName: 'Spanish',
+      cefrLevel: 'A2',
+      topic: 'x',
+    });
     expect(res.status).toBe(401);
   });
 

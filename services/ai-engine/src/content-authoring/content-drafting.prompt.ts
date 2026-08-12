@@ -24,7 +24,7 @@ Return a structured JSON object only, matching this exact shape and nothing else
     {
       "type": one of "VOCABULARY_DRILL"|"GRAMMAR_EXPLANATION"|"LISTENING"|"SPEAKING"|"READING"|"WRITING"|"CONVERSATION",
       "title": "a short activity title",
-      "content": { free-form structured content appropriate to the activity type, e.g. a passage for READING or a rule explanation for GRAMMAR_EXPLANATION },
+      "content": { free-form structured content appropriate to the activity type, EXCEPT for these two, which must match this exact shape: LISTENING -> {"script": "the full spoken-aloud script text, to be synthesized into audio later"}; READING -> {"passage": "the full reading passage text"} },
       "exercises": [
         {
           "type": one of "MULTIPLE_CHOICE"|"FILL_BLANK"|"MATCHING"|"TRANSLATION"|"LISTENING_COMPREHENSION",

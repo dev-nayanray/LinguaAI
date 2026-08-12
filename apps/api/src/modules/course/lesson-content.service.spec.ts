@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import type { PrismaClient } from '@linguaai/database';
 
+import type { SpeechServiceClientService } from '../speech-service-client/speech-service-client.service.js';
 import { LessonContentService } from './lesson-content.service.js';
 import type { ContentVersioningService } from './content-versioning.service.js';
 
@@ -75,6 +76,14 @@ function fakePrisma() {
   };
 }
 
+function fakeSpeechServiceClient(): jest.Mocked<
+  Pick<SpeechServiceClientService, 'synthesizeSpeech'>
+> {
+  return {
+    synthesizeSpeech: jest.fn().mockResolvedValue('https://storage.example.com/synthesized.mp3'),
+  };
+}
+
 function fakeVersioning(): jest.Mocked<
   Pick<
     ContentVersioningService,
@@ -96,6 +105,7 @@ describe('LessonContentService', () => {
       const service = new LessonContentService(
         prisma as unknown as PrismaClient,
         fakeVersioning() as unknown as ContentVersioningService,
+        fakeSpeechServiceClient() as unknown as SpeechServiceClientService,
       );
 
       await expect(
@@ -110,6 +120,7 @@ describe('LessonContentService', () => {
       const service = new LessonContentService(
         prisma as unknown as PrismaClient,
         versioning as unknown as ContentVersioningService,
+        fakeSpeechServiceClient() as unknown as SpeechServiceClientService,
       );
 
       await service.updateLesson('lesson-1', { title: 'Saying Hello' });
@@ -128,6 +139,7 @@ describe('LessonContentService', () => {
       const service = new LessonContentService(
         prisma as unknown as PrismaClient,
         fakeVersioning() as unknown as ContentVersioningService,
+        fakeSpeechServiceClient() as unknown as SpeechServiceClientService,
       );
 
       await expect(service.deleteLesson('missing')).rejects.toThrow(NotFoundException);
@@ -141,6 +153,7 @@ describe('LessonContentService', () => {
       const service = new LessonContentService(
         prisma as unknown as PrismaClient,
         fakeVersioning() as unknown as ContentVersioningService,
+        fakeSpeechServiceClient() as unknown as SpeechServiceClientService,
       );
 
       await expect(
@@ -153,6 +166,67 @@ describe('LessonContentService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
+    it('createActivity synthesizes a LISTENING activity own drafted script into real, persisted audioUrl/transcript content (E12 T1)', async () => {
+      const prisma = fakePrisma();
+      prisma.lesson.findUnique.mockResolvedValue(LESSON);
+      const speechServiceClient = fakeSpeechServiceClient();
+      const service = new LessonContentService(
+        prisma as unknown as PrismaClient,
+        fakeVersioning() as unknown as ContentVersioningService,
+        speechServiceClient as unknown as SpeechServiceClientService,
+      );
+
+      await service.createActivity('lesson-1', {
+        type: 'LISTENING',
+        title: 'Ordering Coffee',
+        content: { script: 'Hola, quiero un café.' },
+        order: 1,
+      });
+
+      expect(speechServiceClient.synthesizeSpeech).toHaveBeenCalledWith('Hola, quiero un café.');
+      expect(prisma.activity.create).toHaveBeenCalledWith({
+        data: {
+          lessonId: 'lesson-1',
+          type: 'LISTENING',
+          title: 'Ordering Coffee',
+          content: {
+            audioUrl: 'https://storage.example.com/synthesized.mp3',
+            transcript: 'Hola, quiero un café.',
+          },
+          order: 1,
+        },
+      });
+    });
+
+    it('createActivity never calls speech-service for a non-LISTENING activity, persisting content verbatim', async () => {
+      const prisma = fakePrisma();
+      prisma.lesson.findUnique.mockResolvedValue(LESSON);
+      const speechServiceClient = fakeSpeechServiceClient();
+      const service = new LessonContentService(
+        prisma as unknown as PrismaClient,
+        fakeVersioning() as unknown as ContentVersioningService,
+        speechServiceClient as unknown as SpeechServiceClientService,
+      );
+
+      await service.createActivity('lesson-1', {
+        type: 'READING',
+        title: 'Basic Greetings',
+        content: { passage: 'Hola, ¿cómo estás?', cefrLevel: 'A1' },
+        order: 1,
+      });
+
+      expect(speechServiceClient.synthesizeSpeech).not.toHaveBeenCalled();
+      expect(prisma.activity.create).toHaveBeenCalledWith({
+        data: {
+          lessonId: 'lesson-1',
+          type: 'READING',
+          title: 'Basic Greetings',
+          content: { passage: 'Hola, ¿cómo estás?', cefrLevel: 'A1' },
+          order: 1,
+        },
+      });
+    });
+
     it('updateActivity snapshots only when its course is published', async () => {
       const prisma = fakePrisma();
       prisma.activity.findUnique.mockResolvedValue(ACTIVITY);
@@ -161,6 +235,7 @@ describe('LessonContentService', () => {
       const service = new LessonContentService(
         prisma as unknown as PrismaClient,
         versioning as unknown as ContentVersioningService,
+        fakeSpeechServiceClient() as unknown as SpeechServiceClientService,
       );
 
       await service.updateActivity('activity-1', { title: 'Updated title' });
@@ -181,6 +256,7 @@ describe('LessonContentService', () => {
       const service = new LessonContentService(
         prisma as unknown as PrismaClient,
         fakeVersioning() as unknown as ContentVersioningService,
+        fakeSpeechServiceClient() as unknown as SpeechServiceClientService,
       );
 
       await expect(service.createQuiz('missing', { title: 'Quiz 1', order: 1 })).rejects.toThrow(
@@ -195,6 +271,7 @@ describe('LessonContentService', () => {
       const service = new LessonContentService(
         prisma as unknown as PrismaClient,
         versioning as unknown as ContentVersioningService,
+        fakeSpeechServiceClient() as unknown as SpeechServiceClientService,
       );
 
       await service.updateQuiz('quiz-1', { title: 'Updated Quiz' });
@@ -216,6 +293,7 @@ describe('LessonContentService', () => {
       const service = new LessonContentService(
         prisma as unknown as PrismaClient,
         fakeVersioning() as unknown as ContentVersioningService,
+        fakeSpeechServiceClient() as unknown as SpeechServiceClientService,
       );
 
       await expect(
@@ -235,6 +313,7 @@ describe('LessonContentService', () => {
       const service = new LessonContentService(
         prisma as unknown as PrismaClient,
         versioning as unknown as ContentVersioningService,
+        fakeSpeechServiceClient() as unknown as SpeechServiceClientService,
       );
 
       await service.updateExercise('ex-1', { prompt: 'Updated prompt' });
@@ -254,6 +333,7 @@ describe('LessonContentService', () => {
       const service = new LessonContentService(
         prisma as unknown as PrismaClient,
         fakeVersioning() as unknown as ContentVersioningService,
+        fakeSpeechServiceClient() as unknown as SpeechServiceClientService,
       );
 
       await expect(service.deleteExercise('missing')).rejects.toThrow(NotFoundException);

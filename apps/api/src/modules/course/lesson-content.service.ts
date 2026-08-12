@@ -6,6 +6,7 @@ import type {
   CreateExerciseRequest,
   CreateLessonRequest,
   CreateQuizRequest,
+  DraftListeningActivityContent,
   ExerciseResponse,
   LessonResponse,
   QuizResponse,
@@ -16,6 +17,7 @@ import type {
 } from '@linguaai/validation/content';
 
 import { APP_PRISMA_CLIENT } from '../../database/index.js';
+import { SpeechServiceClientService } from '../speech-service-client/speech-service-client.service.js';
 import { ContentVersioningService } from './content-versioning.service.js';
 
 function toWireLesson(lesson: Lesson): LessonResponse {
@@ -86,6 +88,7 @@ export class LessonContentService {
   constructor(
     @Inject(APP_PRISMA_CLIENT) private readonly appPrisma: PrismaClient,
     private readonly versioning: ContentVersioningService,
+    private readonly speechServiceClient: SpeechServiceClientService,
   ) {}
 
   // --- Lesson ---
@@ -127,18 +130,37 @@ export class LessonContentService {
 
   // --- Activity ---
 
+  /**
+   * E12 T1 (§6.2, ADR-051) — a `LISTENING` activity's own request `content`
+   * is the *draft* shape (`{ script }`, `createActivityRequestSchema`'s
+   * own `refineCreateActivityContent`, `packages/validation/src/content/index.ts`)
+   * since no real audio exists yet at request time. Synthesized here,
+   * server-side, into the real, persisted shape (`{ audioUrl, transcript }`)
+   * before the row is ever written — every other `ActivityType`,
+   * `READING` included, is persisted exactly as submitted.
+   */
   async createActivity(lessonId: string, dto: CreateActivityRequest): Promise<ActivityResponse> {
     await this.getOwnedLesson(lessonId);
+    const content =
+      dto.type === 'LISTENING' ? await this.synthesizeListeningContent(dto.content) : dto.content;
     const activity = await this.appPrisma.activity.create({
       data: {
         lessonId,
         type: dto.type,
         title: dto.title,
-        content: dto.content as Prisma.InputJsonValue,
+        content: content as Prisma.InputJsonValue,
         order: dto.order,
       },
     });
     return toWireActivity(activity);
+  }
+
+  private async synthesizeListeningContent(
+    draftContent: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const { script } = draftContent as unknown as DraftListeningActivityContent;
+    const audioUrl = await this.speechServiceClient.synthesizeSpeech(script);
+    return { audioUrl, transcript: script };
   }
 
   async updateActivity(id: string, dto: UpdateActivityRequest): Promise<ActivityResponse> {

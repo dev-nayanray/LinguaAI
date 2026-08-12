@@ -187,3 +187,34 @@ export const speakingSessionEndedPayloadSchema = z.object({
   vocabularyExtractedCount: z.number().int().nonnegative(),
 });
 export type SpeakingSessionEndedPayload = z.infer<typeof speakingSessionEndedPayloadSchema>;
+
+/**
+ * `speech-service`'s second stateless REST surface (E12 T1, §6.1,
+ * ADR-051) — `POST /v1/speech/synthesize`, reusing the already-integrated
+ * `TtsProvider` (ADR-043) outside any live conversation session, the same
+ * "content-authoring is a one-shot operation, not a live WebSocket
+ * session" reasoning `scorePronunciationRequestSchema` (E11, ADR-050)
+ * already established. No `languageCode` field —
+ * `OpenAiSpeechProvider.streamSynthesize()` (ADR-043's own pinned
+ * provider) takes text only; OpenAI's TTS API auto-detects language from
+ * the input itself, with no explicit language parameter to pass through.
+ * Adding one now would be a genuinely unused field against this
+ * platform's own "no fields for hypothetical future requirements"
+ * discipline — real if a future provider swap ever needs it.
+ *
+ * Returns a real, already-uploaded `audioUrl`, not raw audio bytes — this
+ * endpoint reuses `AudioStorageProvider` (E10 T4, ADR-047) internally,
+ * the same real object-storage adapter `SpeechSessionConnection` already
+ * uses for conversational audio, so `apps/api`'s own caller (E12 T1's
+ * content-authoring flow) never needs its own S3 client — `speech-service`
+ * already owns that capability end to end.
+ */
+export const synthesizeSpeechRequestSchema = z.object({
+  text: z.string().min(1).max(5000),
+});
+export type SynthesizeSpeechRequest = z.infer<typeof synthesizeSpeechRequestSchema>;
+
+export const synthesizeSpeechResponseSchema = z.object({
+  audioUrl: z.string().url(),
+});
+export type SynthesizeSpeechResponse = z.infer<typeof synthesizeSpeechResponseSchema>;

@@ -5,6 +5,10 @@ import {
   scorePronunciationRequestSchema,
   type PronunciationScoreResult,
 } from '@linguaai/validation/pronunciation';
+import {
+  synthesizeSpeechRequestSchema,
+  synthesizeSpeechResponseSchema,
+} from '@linguaai/validation/speaking';
 
 import { SPEECH_SERVICE_CLIENT_CONFIG } from './speech-service-client.config.js';
 
@@ -41,5 +45,25 @@ export class SpeechServiceClientService {
       throw new Error(`speech-service returned ${response.status} scoring a pronunciation attempt`);
     }
     return pronunciationScoreResultSchema.parse(await response.json());
+  }
+
+  /**
+   * E12 T1 (ADR-051) — `apps/api`'s content-authoring flow's own real
+   * consumer, synthesizing a drafted Listening activity's script into
+   * real, already-uploaded audio. `speech-service` owns the S3 upload
+   * itself (it already has `AudioStorageProvider`, E10 T4) and returns
+   * the real `audioUrl` directly — `apps/api` needs no S3 client of its
+   * own for this.
+   */
+  async synthesizeSpeech(text: string): Promise<string> {
+    const response = await fetch(`${this.config.SPEECH_SERVICE_URL}/v1/speech/synthesize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(synthesizeSpeechRequestSchema.parse({ text })),
+    });
+    if (!response.ok) {
+      throw new Error(`speech-service returned ${response.status} synthesizing speech`);
+    }
+    return synthesizeSpeechResponseSchema.parse(await response.json()).audioUrl;
   }
 }

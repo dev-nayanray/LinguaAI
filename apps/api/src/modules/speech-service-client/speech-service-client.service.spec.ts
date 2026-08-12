@@ -53,4 +53,40 @@ describe('SpeechServiceClientService', () => {
       );
     });
   });
+
+  describe('synthesizeSpeech', () => {
+    it('POSTs the validated text and returns the real, already-uploaded audioUrl', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ audioUrl: 'https://storage.example.com/x.mp3' }),
+      } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new SpeechServiceClientService(config);
+
+      const result = await client.synthesizeSpeech('hola amigo');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://speech-service.internal:4002/v1/speech/synthesize',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: 'hola amigo' }),
+        },
+      );
+      expect(result).toBe('https://storage.example.com/x.mp3');
+    });
+
+    it('throws a clear error when speech-service responds with a non-2xx status', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({ ok: false, status: 500 } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new SpeechServiceClientService(config);
+
+      await expect(client.synthesizeSpeech('hola')).rejects.toThrow(
+        'speech-service returned 500 synthesizing speech',
+      );
+    });
+  });
 });
