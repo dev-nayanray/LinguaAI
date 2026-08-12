@@ -19,6 +19,7 @@ export default defineConfig({
         'src/content/**',
         'src/vocabulary/**',
         'src/speaking/**',
+        'src/pronunciation/**',
         'src/commerce/**',
         'src/community/**',
         'src/enterprise/**',

@@ -240,6 +240,20 @@ export const objectStorageEnvSchema = z.object({
 });
 export type ObjectStorageEnv = z.infer<typeof objectStorageEnvSchema>;
 
+/**
+ * Consumed by `services/speech-service`'s own new pronunciation-provider
+ * module (E11 T1, ADR-049) — `AZURE_SPEECH_KEY`/`AZURE_SPEECH_REGION` were
+ * originally scaffolded at E1 for a since-abandoned STT/TTS provider
+ * choice, confirmed unconsumed by any code and removed at E10 T1 (ADR-043
+ * pinned OpenAI instead). This epic is their real, first-ever consumer —
+ * a legitimate reintroduction, not a reversal of that earlier cleanup.
+ */
+export const pronunciationProviderEnvSchema = z.object({
+  AZURE_SPEECH_KEY: z.string().min(1),
+  AZURE_SPEECH_REGION: z.string().min(1),
+});
+export type PronunciationProviderEnv = z.infer<typeof pronunciationProviderEnvSchema>;
+
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
 export type ServerUrlEnv = z.infer<typeof serverUrlEnvSchema>;
 export type DatabaseEnv = z.infer<typeof databaseEnvSchema>;

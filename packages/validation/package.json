@@ -94,6 +94,26 @@
         "default": "./dist-cjs/speaking/index.js"
       }
     },
+    "./pronunciation": {
+      "import": {
+        "types": "./dist/pronunciation/index.d.ts",
+        "default": "./dist/pronunciation/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/pronunciation/index.d.ts",
+        "default": "./dist-cjs/pronunciation/index.js"
+      }
+    },
+    "./admin": {
+      "import": {
+        "types": "./dist/admin/index.d.ts",
+        "default": "./dist/admin/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/admin/index.d.ts",
+        "default": "./dist-cjs/admin/index.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "scripts": {

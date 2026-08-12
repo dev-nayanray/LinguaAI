@@ -10,6 +10,7 @@ import {
   databaseEnvSchema,
   nodeEnvSchema,
   objectStorageEnvSchema,
+  pronunciationProviderEnvSchema,
   redisEnvSchema,
   speechProviderEnvSchema,
   speechSessionTokenEnvSchema,
@@ -178,6 +179,19 @@ describe('loadConfig', () => {
         S3_SECRET_ACCESS_KEY: 'linguaai_dev_password',
       });
       expect(result.S3_FORCE_PATH_STYLE).toBe(false);
+    });
+
+    it('pronunciationProviderEnvSchema requires AZURE_SPEECH_KEY/AZURE_SPEECH_REGION', () => {
+      expect(() => loadConfig(pronunciationProviderEnvSchema, {})).toThrow(/AZURE_SPEECH_KEY/);
+
+      const result = loadConfig(pronunciationProviderEnvSchema, {
+        AZURE_SPEECH_KEY: 'azure-test-key',
+        AZURE_SPEECH_REGION: 'eastus',
+      });
+      expect(result).toEqual({
+        AZURE_SPEECH_KEY: 'azure-test-key',
+        AZURE_SPEECH_REGION: 'eastus',
+      });
     });
 
     it('objectStorageEnvSchema parses S3_FORCE_PATH_STYLE="true" to a real boolean', () => {

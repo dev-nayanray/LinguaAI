@@ -17,6 +17,7 @@ export {
   speechSessionTokenEnvSchema,
   speechProviderEnvSchema,
   objectStorageEnvSchema,
+  pronunciationProviderEnvSchema,
   type NodeEnv,
   type ServerUrlEnv,
   type DatabaseEnv,
@@ -33,4 +34,5 @@ export {
   type SpeechSessionTokenEnv,
   type SpeechProviderEnv,
   type ObjectStorageEnv,
+  type PronunciationProviderEnv,
 } from './schemas.js';
