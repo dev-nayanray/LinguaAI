@@ -28,6 +28,8 @@ describe('GamificationController (e2e)', () => {
   const setupPrisma = getPrismaClient();
   const createdUserIds: string[] = [];
   const createdCourseIds: string[] = [];
+  const createdBadgeIds: string[] = [];
+  const createdMissionIds: string[] = [];
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
@@ -70,6 +72,31 @@ describe('GamificationController (e2e)', () => {
   afterAll(async () => {
     for (const courseId of createdCourseIds) {
       await cleanupCourse(courseId);
+    }
+    // Scoped by badgeId/missionId as well as userId -- this suite's own
+    // custom Badge/Mission rows are globally visible (not org/user-scoped
+    // tables), so a learner created by a *different*, concurrently-running
+    // e2e spec file can genuinely earn/enroll into them too (e.g. any
+    // learner anywhere completing their first lesson while this suite's
+    // own `LESSONS_COMPLETED threshold:1` Badge exists). Cleaning up only
+    // by `createdUserIds` left those cross-file UserBadge/UserMission rows
+    // behind, which then blocked the Badge/Mission delete below with a
+    // real foreign-key violation under full-suite concurrent load -- a
+    // real bug found and fixed during this task's own verification, not
+    // a flaky test.
+    await setupPrisma.userBadge.deleteMany({
+      where: { OR: [{ userId: { in: createdUserIds } }, { badgeId: { in: createdBadgeIds } }] },
+    });
+    await setupPrisma.userMission.deleteMany({
+      where: {
+        OR: [{ userId: { in: createdUserIds } }, { missionId: { in: createdMissionIds } }],
+      },
+    });
+    if (createdBadgeIds.length > 0) {
+      await setupPrisma.badge.deleteMany({ where: { id: { in: createdBadgeIds } } });
+    }
+    if (createdMissionIds.length > 0) {
+      await setupPrisma.mission.deleteMany({ where: { id: { in: createdMissionIds } } });
     }
     await setupPrisma.userXP.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.streak.deleteMany({ where: { userId: { in: createdUserIds } } });
@@ -292,5 +319,121 @@ describe('GamificationController (e2e)', () => {
       .set('Authorization', `Bearer ${learner.accessToken}`);
     expect(day3.body.currentStreak).toBe(1);
     expect(day3.body.longestStreak).toBe(2); // longestStreak never regresses
+  });
+
+  it('awards a real, seeded Badge once its criteria is met, and never again (§6.3, T2)', async () => {
+    const badge = await setupPrisma.badge.create({
+      data: {
+        name: `E2E First Lesson (${randomUUID().slice(0, 8)})`,
+        description: 'Completed your first lesson.',
+        criteria: { type: 'LESSONS_COMPLETED', threshold: 1 },
+      },
+    });
+    createdBadgeIds.push(badge.id);
+
+    const [exerciseId] = await publishedLessonWithExercises(1);
+    const learner = await freshSession();
+
+    // Filtered to this test's own Badge id throughout -- a real,
+    // separately-seeded "First Lesson Complete" Badge with the identical
+    // LESSONS_COMPLETED/threshold:1 criteria already exists from
+    // `seed.ts`'s own `seedBadgesAndMissions()`, and would legitimately
+    // also be earned by the same first-lesson-completion activity this
+    // test performs, so asserting the whole response array's length would
+    // be wrong.
+    const ownBadges = (body: Array<{ badgeId: string }>): Array<{ badgeId: string }> =>
+      body.filter((row) => row.badgeId === badge.id);
+
+    const before = await request(app.getHttpServer())
+      .get('/v1/gamification/badges')
+      .set('Authorization', `Bearer ${learner.accessToken}`);
+    expect(ownBadges(before.body as Array<{ badgeId: string }>)).toHaveLength(0);
+
+    await request(app.getHttpServer())
+      .post(`/v1/exercises/${exerciseId}/attempts`)
+      .set('Authorization', `Bearer ${learner.accessToken}`)
+      .send({ response: { selectedIndex: 0 } });
+
+    const after = await request(app.getHttpServer())
+      .get('/v1/gamification/badges')
+      .set('Authorization', `Bearer ${learner.accessToken}`);
+    const afterOwn = ownBadges(after.body as Array<{ badgeId: string; name: string }>);
+    expect(afterOwn).toHaveLength(1);
+    expect(afterOwn[0]).toMatchObject({ badgeId: badge.id, name: badge.name });
+
+    // A second, unrelated lesson completion must never award the same
+    // Badge twice -- UserBadge's own @@unique([userId, badgeId]) plus
+    // this service's own createMany({ skipDuplicates: true }) is the
+    // real idempotency guard being proven here.
+    const [exerciseId2] = await publishedLessonWithExercises(1);
+    await request(app.getHttpServer())
+      .post(`/v1/exercises/${exerciseId2}/attempts`)
+      .set('Authorization', `Bearer ${learner.accessToken}`)
+      .send({ response: { selectedIndex: 0 } });
+
+    const stillOnlyOne = await request(app.getHttpServer())
+      .get('/v1/gamification/badges')
+      .set('Authorization', `Bearer ${learner.accessToken}`);
+    expect(ownBadges(stillOnlyOne.body as Array<{ badgeId: string }>)).toHaveLength(1);
+  });
+
+  it('tracks real mission progress, self-enrolling on first read, and awards the mission bonus exactly once the target is reached (§6.3, T2)', async () => {
+    const now = new Date();
+    const mission = await setupPrisma.mission.create({
+      data: {
+        type: 'DAILY',
+        metric: 'XP_EARNED',
+        targetValue: 10, // exactly one correct first-attempt exercise's own XP
+        rewardXp: 25,
+        startsAt: new Date(now.getTime() - 60_000),
+        endsAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+        isActive: true,
+      },
+    });
+    createdMissionIds.push(mission.id);
+
+    // Two exercises, only the first is ever attempted -- the same
+    // isolation the anti-farming test above uses, so this exercise
+    // attempt's own XP delta doesn't also co-fire the separate
+    // lesson-completion bonus (which would add its own 50 XP and,
+    // depending on ordering, its own further mission-progress delta,
+    // making the assertion below ambiguous about which signal actually
+    // drove the mission to completion).
+    const [exerciseId] = await publishedLessonWithExercises(2);
+    const learner = await freshSession();
+
+    // Lazily enrolled on first read, before any real activity -- 0 progress.
+    const beforeActivity = await request(app.getHttpServer())
+      .get('/v1/gamification/missions')
+      .set('Authorization', `Bearer ${learner.accessToken}`);
+    const missionRow = (
+      beforeActivity.body as Array<{ missionId: string; progress: number; completedAt: null }>
+    ).find((row) => row.missionId === mission.id);
+    expect(missionRow).toMatchObject({ progress: 0, completedAt: null });
+
+    await request(app.getHttpServer())
+      .post(`/v1/exercises/${exerciseId}/attempts`)
+      .set('Authorization', `Bearer ${learner.accessToken}`)
+      .send({ response: { selectedIndex: 0 } });
+
+    const afterActivity = await request(app.getHttpServer())
+      .get('/v1/gamification/missions')
+      .set('Authorization', `Bearer ${learner.accessToken}`);
+    const completedRow = (
+      afterActivity.body as Array<{
+        missionId: string;
+        progress: number;
+        completedAt: string | null;
+      }>
+    ).find((row) => row.missionId === mission.id);
+    expect(completedRow?.progress).toBe(10);
+    expect(completedRow?.completedAt).not.toBeNull();
+
+    // The mission's own rewardXp (25) is a real additional XP award on top
+    // of the exercise's own 10 XP -- 10 + 25 = 35.
+    const status = await request(app.getHttpServer())
+      .get('/v1/gamification/me')
+      .set('Authorization', `Bearer ${learner.accessToken}`);
+    expect(status.body.totalXp).toBe(35);
   });
 });

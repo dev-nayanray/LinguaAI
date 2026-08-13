@@ -52,6 +52,8 @@ model UserXP {
 
   totalXp Int @default(0)
   level   Int @default(1)
+  /// Lifetime count of lessons completed (E14 T2) — the persisted counter `Badge.criteria`'s own seeded `LESSONS_COMPLETED` type and `Mission.metric`'s own `LESSONS_COMPLETED` value need to evaluate against; no other table anywhere tracks this (lesson completion itself is computed on the fly from `ExerciseAttempt` coverage, never stored as a row).
+  lessonsCompleted Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
