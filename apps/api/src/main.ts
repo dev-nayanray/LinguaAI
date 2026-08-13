@@ -7,7 +7,12 @@ import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module.js';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  // rawBody: true (E15 T1) -- preserves the exact byte sequence Stripe
+  // signed at `req.rawBody`, alongside the normal JSON-parsed `req.body`
+  // every other route already relies on; needed for
+  // `POST /v1/billing/webhooks/stripe`'s own signature verification
+  // (billing.controller.ts).
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // Required to read the httpOnly refresh-token cookie (E2-T9,
   // /v1/auth/refresh) — res.cookie() (T8, setting it) needs no middleware,

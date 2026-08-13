@@ -75,6 +75,8 @@ model Plan {
   /// Structured entitlement-limit definition (e.g. {maxLanguages: 1, dailyAiConversationMinutes: 30, pronunciationLabAccess: false}) — see this file's header comment for why this is JSON, not fixed columns.
   limits   Json
   isActive Boolean  @default(true)
+  /// E15 T1 — the Stripe Price id Checkout Session creation references, and webhook plan-resolution maps back from. A stable, typed, first-class billing-provider identifier, not JSON (unlike `limits`, which is reserved for soft, iterable entitlement limits) — nullable since FAMILY/BUSINESS are inactive and may never get one, and even PREMIUM has none until an operator configures Stripe and seeds it.
+  stripePriceId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -19,6 +19,7 @@ export {
   speechProviderEnvSchema,
   objectStorageEnvSchema,
   pronunciationProviderEnvSchema,
+  billingEnvSchema,
   type NodeEnv,
   type ServerUrlEnv,
   type DatabaseEnv,
@@ -37,4 +38,5 @@ export {
   type SpeechProviderEnv,
   type ObjectStorageEnv,
   type PronunciationProviderEnv,
+  type BillingEnv,
 } from './schemas.js';
