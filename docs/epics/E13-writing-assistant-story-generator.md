@@ -1,7 +1,7 @@
 # Epic E13 — Writing Assistant & AI Story Generator
 
 **Epic ID:** E13 (ROADMAP.md)
-**Status:** Implementation complete (T1–T3, 2026-08-13 — the epic's own full §9 task sequence, confirmed no further task remains).
+**Status:** Design phase — first single-pass design, not yet implemented.
 **Tech lead:** AI Engineering + Course Platform (TBD)
 **Gate owners assigned:** Architecture, Database, API, AI, Security, Testing, Documentation (Frontend/Accessibility gates apply to the later UI-focused epic that builds the actual inline-correction-diff/story-reader screens, not this backend-engine epic — see §3.5)
 
