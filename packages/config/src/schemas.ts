@@ -180,6 +180,29 @@ export const aiEngineClientEnvSchema = z.object({
 });
 export type AiEngineClientEnv = z.infer<typeof aiEngineClientEnvSchema>;
 
+/**
+ * Consumed by `apps/api`'s own new `BillingModule` (E15 T1, design doc
+ * §6.1). Deliberately **not** `.min(1)` on the Stripe fields, unlike every
+ * other real-provider-key schema above (`ANTHROPIC_API_KEY`,
+ * `AZURE_SPEECH_KEY`, ...) — those are all loaded by a *separately-booted*
+ * service process (`services/ai-engine`, `services/speech-service`) whose
+ * own e2e tests never run through `apps/api`'s own `AppModule`. Stripe
+ * integrates directly, in-process, inside `apps/api` (no independent-
+ * scaling/isolation reason for a new service, CLAUDE.md's own bar), so a
+ * strict, non-empty requirement here would fail *every* `apps/api` e2e
+ * test's own `app.init()` in this environment, where no real Stripe test
+ * key is provisioned (`.env`'s own `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`
+ * are present but empty). The real Stripe API boundary is a separate,
+ * `overrideProvider`-stubbable `StripeClientService` — the same "mock the
+ * boundary, not the module" precedent `AiEngineClientService`/
+ * `writing-submissions.e2e-spec.ts` already established (E13).
+ */
+export const billingEnvSchema = z.object({
+  STRIPE_SECRET_KEY: z.string(),
+  STRIPE_WEBHOOK_SECRET: z.string(),
+});
+export type BillingEnv = z.infer<typeof billingEnvSchema>;
+
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
 export type ServerUrlEnv = z.infer<typeof serverUrlEnvSchema>;
 export type DatabaseEnv = z.infer<typeof databaseEnvSchema>;

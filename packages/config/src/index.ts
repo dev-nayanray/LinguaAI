@@ -14,6 +14,7 @@ export {
   loginFailureEnvSchema,
   aiGatewayEnvSchema,
   aiEngineClientEnvSchema,
+  billingEnvSchema,
   type NodeEnv,
   type ServerUrlEnv,
   type DatabaseEnv,
@@ -27,4 +28,5 @@ export {
   type LoginFailureEnv,
   type AiGatewayEnv,
   type AiEngineClientEnv,
+  type BillingEnv,
 } from './schemas.js';
