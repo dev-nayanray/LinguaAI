@@ -3,6 +3,7 @@ import type { DomainEventPublisher } from '@linguaai/events';
 import type { PrismaClient } from '@linguaai/database';
 
 import type { RequestUser } from '../auth/strategies/jwt.strategy.js';
+import type { GamificationService } from '../gamification/index.js';
 import { ExerciseAttemptsService } from './exercise-attempts.service.js';
 import type { ContentVersioningService } from './content-versioning.service.js';
 
@@ -44,6 +45,10 @@ function fakeEvents(): jest.Mocked<Pick<DomainEventPublisher, 'publish'>> {
   return { publish: jest.fn().mockResolvedValue(undefined) };
 }
 
+function fakeGamification(): jest.Mocked<Pick<GamificationService, 'recordActivity'>> {
+  return { recordActivity: jest.fn().mockResolvedValue(undefined) };
+}
+
 describe('ExerciseAttemptsService', () => {
   it('scores a correct response, pins the attempt to the current ContentVersion, and publishes learning.exercise.answered', async () => {
     const prisma = fakePrisma();
@@ -56,10 +61,12 @@ describe('ExerciseAttemptsService', () => {
     prisma.exerciseAttempt.findFirst.mockResolvedValueOnce({ score: 1 }); // completion score lookup
     const versioning = fakeVersioning();
     const events = fakeEvents();
+    const gamification = fakeGamification();
     const service = new ExerciseAttemptsService(
       prisma as unknown as PrismaClient,
       versioning as unknown as ContentVersioningService,
       events as unknown as DomainEventPublisher,
+      gamification as unknown as GamificationService,
     );
 
     const result = await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
@@ -79,6 +86,17 @@ describe('ExerciseAttemptsService', () => {
       userId: 'user-1',
       payload: { userId: 'user-1', exerciseId: 'ex-1', correct: true },
     });
+    // E14 T1 (ADR-054) — called synchronously, in-process, for both the
+    // exercise-answered and the lesson-completed signal this same call
+    // triggers (every exercise in the lesson now has an attempt).
+    expect(gamification.recordActivity).toHaveBeenCalledWith('user-1', {
+      type: 'EXERCISE_ANSWERED',
+      correct: true,
+      firstAttempt: true,
+    });
+    expect(gamification.recordActivity).toHaveBeenCalledWith('user-1', {
+      type: 'LESSON_COMPLETED',
+    });
   });
 
   it('throws 404 when the exercise does not exist', async () => {
@@ -88,6 +106,7 @@ describe('ExerciseAttemptsService', () => {
       prisma as unknown as PrismaClient,
       fakeVersioning() as unknown as ContentVersioningService,
       fakeEvents() as unknown as DomainEventPublisher,
+      fakeGamification() as unknown as GamificationService,
     );
 
     await expect(
@@ -105,6 +124,7 @@ describe('ExerciseAttemptsService', () => {
       prisma as unknown as PrismaClient,
       versioning as unknown as ContentVersioningService,
       events as unknown as DomainEventPublisher,
+      fakeGamification() as unknown as GamificationService,
     );
 
     await expect(
@@ -122,6 +142,7 @@ describe('ExerciseAttemptsService', () => {
       prisma as unknown as PrismaClient,
       fakeVersioning() as unknown as ContentVersioningService,
       events as unknown as DomainEventPublisher,
+      fakeGamification() as unknown as GamificationService,
     );
 
     await expect(
@@ -141,16 +162,27 @@ describe('ExerciseAttemptsService', () => {
         score: 1,
       });
       const events = fakeEvents();
+      const gamification = fakeGamification();
       const service = new ExerciseAttemptsService(
         prisma as unknown as PrismaClient,
         fakeVersioning() as unknown as ContentVersioningService,
         events as unknown as DomainEventPublisher,
+        gamification as unknown as GamificationService,
       );
 
       await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
 
       expect(prisma.activity.findUnique).not.toHaveBeenCalled();
       expect(events.publish).toHaveBeenCalledTimes(1); // exercise.answered only
+      // A repeat attempt earns no XP (E14 T1, §3.3's own anti-farming rule) — recordActivity is still called (streak still updates on any real activity), just with firstAttempt: false.
+      expect(gamification.recordActivity).toHaveBeenCalledWith('user-1', {
+        type: 'EXERCISE_ANSWERED',
+        correct: true,
+        firstAttempt: false,
+      });
+      expect(gamification.recordActivity).not.toHaveBeenCalledWith('user-1', {
+        type: 'LESSON_COMPLETED',
+      });
       expect(events.publish).not.toHaveBeenCalledWith(
         'learning.lesson.completed',
         expect.anything(),
@@ -174,6 +206,7 @@ describe('ExerciseAttemptsService', () => {
         prisma as unknown as PrismaClient,
         fakeVersioning() as unknown as ContentVersioningService,
         events as unknown as DomainEventPublisher,
+        fakeGamification() as unknown as GamificationService,
       );
 
       await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
@@ -207,6 +240,7 @@ describe('ExerciseAttemptsService', () => {
         prisma as unknown as PrismaClient,
         fakeVersioning() as unknown as ContentVersioningService,
         events as unknown as DomainEventPublisher,
+        fakeGamification() as unknown as GamificationService,
       );
 
       await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
@@ -239,6 +273,7 @@ describe('ExerciseAttemptsService', () => {
         prisma as unknown as PrismaClient,
         fakeVersioning() as unknown as ContentVersioningService,
         events as unknown as DomainEventPublisher,
+        fakeGamification() as unknown as GamificationService,
       );
 
       await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });

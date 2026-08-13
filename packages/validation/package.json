@@ -114,6 +114,16 @@
         "default": "./dist-cjs/admin/index.js"
       }
     },
+    "./gamification": {
+      "import": {
+        "types": "./dist/gamification/index.d.ts",
+        "default": "./dist/gamification/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/gamification/index.d.ts",
+        "default": "./dist-cjs/gamification/index.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "scripts": {

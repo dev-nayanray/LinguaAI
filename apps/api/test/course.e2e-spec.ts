@@ -120,6 +120,8 @@ describe('CourseModule (e2e)', () => {
     for (const courseId of createdCourseIds) {
       await cleanupCourse(courseId);
     }
+    await setupPrisma.userXP.deleteMany({ where: { userId: { in: createdUserIds } } });
+    await setupPrisma.streak.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.refreshToken.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.session.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.consentRecord.deleteMany({ where: { userId: { in: createdUserIds } } });
