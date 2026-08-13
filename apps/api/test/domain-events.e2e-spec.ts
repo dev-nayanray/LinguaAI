@@ -2,8 +2,8 @@ import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { getPrismaClient } from '@linguaai/database';
 import {
-  createDomainEventsQueue,
-  DOMAIN_EVENTS_QUEUE_NAME,
+  createDomainEventsConsumerQueue,
+  domainEventsQueueName,
   type DomainEvent,
 } from '@linguaai/events';
 import cookieParser from 'cookie-parser';
@@ -24,12 +24,17 @@ import { uniqueTestEmail, validRegisterBody } from './helpers/auth-flow.js';
  * proves the underlying mechanism (`DomainEventPublisher.publish` →
  * `Queue.add` → a real job landing in Redis with the correct envelope)
  * works at all. A flagged, deliberate scoping decision, not an oversight.
+ *
+ * E16 T1: inspects `recommendation-engine`'s own real, registered
+ * consumer queue — proving the real per-consumer fan-out (closes
+ * RISK_REGISTER R-89) actually delivers a published event to a real
+ * consumer's own queue, not the old shared, competing-consumers one.
  */
 describe('Domain events — real Redis (e2e)', () => {
   let app: INestApplication;
   const setupPrisma = getPrismaClient();
   const createdUserIds: string[] = [];
-  let inspectorQueue: ReturnType<typeof createDomainEventsQueue>;
+  let inspectorQueue: ReturnType<typeof createDomainEventsConsumerQueue>;
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
@@ -46,7 +51,7 @@ describe('Domain events — real Redis (e2e)', () => {
         'REDIS_URL is not set — this test requires a real Redis instance (docker-compose.yml).',
       );
     }
-    inspectorQueue = createDomainEventsQueue(redisUrl);
+    inspectorQueue = createDomainEventsConsumerQueue(redisUrl, 'recommendation-engine');
   });
 
   afterAll(async () => {
@@ -67,7 +72,7 @@ describe('Domain events — real Redis (e2e)', () => {
     while (Date.now() < deadline) {
       const jobs = await inspectorQueue.getJobs(['waiting', 'active', 'completed']);
       const match = jobs.find(
-        (job) => job.name === type && (job.data as DomainEvent).userId === userId,
+        (job: Job<DomainEvent>) => job.name === type && job.data.userId === userId,
       );
       if (match) {
         return match as Job<DomainEvent>;
@@ -90,7 +95,7 @@ describe('Domain events — real Redis (e2e)', () => {
 
     const job = await findPublishedJob('identity.user.registered', userId);
 
-    expect(job.queueName).toBe(DOMAIN_EVENTS_QUEUE_NAME);
+    expect(job.queueName).toBe(domainEventsQueueName('recommendation-engine'));
     expect(job.data).toEqual(
       expect.objectContaining({
         eventId: expect.any(String) as unknown as string,
@@ -108,7 +113,7 @@ describe('Domain events — real Redis (e2e)', () => {
     // for the same registration — proves the publisher handles multiple
     // sequential publishes within one request correctly, not just one.
     const consentJobs = (await inspectorQueue.getJobs(['waiting', 'active', 'completed'])).filter(
-      (j) => j.name === 'identity.consent.recorded' && (j.data as DomainEvent).userId === userId,
+      (j: Job<DomainEvent>) => j.name === 'identity.consent.recorded' && j.data.userId === userId,
     );
     expect(consentJobs).toHaveLength(2);
   });

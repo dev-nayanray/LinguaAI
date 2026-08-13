@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { PrismaClient } from '@prisma/client';
-import { createDomainEventsQueue, DomainEventPublisher } from '@linguaai/events';
+import { createDomainEventsQueues, DomainEventPublisher } from '@linguaai/events';
 import { hashPassword } from '@linguaai/utils';
 
 /**
@@ -122,8 +122,12 @@ async function main(): Promise<void> {
   // `@linguaai/events` primitives `events.module.ts` wraps for DI inside
   // apps/api. Per ADR-015, packages/* cannot import from apps/*, so this
   // could never reuse apps/api's own EventsModule even if it wanted to.
-  const eventsQueue = createDomainEventsQueue(redisUrl);
-  const events = new DomainEventPublisher(eventsQueue);
+  // E16 T1: one real queue per registered consumer (closes RISK_REGISTER
+  // R-89's competing-consumers gap) -- the same fan-out `apps/api`'s own
+  // `EventsModule` now uses, constructed directly here since this CLI
+  // script has no NestJS DI container to inject it through.
+  const eventsQueues = createDomainEventsQueues(redisUrl);
+  const events = new DomainEventPublisher(Object.values(eventsQueues));
 
   try {
     const existing = await prisma.user.findUnique({ where: { email: args.email } });
@@ -215,7 +219,7 @@ async function main(): Promise<void> {
     );
   } finally {
     await prisma.$disconnect();
-    await eventsQueue.close();
+    await Promise.all(Object.values(eventsQueues).map((queue) => queue.close()));
   }
 }
 

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { getPrismaClient, type LearningPlan } from '@linguaai/database';
-import { createDomainEventsQueue, DomainEventPublisher } from '@linguaai/events';
+import { createDomainEventsConsumerQueue, DomainEventPublisher } from '@linguaai/events';
 import type { Queue } from 'bullmq';
 
 import { AppModule } from '../src/app.module.js';
@@ -15,12 +15,14 @@ import { AppModule } from '../src/app.module.js';
  * `AppModule` (starting `DomainEventsModule`'s own real `Worker` against
  * the real local Redis), publishes real `assessment.attempt.completed`
  * events onto the real `domain-events` queue via the same
- * `DomainEventPublisher`/`createDomainEventsQueue` `apps/api` itself uses,
+ * `DomainEventPublisher`/`createDomainEventsConsumerQueue` `apps/api` itself uses,
  * and asserts against real rows in the real local Postgres. The one thing
- * this suite does *not* exercise is a second, independent consumer racing
- * for the same jobs — this module's own doc comment (`domain-events.module.ts`)
- * already documents that real, flagged gap; a real second consumer doesn't
- * exist yet to race against.
+ * E16 T1: publishes onto `recommendation-engine`'s own real, registered
+ * consumer queue (`domain-events-recommendation-engine`) via
+ * `createDomainEventsConsumerQueue` — closes RISK_REGISTER R-89's
+ * competing-consumers gap, since a second real consumer
+ * (`notification-service`, E16 T2) now gets its own separate queue instead
+ * of racing this one for the same jobs.
  */
 describe('domain-events consumer: assessment.attempt.completed -> LearningPlan (e2e)', () => {
   let app: INestApplication;
@@ -43,7 +45,7 @@ describe('domain-events consumer: assessment.attempt.completed -> LearningPlan (
     if (!redisUrl) {
       throw new Error('REDIS_URL not set — see .env');
     }
-    queue = createDomainEventsQueue(redisUrl);
+    queue = createDomainEventsConsumerQueue(redisUrl, 'recommendation-engine');
     // `Queue` is an `EventEmitter` — an unlistened `'error'` event throws
     // unhandled in Node (the same real bug `DailyGoalModule`'s own doc
     // comment explains, found while building this task's own e2e suite).

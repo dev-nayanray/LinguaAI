@@ -1,6 +1,6 @@
 import { Inject, Logger, Module, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { loadConfig, redisEnvSchema, type RedisEnv } from '@linguaai/config';
-import { DOMAIN_EVENTS_QUEUE_NAME, type DomainEvent } from '@linguaai/events';
+import { domainEventsQueueName, type DomainEvent } from '@linguaai/events';
 import { Worker, type Job } from 'bullmq';
 
 import { LearningPlanModule } from '../learning-plan/learning-plan.module.js';
@@ -23,33 +23,25 @@ const DOMAIN_EVENTS_REDIS_CONFIG = Symbol('DOMAIN_EVENTS_REDIS_CONFIG');
  * precedent, `*.module.ts` files are exempt from this repo's coverage
  * requirement).
  *
- * **Real, flagged architectural gap, not silently worked around
- * (RISK_REGISTER — added in this same task):** `domain-events` is one
- * shared BullMQ queue for every event type and every consumer combined. A
- * plain BullMQ `Worker` is a *competing-consumers* primitive — a given job
- * is delivered to exactly one `Worker` instance across every process
- * listening on that queue name, never to all of them. `EVENT_ARCHITECTURE.md`
- * §1's own claim ("any number of consumers subscribe independently") does
- * not actually hold for the current single-queue implementation the moment
- * a *second* real consumer (e.g. `analytics-service`, already named in the
- * catalog for this very event) starts its own `Worker` on this same queue
- * — the two would silently split events between them instead of each
- * seeing every one. Safe today only because this is the platform's first
- * and only real consumer; not safe the instant a second one ships. The
- * recommended real fix (per-consumer queue fan-out inside `packages/events`
- * itself, at publish time) is named in the risk-register entry for whoever
- * builds that second consumer — deliberately not built speculatively here,
- * since a fan-out mechanism with only one real subscriber to fan out to is
- * unverifiable and premature.
+ * **RISK_REGISTER R-89 — closed at E16 T1.** `domain-events` used to be one
+ * shared BullMQ queue for every event type and every consumer combined,
+ * which made a plain BullMQ `Worker` a *competing-consumers* primitive — a
+ * given job was delivered to exactly one `Worker` instance across every
+ * process listening on that queue name, never to all of them. As of E16 T1,
+ * `packages/events` fans every published event out to one real,
+ * separately-named queue per registered consumer
+ * (`domainEventsQueueName(consumer)` -> `domain-events-<consumer>`) at
+ * publish time, so this module now listens on its own
+ * `domain-events-recommendation-engine` queue — a second real consumer
+ * (`notification-service`, E16 T2) gets its own queue and sees every event
+ * independently, with no risk of silently splitting jobs between them.
  *
- * This same gap extends to retry/backoff: `EVENT_ARCHITECTURE.md` §5
- * states events "retry with exponential backoff" — but
- * `DomainEventPublisher.publish()` calls `queue.add(type, envelope)` with
- * no `attempts`/`backoff` options at all, so a job that throws today fails
- * permanently on the first attempt (BullMQ's own default), not after a
- * documented retry policy. Also flagged in the same risk-register entry,
- * not fixed here — a producer-side `packages/events` change, outside this
- * consumer-side task's own scope.
+ * The same fix closed the retry/backoff gap this module's doc comment used
+ * to flag: `DomainEventPublisher.publish()` now calls `queue.add(type,
+ * envelope, { attempts: 3, backoff: { type: 'exponential', delay: 5000 } })`
+ * for every consumer's queue, matching `EVENT_ARCHITECTURE.md` §5's
+ * documented retry policy instead of silently relying on BullMQ's
+ * fail-on-first-attempt default.
  */
 @Module({
   imports: [LearningPlanModule],
@@ -72,12 +64,19 @@ export class DomainEventsModule implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     this.worker = new Worker(
-      DOMAIN_EVENTS_QUEUE_NAME,
+      domainEventsQueueName('recommendation-engine'),
       async (job: Job<DomainEvent>) => {
         await this.dispatcher.dispatch(job.name, job.data);
       },
       { connection: { url: this.redisConfig.REDIS_URL } },
     );
+    // Real bug found while building `app.e2e-spec.ts`'s own e2e suite
+    // (E16 T1) — see `DailyGoalModule`'s own identical fix/doc comment for
+    // the full explanation: a `Worker` still mid-handshake when a fast
+    // test calls `.close()` right after `app.init()` can reject an
+    // in-flight command with "Connection is closed" as an unhandled
+    // rejection, not something the `'error'` listener below catches.
+    await this.worker.waitUntilReady();
 
     // Only fires once BullMQ's own attempt count is exhausted (today,
     // effectively "on the first failure" — see this module's own doc

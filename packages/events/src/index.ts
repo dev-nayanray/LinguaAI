@@ -1,7 +1,10 @@
 export {
-  createDomainEventsQueue,
+  createDomainEventsConsumerQueue,
+  createDomainEventsQueues,
+  domainEventsQueueName,
   DomainEventPublisher,
-  DOMAIN_EVENTS_QUEUE_NAME,
+  DOMAIN_EVENT_CONSUMERS,
   type DomainEvent,
+  type DomainEventConsumer,
   type PublishParams,
 } from './domain-event.js';
