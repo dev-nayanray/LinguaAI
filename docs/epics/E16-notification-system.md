@@ -1,0 +1,147 @@
+# Epic E16 — Notification System
+
+**Epic ID:** E16 (ROADMAP.md)
+**Status:** Design phase — first single-pass design, not yet implemented.
+**Tech lead:** Backend Platform (TBD)
+**Gate owners assigned:** Architecture, Database, API, Security, Testing, Documentation (Frontend/Accessibility gates apply to a later UI-focused epic that builds the actual in-app notification-preferences screen, not this backend-engine epic — see §3.6)
+
+## 0. Why this document exists now, and what it is not
+
+E15 (Subscription & Billing Platform) is implementation-complete (T1–T3, 2026-08-14 — its own §9 task table's full sequence, confirmed no further task remains). Per ROADMAP.md, E16 is the next epic — both its dependencies (E1 Foundation, E4 Database Schema) are already implementation-complete. This is the **first, single-pass design** for the Notification System (PRD.md module 25) — the same process E4–E15 each went through (CLAUDE.md's own workflow rule). This document does not write any application code; it designs the module, surfaces real gaps found while doing so (§3), and proposes the ADR implementation will need (§7).
+
+Like every prior "own dedicated service" epic, `services/notification-service` is **entirely greenfield application logic** — confirmed by direct inspection: it's a health-check-only skeleton (`app.module.ts` wires only `ObservabilityModule`; `package.json` has no `@linguaai/database`/`@linguaai/events`/`@linguaai/config`/`@linguaai/validation` dependency at all), the same stage `analytics-service` is still at. `NotificationLog`/`NotificationPreference` have been real, seeded-ready schema since E4 T10 (`analytics.prisma`).
+
+Unlike every prior epic, this one cannot simply start consuming: **RISK_REGISTER R-89 — found at E7 T2, still open — explicitly blocks it.** `packages/events`'s shared `domain-events` BullMQ queue has competing-consumers semantics, not fan-out; `recommendation-engine`'s own `DomainEventsModule` is "safe today only because it is the platform's first and only real consumer... this blocks a second real consumer from shipping safely until fixed." `notification-service` is named throughout `EVENT_ARCHITECTURE.md`'s own catalog as a consumer of ~11 events — it is exactly the second real consumer R-89 warns about. Unlike E14's own workaround (call the consumer synchronously in-process, avoiding a new async consumer entirely), that escape hatch does not apply here: `notification-service` is a real, independently-deployed service (ARCHITECTURE.md §2.1's own justification — "high fan-out, benefits from independent queue/worker scaling and provider isolation" — a genuine, already-approved reason for its own runtime, unlike gamification's own in-process case). This epic must therefore close R-89 for real, not route around it.
+
+## 1. Epic Definition
+
+PRD.md names one module this epic covers (module 25):
+
+| #   | Module              | Description                                                      | Differentiator                                              |
+| --- | ------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------- |
+| 25  | Notification System | Email + push, streak reminders, granular per-channel preferences | User-controllable preferences, unsubscribe honored (PRD.md) |
+
+**In scope:**
+
+- **Closing RISK_REGISTER R-89 for real** (§3.1/§7, ADR-054): per-consumer queue fan-out inside `packages/events` itself, at publish time — `DomainEventPublisher` writes the same envelope to every registered consumer's own named queue, so a second real consumer (this epic) and the first (`recommendation-engine`) each see every event, never splitting them. Real `attempts`/`backoff` added to `queue.add()`, closing R-89's own second, smaller sub-gap (`EVENT_ARCHITECTURE.md` §5's retry claim was previously unbacked by any actual BullMQ option).
+- `services/notification-service`'s own real domain module: Prisma wiring (via the already-real `NotificationLog`/`NotificationPreference` schema), a real event consumer (a `Worker` on this service's own fan-out queue, mirroring `recommendation-engine`'s own `DomainEventsModule` structural template), and a real, live-testable EMAIL delivery channel (SMTP via `nodemailer`, using `.env`'s own already-scaffolded `SMTP_HOST`/`SMTP_PORT`/`EMAIL_FROM` — real, not a placeholder decision; see §3.2).
+- Real `NotificationPreference` enforcement — a per-user, per-channel, per-type opt-in check before any send, honoring PRD's own "unsubscribe honored" differentiator from day one, not deferred.
+- A real, minimal starting slice of event types wired end-to-end: `identity.user.registered` (welcome email) and `identity.password.reset_requested` (password-reset email) — both already real, already-produced events since E2, needing no upstream work to consume.
+- A real `NotificationLog` row written per delivery attempt (channel, type, status, timestamps) — the delivery-analytics record DATABASE.md §2.10 already designed this table for.
+- A real preference-management API surface in `apps/api` (`GET`/`PUT /v1/notification-preferences`), publishing the already-cataloged `notification.preference.changed` event for real.
+
+**Explicitly out of scope** (cited against ROADMAP.md/PRD.md's own classification, not silently absorbed):
+
+- **Push notifications (FCM/APNs)** — `.env` already scaffolds `FCM_SERVER_KEY`/`APNS_KEY_ID`/`APNS_TEAM_ID`/`APNS_PRIVATE_KEY`, all empty, no SDK chosen yet, no mobile client (E21, Flutter) exists yet to register a device token against. Building a second, real delivery channel with no real consumer (no mobile app) to receive it is premature; this epic's own MVP slice proves the real mechanism (event consumption, preference enforcement, delivery logging) end-to-end on EMAIL, the channel with a genuinely testable receiving end today (MailHog, §3.2). `NotificationChannel.PUSH` already exists in the schema for when E21 lands.
+- **`analytics-service`'s own future consumption of the same events** — `EVENT_ARCHITECTURE.md` names it as a co-consumer of several of these same events, but `analytics-service` is its own separate, unbuilt skeleton (E17's own scope); this epic's fan-out design (§3.1) explicitly leaves room for it (adding a third named consumer is a one-line registration, not a redesign) without building it.
+- **Wiring every event `EVENT_ARCHITECTURE.md` names `notification-service` as a future consumer of** — `billing.subscription.changed`, `recommendation.daily_goal.ready`, `gamification.*`, `identity.role.*`, `identity.session.revoked`, `identity.organization.membership_changed` all remain real, tracked, separately-scheduled follow-up wiring (§11) once the core mechanism is proven on two concrete, already-real events — the same "prove the mechanism on the smallest real slice first" precedent E14/E15 both already established for their own multi-signal wiring.
+- **The actual in-app notification-preferences UI screen** — matching E4–E15's own precedent, this epic builds the real API a future UI consumes, not the screen itself (§3.6).
+- **SMS delivery** — no event/PRD requirement names it; not modeled.
+
+## 2. Business Objective
+
+PRD.md's own retention/engagement lever (streak reminders, milestone notifications) and trust/compliance requirement (security alerts, unsubscribe honored — SECURITY.md's own consent discipline) both depend on a real delivery mechanism existing at all. Today, `identity.user.registered` and `identity.password.reset_requested` already fire into a queue nothing reads — a new user gets no real welcome email, and (more seriously) a password-reset request produces no actual reset email, silently degrading a real account-recovery flow that appears to work (a 200 response) but delivers nothing. This epic closes that gap and, in doing so, closes a genuine platform-wide architectural blocker (R-89) that every other future event consumer also needs resolved.
+
+## 3. Scoping boundary and conflicts found
+
+### 3.1 RISK_REGISTER R-89 — the real, load-bearing blocker this epic must close, not route around
+
+Confirmed via direct inspection of `packages/events/src/domain-event.ts` and `services/recommendation-engine/src/domain-events/domain-events.module.ts` (that module's own doc comment names the exact fix needed, written at E7 T2 "for whoever builds that second consumer"): a plain BullMQ `Worker` on a shared queue name is a competing-consumers primitive. `notification-service`'s own `Worker`, started naively on the same `domain-events` queue `recommendation-engine` already listens on, would silently steal roughly half of every event from it (and vice versa) — a correctness-destroying bug with no visible error, exactly the failure mode E14's own R-89 writeup already warned about in the abstract. This epic implements the recommended fix for real: `packages/events` gains a small, explicit registry of real consumer names (`DOMAIN_EVENT_CONSUMERS = ['recommendation-engine', 'notification-service']`, extended by name as future consumers ship — the same explicit, non-speculative registration discipline `EVENT_ARCHITECTURE.md`'s own catalog table already uses), each consumer gets its own real, separately-named queue (`domain-events:<consumer>`), and `DomainEventPublisher.publish()` fans the same envelope out to every registered consumer's own queue in one call. Every existing producer/consumer call site is migrated in the same task (§9, T1) — a breaking, not additive, change to `DomainEventPublisher`'s own constructor, touching `apps/api`'s `EventsModule`, `recommendation-engine`'s `DailyGoalModule`/`DomainEventsModule`, `packages/database`'s `bootstrap-admin.ts`, and the e2e tests that inspect the queue directly (`domain-events.e2e-spec.ts`, `course.e2e-spec.ts`, `recommendation-engine`'s own `domain-events-consumer.e2e-spec.ts`).
+
+### 3.2 Email provider: SMTP, already decided in `.env` — respected, not silently overridden
+
+`.env`/`.env.example` already commit to `EMAIL_PROVIDER=smtp` with `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASSWORD`/`EMAIL_FROM` (not a transactional-email API provider like SendGrid/SES/Postmark, none of which have any scaffolded config). This is a real, pre-existing decision this epic respects rather than silently substituting a different provider class — `nodemailer`'s own SMTP transport is the direct, standard fit. This is also a real, if fortunate, testing advantage: `docker-compose.yml` already runs a real `mailhog` container (SMTP catcher on `MAILHOG_SMTP_PORT`, a real HTTP API on `MAILHOG_UI_PORT` to query received messages) — meaning this epic's own e2e tests can prove a real email was actually sent and received, not merely that a provider SDK was called with the right arguments, matching this platform's own "prove the real thing, not a mock" testing discipline used throughout E1–E15.
+
+### 3.3 No `content`/`subject`/`body` column on `NotificationLog` — a real, confirmed, deliberate schema shape, not a gap
+
+`NotificationLog` (analytics.prisma) stores `channel`/`type`/`status`/timestamps/`failureReason` only — a delivery-attempt record, not the rendered content itself. This epic's own templates (subject lines, body copy) live in application code (a small, real `NotificationTemplateService` or equivalent, per event type), not the database — the same "don't persist what doesn't need to be queried/audited at the row level" reasoning already applied elsewhere in this schema (e.g. `AuditLog`'s own structured-but-bounded `changes` field, not a full before/after document dump). Confirmed intentional, not silently worked around.
+
+### 3.4 `NotificationPreference` defaults to opted-in — a real, already-encoded product decision
+
+`NotificationPreference.optedIn @default(true)` (schema) — but the table only has a row once a user has ever set a preference; a user with **no** row for a given `(channel, type)` pair has never explicitly opted out, and the schema's own default models "opted in until told otherwise," matching typical transactional-notification UX (a password-reset email is never opt-out-able in practice; a streak reminder is). This epic's own preference-check logic honors this: no row found means "send" (the default), a row with `optedIn: false` means "don't" — a real, consistent interpretation of the schema's own already-chosen default, not a new policy invented here.
+
+### 3.5 Security-critical email types bypass preference checks — a real, deliberate carve-out
+
+`NotificationType.SECURITY_ALERT` and the password-reset flow itself are not meaningfully "opt-out-able" without creating a real account-security gap (SECURITY.md's own discipline) — this epic's own send logic never checks `NotificationPreference` for these two cases, sending unconditionally, the same "some notifications are not marketing" distinction most real notification systems make and PRD's own "unsubscribe honored" language implicitly does not extend to security-critical mail.
+
+### 3.6 This epic is backend/engine + a real, minimal API surface — not the actual preferences UI
+
+Matching E4–E15's own precedent: this epic builds the real event-consumption, delivery, and preference-API mechanism a future UI consumes, not the actual in-app "notification settings" screen.
+
+## 4. Schema reference (already real, E4 T10)
+
+| Table                    | Key fields relevant to this epic                                                                                                 | Status   |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `NotificationLog`        | `userId` (nullable), `channel` (EMAIL/PUSH), `type`, `status` (PENDING/SENT/DELIVERED/FAILED/BOUNCED), `sentAt`, `failureReason` | Existing |
+| `NotificationPreference` | `userId`, `channel`, `type`, `optedIn` (`@default(true)`), `@@unique([userId, channel, type])`                                   | Existing |
+
+## 5. API surface (T3)
+
+| Endpoint                           | Auth               | Purpose                                                                              |
+| ---------------------------------- | ------------------ | ------------------------------------------------------------------------------------ |
+| `GET /v1/notification-preferences` | `AuthGuard('jwt')` | The caller's own current per-channel, per-type preferences                           |
+| `PUT /v1/notification-preferences` | `AuthGuard('jwt')` | Upserts one preference row; publishes a real `notification.preference.changed` event |
+
+## 6. Cross-cutting mechanics
+
+### 6.1 Per-consumer fan-out (T1)
+
+```ts
+export const DOMAIN_EVENT_CONSUMERS = ['recommendation-engine', 'notification-service'] as const;
+export type DomainEventConsumer = (typeof DOMAIN_EVENT_CONSUMERS)[number];
+export function domainEventsQueueName(consumer: DomainEventConsumer): string {
+  return `domain-events:${consumer}`;
+}
+```
+
+`DomainEventPublisher` now holds one `Queue` per registered consumer (constructed once, at module init, the same "one place a `Queue` gets constructed" precedent `createDomainEventsQueue`'s own header comment already established) and calls `queue.add(type, envelope, { attempts, backoff })` on every one of them per `publish()` call — real fan-out, not a shared competing queue. A consumer's own `Worker` listens on exactly its own named queue (`domainEventsQueueName('notification-service')`), mirroring `recommendation-engine`'s own `DomainEventsModule` structural template exactly, now made safe for a second real listener.
+
+### 6.2 `NotificationDispatcher` (T2)
+
+The consumer-side real logic (`services/notification-service`), structurally mirroring `recommendation-engine`'s own `DomainEventDispatcher`: switches on `job.name` (the event type), Zod-validates the payload against the same `@linguaai/validation` schema the producer built it from, resolves the target `userId`, checks `NotificationPreference` (§3.4/§3.5), renders a real subject/body, sends via `nodemailer`, and writes a real `NotificationLog` row reflecting the outcome (`SENT` on success, `FAILED` with `failureReason` on a real SMTP error — never silently swallowed).
+
+## 7. ADR impact
+
+**ADR-054 (proposed):** `packages/events` moves from one shared, competing-consumers BullMQ queue to real per-consumer queue fan-out at publish time, closing RISK_REGISTER R-89. A small, explicit, by-name consumer registry (not dynamic service discovery) — matching this platform's own preference for explicit, reviewable registration (`EVENT_ARCHITECTURE.md`'s own catalog table) over runtime magic.
+
+## 8. Alternatives considered
+
+- **Leave the shared queue as-is, have `notification-service` "just be careful" not to process events `recommendation-engine` also wants** (rejected) — BullMQ workers on the same queue name compete at the job-dispatch level; there is no cooperative-filtering mechanism that avoids this, and the failure mode (silent event loss for whichever consumer doesn't win a given job) is exactly what R-89 already names as unacceptable.
+- **Route `notification-service`'s own event handling synchronously in-process from `apps/api`, the same workaround E14 used for Gamification** (rejected) — Gamification's workaround was valid specifically because it had no independent-scaling/isolation need (CLAUDE.md's own service-creation bar); `notification-service` does (ARCHITECTURE.md §2.1's own justification, already approved), so collapsing it into `apps/api` would reverse an already-made, real architecture decision, not merely take a shortcut.
+- **A transactional email API provider (SendGrid/SES/Postmark) instead of SMTP** (rejected, §3.2) — `.env`'s own already-committed `EMAIL_PROVIDER=smtp` config predates this epic; overriding it would be a real, undiscussed architecture reversal, not a design choice this epic's own scope should make unilaterally.
+- **Building the push channel now, alongside email** (rejected, §1's own out-of-scope) — no real receiving end (mobile app) exists yet to test against; a channel with no way to prove real delivery would be exactly the kind of "mechanically works, never actually verified" gap this platform's own testing discipline exists to prevent.
+
+## 9. Task sequence
+
+| Task   | Deliverable                                                                                                                                                                                                                                                                                                    | Depends on | Evidence (design-phase)                                                                                                                                                                                        |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **T1** | `packages/events` per-consumer queue fan-out (§3.1/§6.1, ADR-054, closes RISK_REGISTER R-89), migrating every existing producer/consumer call site                                                                                                                                                             | E15        | Unit tests on the fan-out publisher; existing `recommendation-engine`/`apps/api` e2e suites re-run clean against the new per-consumer queue names, proving no regression to the platform's first real consumer |
+| **T2** | `services/notification-service`'s own real `NotificationModule` — Prisma wiring, a real `Worker` consumer on its own fan-out queue, `NotificationDispatcher` (§6.2), real SMTP delivery, `NotificationPreference` enforcement, `identity.user.registered`/`identity.password.reset_requested` wired end-to-end | T1         | Unit tests with a mocked SMTP transport; a real e2e test proving an actual email lands in MailHog for a real registered user, and is suppressed for an opted-out preference row                                |
+| **T3** | `GET`/`PUT /v1/notification-preferences` (`apps/api`), real `notification.preference.changed` emission                                                                                                                                                                                                         | T2         | Unit tests; a real e2e test proving a preference change is honored on the very next notification-triggering event                                                                                              |
+
+## 10. Open questions
+
+1. **Real email copy/branding** (subject lines, body templates) — this design assumes small, real, functional plain-text/HTML templates sufficient to prove the pipeline, not final marketing copy — a real product/design decision for whoever owns brand voice, not this epic's own scope to finalize.
+2. **Whether `FAILED` `NotificationLog` rows should trigger any real alerting** (OBSERVABILITY.md's own alerting policy) — this design logs failures for visibility but does not build a new alert rule; a real, separately-scoped follow-up once real delivery volume exists to tune a threshold against.
+
+## 11. Risks
+
+| Risk                                                                                                                                          | Mitigation                                                                                                                                            | Owner                  |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| This epic's own MVP slice wires only 2 of the ~11 events `EVENT_ARCHITECTURE.md` already names `notification-service` as a future consumer of | Wire the same, already-proven `NotificationDispatcher` pattern into each remaining event the next time it's touched, or as a dedicated follow-up task | Backend Platform (TBD) |
+| Push notifications (FCM/APNs) remain entirely unbuilt — `NotificationChannel.PUSH` exists in schema but no code ever sets it                  | Real, scoped-out follow-up once E21 (Mobile Application) ships a real device-token registration flow to test against                                  | Backend Platform (TBD) |
+| `analytics-service`'s own future consumption of these same events (named in the catalog) is not built by this epic                            | The fan-out design (§3.1) already leaves room for a third named consumer with no redesign; E17's own scope                                            | Backend Platform (TBD) |
+
+## 12. Gate sign-off log
+
+| Gate         | Status        | Reviewer | Date | Notes                                                                                   |
+| ------------ | ------------- | -------- | ---- | --------------------------------------------------------------------------------------- |
+| Architecture | ☐ Not started | —        | —    | The per-consumer fan-out design closing R-89 (§3.1/§6.1, ADR-054)                       |
+| Database     | ☐ Not started | —        | —    | No migration — confirms `NotificationLog`/`NotificationPreference` (E4 T10) already fit |
+| API          | ☐ Not started | —        | —    | New preference endpoints (§5)                                                           |
+| Security     | ☐ Not started | —        | —    | The real `NotificationPreference` enforcement (§3.4/§3.5), security-critical carve-out  |
+| Testing      | ☐ Not started | —        | —    | Real e2e proof of fan-out correctness and real MailHog-verified email delivery          |
+
+## 13. Epic Approval
+
+Design not yet formally approved by an independent Architecture Gate review — proceeding to implementation by explicit user direction ("next"), the same pattern E9–E15 each followed.
