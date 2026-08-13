@@ -8,6 +8,7 @@ import type {
 
 import { APP_PRISMA_CLIENT } from '../../database/index.js';
 import type { RequestUser } from '../auth/strategies/jwt.strategy.js';
+import { GamificationService } from '../gamification/index.js';
 import { ContentVersioningService } from './content-versioning.service.js';
 import { scoreExerciseResponse } from './exercise-scoring.util.js';
 
@@ -34,6 +35,7 @@ export class ExerciseAttemptsService {
     @Inject(APP_PRISMA_CLIENT) private readonly appPrisma: PrismaClient,
     private readonly versioning: ContentVersioningService,
     private readonly events: DomainEventPublisher,
+    private readonly gamification: GamificationService,
   ) {}
 
   async submitAttempt(
@@ -82,6 +84,16 @@ export class ExerciseAttemptsService {
     await this.events.publish('learning.exercise.answered', {
       userId: caller.userId,
       payload: { userId: caller.userId, exerciseId, correct: isCorrect },
+    });
+
+    // E14 T1 (ADR-054, design doc §3.1/§6.1) — called synchronously,
+    // in-process, right after the event above, never a new async
+    // domain-event consumer (would collide with `recommendation-engine`'s
+    // own already-shipped competing-consumers exposure, RISK_REGISTER R-89).
+    await this.gamification.recordActivity(caller.userId, {
+      type: 'EXERCISE_ANSWERED',
+      correct: isCorrect,
+      firstAttempt: !priorAttempt,
     });
 
     if (!priorAttempt) {
@@ -149,5 +161,13 @@ export class ExerciseAttemptsService {
       userId,
       payload: { userId, lessonId, score },
     });
+
+    // E14 T1 (ADR-054) — this method only ever reaches this point once
+    // per (userId, lessonId): it is only invoked on a first-time exercise
+    // attempt, and only publishes once every attemptable exercise in the
+    // lesson has at least one attempt, a transition that can happen at
+    // most once (confirmed by direct inspection of this method's own
+    // early-return guards above) — no separate idempotency check needed.
+    await this.gamification.recordActivity(userId, { type: 'LESSON_COMPLETED' });
   }
 }

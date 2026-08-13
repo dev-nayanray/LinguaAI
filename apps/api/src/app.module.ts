@@ -12,6 +12,7 @@ import { AssessmentModule } from './modules/assessment/index.js';
 import { AuditModule } from './modules/audit/index.js';
 import { AuthModule } from './modules/auth/index.js';
 import { CourseModule } from './modules/course/index.js';
+import { GamificationModule } from './modules/gamification/index.js';
 import { OrganizationsModule } from './modules/organizations/index.js';
 import { RecommendationsModule } from './modules/recommendations/index.js';
 import { UsersModule } from './modules/users/index.js';
@@ -29,6 +30,7 @@ import { VocabularyModule } from './modules/vocabulary/index.js';
     AssessmentModule,
     RecommendationsModule,
     CourseModule,
+    GamificationModule,
     VocabularyModule,
     AuditModule,
     AiEngineClientModule,
