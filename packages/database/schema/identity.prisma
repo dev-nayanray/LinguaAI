@@ -147,6 +147,7 @@ model User {
   aiMemoryEntries           AIMemoryEntry[]
   pronunciationScores       PronunciationScore[]
   pronunciationLabAttempts  PronunciationLabAttempt[]
+  writingSubmissions        WritingSubmission[]
   userXp                    UserXP?
   streak                    Streak?
   userBadges                UserBadge[]

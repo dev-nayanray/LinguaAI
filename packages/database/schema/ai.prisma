@@ -292,6 +292,36 @@ model PronunciationLabAttempt {
   @@map("PronunciationLabAttempt")
 }
 
+/// E13 T2 — a learner's submitted free-form writing plus the real,
+/// RAG-grounded correction result `WritingCoachService` returned
+/// (`ai-engine`'s `POST /v1/writing-coaching/correct`, ADR-052),
+/// persisted by `apps/api` directly — the same "no direct Postgres
+/// access for ai-engine itself" boundary ADR-044/050 already establish.
+/// Self-contained (no polymorphic `sourceType`/`sourceId` split like
+/// `PronunciationScore`'s own shape) since a writing submission has
+/// exactly one real source today — unlike pronunciation scoring, which
+/// genuinely originates from two places (a live `AIMessage` or a
+/// dedicated Lab attempt).
+model WritingSubmission {
+  id         String @id @default(uuid()) @db.Uuid
+  userId     String @db.Uuid
+  languageId String @db.Uuid
+
+  text String @db.Text
+  /// `WritingCorrectionItem[]` shape (packages/validation/src/ai-coaching) — exact rubric is that schema's own concern, this column only stores the shape.
+  corrections       Json
+  overallFeedback   String   @db.Text
+  cefrLevelEstimate CefrLevel
+
+  createdAt DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language Language @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("WritingSubmission")
+}
+
 /// Session-level speaking-practice scoring — ties to AIAgentSession (not
 /// partitioned), a normal same-file Prisma relation.
 model FluencyScore {

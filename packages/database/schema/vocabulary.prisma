@@ -34,6 +34,8 @@ enum VocabularySource {
   READING
   CAMERA_TRANSLATION
   CONVERSATION
+  /// E13 T2 — a corrected/introduced term from a WritingSubmission (ai.prisma), the same "extracted during a real learning activity" precedent CONVERSATION already established for E10 T5's own fluency-scoring extraction.
+  WRITING
   MANUAL
   OTHER
 }

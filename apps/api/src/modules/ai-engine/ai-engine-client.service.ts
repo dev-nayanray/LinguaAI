@@ -2,6 +2,7 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { parseSseStream } from '@linguaai/utils';
 import {
   agentMessageStreamEventSchema,
+  correctWritingRequestSchema,
   endAgentSessionRequestSchema,
   scoreFluencyRequestSchema,
   scoreFluencyResponseSchema,
@@ -9,13 +10,16 @@ import {
   sendAgentMessageRequestSchema,
   startAgentSessionRequestSchema,
   startAgentSessionResponseSchema,
+  writingCorrectionResultSchema,
   writingCritiqueSchema,
   type AgentMessageStreamEvent,
+  type CorrectWritingRequest,
   type ScoreFluencyResponse,
   type ScoreWritingRequest,
   type SendAgentMessageRequest,
   type StartAgentSessionRequest,
   type StartAgentSessionResponse,
+  type WritingCorrectionResult,
   type WritingCritiqueSchema,
 } from '@linguaai/validation/ai-coaching';
 import {
@@ -218,5 +222,25 @@ export class AiEngineClientService {
       throw new Error(`ai-engine returned ${response.status} scoring session "${sessionId}"`);
     }
     return scoreFluencyResponseSchema.parse(await response.json());
+  }
+
+  /**
+   * E13 T2 (ADR-052, design doc §6.2) — wired into `WritingCoachingService.submitWriting()`.
+   */
+  async correctWriting(input: CorrectWritingRequest): Promise<WritingCorrectionResult> {
+    const response = await fetch(`${this.config.AI_ENGINE_URL}/v1/writing-coaching/correct`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(correctWritingRequestSchema.parse(input)),
+    });
+    if (!response.ok) {
+      const errorBody = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      throw new Error(
+        `ai-engine returned ${response.status} correcting writing: ${errorBody?.error?.message ?? 'unknown error'}`,
+      );
+    }
+    return writingCorrectionResultSchema.parse(await response.json());
   }
 }

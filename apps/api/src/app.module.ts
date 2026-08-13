@@ -19,6 +19,7 @@ import { RecommendationsModule } from './modules/recommendations/index.js';
 import { SpeakingModule } from './modules/speaking/index.js';
 import { UsersModule } from './modules/users/index.js';
 import { VocabularyModule } from './modules/vocabulary/index.js';
+import { WritingModule } from './modules/writing/index.js';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { VocabularyModule } from './modules/vocabulary/index.js';
     VocabularyModule,
     SpeakingModule,
     PronunciationModule,
+    WritingModule,
     AuditModule,
     AdminModule,
     AiEngineClientModule,

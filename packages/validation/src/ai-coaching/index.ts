@@ -336,3 +336,49 @@ export const correctWritingRequestSchema = z.object({
   text: z.string().min(1).max(10000),
 });
 export type CorrectWritingRequest = z.infer<typeof correctWritingRequestSchema>;
+
+/**
+ * `POST /v1/writing-submissions` request body (E13 T2, design doc §6.2) —
+ * `apps/api`'s learner-facing endpoint. `targetLanguageName` is resolved
+ * server-side from `languageId` (not caller-supplied, unlike
+ * `correctWritingRequestSchema`'s own internal-trust-boundary shape) —
+ * `WritingCoachingService` looks up the real `Language` row itself, the
+ * same "never trust a client-supplied denormalization of data the server
+ * already owns" discipline `PronunciationLabService`'s own
+ * `languageCodeToBcp47` lookup already established.
+ */
+export const createWritingSubmissionRequestSchema = z.object({
+  languageId: z.string().uuid(),
+  text: z.string().min(1).max(10000),
+});
+export type CreateWritingSubmissionRequest = z.infer<typeof createWritingSubmissionRequestSchema>;
+
+/**
+ * `POST /v1/writing-submissions` response — a real, persisted
+ * `WritingSubmission` row (`ai.prisma`), the same "wire-only DTO, no
+ * separate `@linguaai/types` restatement" precedent
+ * `pronunciationAttemptResponseSchema`'s own header comment already
+ * established, since this shape has no other consumer needing a
+ * compile-time drift guard elsewhere.
+ */
+export const writingSubmissionResponseSchema = z.object({
+  submissionId: z.string().uuid(),
+  languageId: z.string().uuid(),
+  text: z.string(),
+  corrections: z.array(writingCorrectionItemSchema),
+  overallFeedback: z.string(),
+  cefrLevelEstimate: cefrLevelSchema,
+  createdAt: z.string().datetime(),
+});
+export type WritingSubmissionResponse = z.infer<typeof writingSubmissionResponseSchema>;
+
+/** `writing.submission.corrected` domain event payload (E13 T2, EVENT_ARCHITECTURE.md's own catalog) — mirrors `pronunciationAttemptScoredPayloadSchema`'s own precedent for a producer landing before its own consumers' epics do. */
+export const writingSubmissionCorrectedPayloadSchema = z.object({
+  submissionId: z.string().uuid(),
+  languageId: z.string().uuid(),
+  correctionCount: z.number().int().min(0),
+  cefrLevelEstimate: cefrLevelSchema,
+});
+export type WritingSubmissionCorrectedPayload = z.infer<
+  typeof writingSubmissionCorrectedPayloadSchema
+>;

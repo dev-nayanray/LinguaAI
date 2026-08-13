@@ -291,6 +291,65 @@ describe('AiEngineClientService', () => {
     });
   });
 
+  describe('correctWriting', () => {
+    const request = {
+      languageId: '22222222-2222-2222-2222-222222222222',
+      targetLanguageName: 'Spanish',
+      text: 'Yo tiene un perro.',
+    };
+
+    it('POSTs the validated request body and returns the parsed correction result', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          corrections: [
+            { original: 'Yo tiene', corrected: 'Yo tengo', explanation: 'Irregular conjugation.' },
+          ],
+          overallFeedback: 'Good effort.',
+          cefrLevelEstimate: 'A2',
+        }),
+      } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new AiEngineClientService(config);
+
+      const result = await client.correctWriting(request);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://ai-engine.internal:4001/v1/writing-coaching/correct',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      const [, init] = fetchMock.mock.calls[0]!;
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual(request);
+      expect(result).toEqual({
+        corrections: [
+          { original: 'Yo tiene', corrected: 'Yo tengo', explanation: 'Irregular conjugation.' },
+        ],
+        overallFeedback: 'Good effort.',
+        cefrLevelEstimate: 'A2',
+      });
+    });
+
+    it('throws a clear error, including the upstream message, when ai-engine responds with a non-2xx status', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { message: 'model response failed schema validation' } }),
+      } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new AiEngineClientService(config);
+
+      await expect(client.correctWriting(request)).rejects.toThrow(
+        'ai-engine returned 500 correcting writing: model response failed schema validation',
+      );
+    });
+  });
+
   describe('draftLesson', () => {
     const request = {
       languageId: '22222222-2222-2222-2222-222222222222',

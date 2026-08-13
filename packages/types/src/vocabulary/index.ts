@@ -40,6 +40,7 @@ export const VOCABULARY_SOURCES = [
   'READING',
   'CAMERA_TRANSLATION',
   'CONVERSATION',
+  'WRITING',
   'MANUAL',
   'OTHER',
 ] as const;
