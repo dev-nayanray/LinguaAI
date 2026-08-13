@@ -208,6 +208,56 @@ describe('BillingService.getStatus', () => {
   });
 });
 
+describe('BillingService.hasEntitlement', () => {
+  it('reads via servicePrisma, not appPrisma (EntitlementGuard runs before RLS tenant context is set)', async () => {
+    const appPrisma = fakePrisma();
+    const servicePrisma = fakePrisma();
+    servicePrisma.entitlement.findUnique.mockResolvedValue({
+      limits: { pronunciationLabAccess: true },
+      usage: {},
+      plan: { tier: 'PREMIUM' },
+    });
+    const service = new BillingService(
+      appPrisma as never,
+      servicePrisma as never,
+      fakeStripeClient() as unknown as StripeClientService,
+      fakeEvents() as unknown as DomainEventPublisher,
+      fakeLogger() as never,
+    );
+
+    const result = await service.hasEntitlement(USER_ID, 'pronunciationLabAccess');
+
+    expect(result).toBe(true);
+    expect(servicePrisma.entitlement.findUnique).toHaveBeenCalled();
+    expect(appPrisma.entitlement.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('returns false when the key is present but not true', async () => {
+    const prisma = fakePrisma();
+    prisma.entitlement.findUnique.mockResolvedValue({
+      limits: { pronunciationLabAccess: false },
+      usage: {},
+      plan: { tier: 'FREE' },
+    });
+    const service = buildService(prisma);
+
+    expect(await service.hasEntitlement(USER_ID, 'pronunciationLabAccess')).toBe(false);
+  });
+
+  it('returns false when the key is absent from a FREE-plan fallback', async () => {
+    const prisma = fakePrisma();
+    prisma.entitlement.findUnique.mockResolvedValue(null);
+    prisma.plan.findUniqueOrThrow.mockResolvedValue({
+      id: FREE_PLAN_ID,
+      tier: 'FREE',
+      limits: {},
+    });
+    const service = buildService(prisma);
+
+    expect(await service.hasEntitlement(USER_ID, 'pronunciationLabAccess')).toBe(false);
+  });
+});
+
 describe('BillingService.handleWebhookEvent', () => {
   function subscriptionEvent(overrides: Record<string, unknown> = {}) {
     return {

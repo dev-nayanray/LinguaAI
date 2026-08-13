@@ -84,9 +84,34 @@ export class BillingService {
   }
 
   async getStatus(userId: string): Promise<BillingStatusResponse> {
+    return this.resolveStatus(userId, this.appPrisma);
+  }
+
+  /**
+   * `EntitlementGuard`'s own real entry point (E15 T2) — deliberately
+   * uses `servicePrisma`, not `appPrisma`. Guards run *before*
+   * `TenantContextInterceptor` in Nest's own request pipeline (middleware
+   * → guards → interceptors → pipes → handler), so an `appPrisma` read
+   * from inside a guard has no RLS tenant context set yet — confirmed the
+   * hard way (a real `invalid input syntax for type uuid: ''` failure,
+   * the same class of bug T1's own webhook path already hit and fixed).
+   * Safe to bypass RLS here for the same reason `handleWebhookEvent()`
+   * already does: `userId` comes from the guard's own JWT-verified
+   * `request.user`, never client-suppliable, so there is no cross-tenant
+   * leakage risk RLS would otherwise be the only thing preventing.
+   */
+  async hasEntitlement(userId: string, key: string): Promise<boolean> {
+    const status = await this.resolveStatus(userId, this.servicePrisma);
+    return status.limits[key] === true;
+  }
+
+  private async resolveStatus(
+    userId: string,
+    prisma: PrismaClient,
+  ): Promise<BillingStatusResponse> {
     const [entitlement, subscription] = await Promise.all([
-      this.appPrisma.entitlement.findUnique({ where: { userId }, include: { plan: true } }),
-      this.appPrisma.subscription.findFirst({
+      prisma.entitlement.findUnique({ where: { userId }, include: { plan: true } }),
+      prisma.subscription.findFirst({
         where: { userId },
         orderBy: { createdAt: 'desc' },
       }),
@@ -106,7 +131,7 @@ export class BillingService {
     // No Entitlement row yet (never subscribed) -- a real FREE-plan
     // learner still sees their own real default limits, not an empty
     // object.
-    const freePlan = await this.appPrisma.plan.findUniqueOrThrow({ where: { tier: 'FREE' } });
+    const freePlan = await prisma.plan.findUniqueOrThrow({ where: { tier: 'FREE' } });
     return billingStatusResponseSchema.parse({
       planTier: 'FREE',
       subscriptionStatus: null,
