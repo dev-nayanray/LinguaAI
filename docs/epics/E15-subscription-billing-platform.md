@@ -1,0 +1,149 @@
+# Epic E15 — Subscription & Billing Platform
+
+**Epic ID:** E15 (ROADMAP.md)
+**Status:** Design phase — first single-pass design, not yet implemented.
+**Tech lead:** Backend Platform / Commerce (TBD)
+**Gate owners assigned:** Architecture, Database, API, Security, Testing, Documentation (Frontend/Accessibility gates apply to the later UI-focused epic that builds the actual paywall/checkout screens, not this backend-engine epic — see §3.6)
+
+## 0. Why this document exists now, and what it is not
+
+E14 (Gamification Engine) is implementation-complete (T1–T2, 2026-08-14 — its own §9 task table's full sequence, confirmed no further task remains). Per ROADMAP.md, E15 is the next epic — both its dependencies (E2 Identity & Access Platform, E4 Database Schema & Core Data Layer) are already implementation-complete (neither has a formally closed Architecture Gate sign-off yet, the same "implementation-complete, gate sign-off log unchecked" state most prior epics' own dependencies were in when picked up — not a blocker, matching precedent). This is the **first, single-pass design** for the Subscription & Billing Platform (PRD.md module 22) — the same process E4–E14 each went through (CLAUDE.md's own workflow rule). This document does not write any application code; it designs the module, surfaces real gaps found while doing so (§3), and proposes the ADR implementation will need (§7).
+
+Like E14, this epic has **zero existing application logic to extend** — `billing.prisma`'s own header comment (E4 T9) explicitly defers all Stripe integration, checkout flow, webhook handling, and entitlement resolution to "E15 (Subscription & Billing Platform, this domain's app-logic epic)." A full-repo search confirms no module, controller, or service anywhere in `apps/api` calls the Stripe SDK, creates a Checkout Session, or resolves an `Entitlement`. This is real, greenfield application logic on top of an already-real, already-well-reasoned schema.
+
+Unlike E14, this epic also closes a real, already-tracked, launch-blocking risk that has been open since E11: **no entitlement-enforcement mechanism exists anywhere in the codebase today**, despite several already-shipped features (Pronunciation Lab, E11) being named Premium-only in PRD.md. Every "Premium-only" feature shipped before this epic is, in practice, free today. This is the single most consequential finding driving this design (§3.5).
+
+## 1. Epic Definition
+
+PRD.md names one module this epic covers (module 22):
+
+| #   | Module                | Description                                                                | Differentiator                                                              |
+| --- | --------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 22  | Subscription Platform | Free, Premium via Stripe, including trial and cancellation/downgrade flows | Entitlement changes propagate within seconds — no paywall lag (PRD.md §5.1) |
+
+**In scope:**
+
+- Real Stripe Checkout Session creation for the Free→Premium upgrade flow (`POST /v1/billing/checkout`), including trial support (PRD.md §5.1's own named Journey D).
+- A real Stripe webhook handler (`POST /v1/billing/webhooks/stripe`) with real signature verification, syncing `Subscription`/`Invoice`/`Entitlement` state into Postgres — the source of truth (DATABASE.md §2.9) — synchronously, so a subsequent read in the same request cycle never sees stale data (§3.3's own resolved tension).
+- A real, minimal learner-facing read endpoint: `GET /v1/billing/me` (current plan, subscription status, entitlement limits/usage).
+- A real entitlement-enforcement guard/interceptor, applied to the platform's own first genuinely Premium-gated feature (Pronunciation Lab, E11) — closing RISK_REGISTER's own already-tracked entitlement-enforcement gap (§3.5). This is PRD's own named launch-blocking differentiator, made real, not deferred again.
+- Real emission of the two already-cataloged-but-never-produced `billing.*` events (`billing.subscription.changed`, `billing.entitlement.changed`) for `notification-service`/`analytics-service`'s own future consumption.
+- A missed-webhook reconciliation mechanism (ARCHITECTURE.md's own named failure mode: "entitlements never revoked due to transient webhook delivery failure — a reconciliation job must catch missed webhooks") — real, not just documented.
+
+**Explicitly out of scope** (cited against ROADMAP.md/PRD.md's own classification, not silently absorbed):
+
+- **Family and Business plans** — `Plan.isActive = false` for both by design (E4 T9's own schema comment); Family is explicitly blocked on a COPPA-compliant parental-consent flow (ADR-013, PRD.md §5.1), Business is Enterprise-phase (ROADMAP.md). This epic only makes FREE/PREMIUM real.
+- **Coupons/discounts** — E4 T9's own §10 resolved item 3 deliberately did not build `Coupon`/`Discount` ("a genuinely unshaped reservation was judged more likely to lock in a wrong shape than to save a later migration"); still true, not this epic's own scope to reverse.
+- **Referral/viral growth program, gift subscriptions, cosmetic in-app purchases** — PRD.md §7's own Version 1.1+ monetization ideas, explicitly not MVP; referrals additionally carry their own fraud-prevention scope (RISK_REGISTER R-15), out of this epic entirely.
+- **The actual paywall/checkout/billing-settings UI** — matching E4–E14's own precedent, this epic designs the schema/API a future UI consumes, not the actual screen (§3.6).
+- **Redis-cached entitlement resolution** — DATABASE.md §2.9 names `Entitlement` as "resolved/cached-in-Redis, Postgres source of truth," but T1 reads directly from Postgres (§3.3's own resolved tension: correctness first, caching is a T3 performance optimization once the direct-read path is proven correct).
+- **Wiring the entitlement guard into every other Premium-gated feature PRD.md names** (Writing Assistant/Story Generator usage limits, AI conversation minute caps, etc.) — this epic's own MVP slice proves the real mechanism end-to-end on the one already-shipped, concretely Premium-gated feature (Pronunciation Lab); wiring the rest is mechanical repetition of the identical guard, a real, tracked, separately-scheduled follow-up (§11), not silently dropped.
+
+## 2. Business Objective
+
+PRD.md's own primary monetization mechanism — without a real Checkout flow and real entitlement enforcement, every "Premium" feature shipped so far is free in practice, and the platform has no unit-economics signal (PRD.md's own MVP exit criteria names "positive or credibly-trending-positive unit economics" as a hard exit gate). This epic is the single biggest lever for that exit criterion, and closes RISK_REGISTER's own already-open entitlement-enforcement risk.
+
+## 3. Scoping boundary and conflicts found
+
+### 3.1 Schema-complete, application-layer greenfield — mirrors E14's own finding exactly
+
+`billing.prisma` (E4 T9) already defines `Plan`, `Subscription`, `Invoice`, `Entitlement`; `identity.prisma` (E2) already defines the immutable `EntitlementChangeLog` audit trail. A full-repo search confirms zero application code anywhere reads or writes any of these tables, and zero code imports the Stripe SDK. This is real, greenfield application logic on top of an already-real, already-seeded-ready schema — the same starting condition E14 began from.
+
+### 3.2 `Plan` has no Stripe Price identifier — a real, additive schema gap closed in T1
+
+Creating a Stripe Checkout Session requires a Stripe `Price` id to reference, and resolving an inbound webhook's `subscription.items[0].price.id` back to a `Plan` row requires the reverse mapping. `Plan` has no such column today (only `tier`/`name`/`limits`/`isActive`). This is a real, load-bearing gap, not a style choice — closed by adding `Plan.stripePriceId String?` (nullable, since `FAMILY`/`BUSINESS` are inactive and may never get one, and even `PREMIUM` has no value until an operator configures Stripe and seeds it). This is a first-class, stable billing-provider identifier — a real typed column, not JSON, mirroring `Subscription.stripeCustomerId`/`stripeSubscriptionId`'s own precedent rather than burying it in `Plan.limits` (which is reserved for soft, iterable entitlement limits per that field's own header comment, not billing-provider wiring).
+
+### 3.3 The "no paywall lag" requirement vs. `DATABASE.md`'s own Redis-caching note — resolved by deferring the cache
+
+PRD.md §5.1's own acceptance criterion for the upgrade journey is explicit: "entitlement changes propagate to the API within seconds of webhook receipt," and ARCHITECTURE.md §7 goes further — "entitlement must be synchronously available on the same request that updated it (no read-your-write lag for paywall gating)." `DATABASE.md` §2.9 separately describes `Entitlement` as "resolved/cached-in-Redis, Postgres source of truth." Naively adding a cache in T1 risks violating the read-your-write requirement (a cache invalidated asynchronously, or on a TTL, is exactly a "lag"). Resolution: **T1 resolves entitlements by reading `Entitlement` directly from Postgres on every check** — correct by construction, no cache to invalidate incorrectly. A Redis cache is real, valuable future work once request volume justifies it (T3, §11), and when added, invalidation happens synchronously in the same transaction as the write that changed the entitlement — never a TTL-only strategy — so it can never reintroduce the lag this section exists to avoid.
+
+### 3.4 Missed-webhook resilience — a real, named failure mode, deferred to a reconciliation job (T3)
+
+ARCHITECTURE.md §7's own failure-mode note is explicit: "a reconciliation job must catch missed webhooks" — Stripe's delivery is at-least-once but not guaranteed, and a dropped `customer.subscription.deleted` event would leave a churned customer's `Entitlement` incorrectly elevated indefinitely. No scheduled/repeatable-job infrastructure exists anywhere in `apps/api` today (confirmed by a full-repo search — no `@nestjs/schedule`, no BullMQ repeatable job registered). Building that infrastructure and the reconciliation job itself (periodically listing recent Stripe subscriptions and diffing against Postgres) is real, separately-scoped work; T1 relies on webhook delivery alone (Stripe's own default retry-with-backoff for a failed webhook response), a real, honest, provisional MVP posture, not a silent gap.
+
+### 3.5 No entitlement-enforcement mechanism exists anywhere — the epic's own most consequential finding
+
+RISK_REGISTER already tracks this (found at E11, on that epic's own branch — not yet visible on `main` at the time this design branch was cut from it, the same "found on an unmerged sibling branch" situation E14's own R-93–R-98 numbering conflict already navigated; this design doc's own RISK_REGISTER edit references and closes it, reconciled at merge time the same way): PRD.md names several features Premium-only (Pronunciation Lab is the first one actually shipped, E11), but **no guard, interceptor, or middleware anywhere in `apps/api` checks a caller's `Entitlement` before serving a gated feature** — confirmed by a full-repo search for any entitlement check. Every Premium-only feature shipped to date is free in practice. This epic builds the real guard and wires it into Pronunciation Lab specifically (the one concrete, already-shipped instance) — closing the risk's own most acute, concrete case, not the entire "every feature must eventually be gated" scope (§1's own out-of-scope list, §11).
+
+### 3.6 This epic is backend/engine + a real, minimal API surface — not the actual checkout/paywall UI
+
+Matching E4–E14's own precedent: this epic designs and builds the real Checkout-session creation, webhook sync, and entitlement-check mechanism a future UI-focused epic consumes (the actual "Upgrade to Premium" screen, paywall interstitials, and billing-settings page) — not the screen itself.
+
+## 4. Schema reference (already real, E4 T9/E2)
+
+| Table                  | Key fields relevant to this epic                                                                                                                         | Status                         |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `Plan`                 | `tier` (FREE/PREMIUM/FAMILY/BUSINESS), `limits` (JSON), `isActive`, **`stripePriceId` (new, §3.2)**                                                      | Existing + 1 new column        |
+| `Subscription`         | `userId`/`organizationId` (exactly one), `planId`, `status`, `stripeCustomerId`, `stripeSubscriptionId`, `currentPeriodEnd`, `trialEndsAt`, `canceledAt` | Existing                       |
+| `Invoice`              | `subscriptionId`, `stripeInvoiceId`, `status`, `amountDue`/`amountPaid` (cents), `currency`                                                              | Existing                       |
+| `Entitlement`          | `userId` (1:1), `planId`, `limits` (JSON), `usage` (JSON), `currentPeriodEnd`                                                                            | Existing                       |
+| `EntitlementChangeLog` | `userId`, `entitlementType`, `action` (GRANTED/REVOKED/CHANGED), `source`, `occurredAt`                                                                  | Existing (E2), immutable audit |
+
+## 5. API surface (T1/T2)
+
+| Endpoint                           | Auth                                                            | Purpose                                                                                                               |
+| ---------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/billing/checkout`        | `AuthGuard('jwt')`                                              | Creates (or reuses) a Stripe Customer for the caller, returns a real Stripe Checkout Session URL for the PREMIUM plan |
+| `POST /v1/billing/webhooks/stripe` | Stripe signature (no JWT — this is a server-to-server callback) | Verifies signature, syncs `Subscription`/`Invoice`/`Entitlement`, emits `billing.*` events                            |
+| `GET /v1/billing/me`               | `AuthGuard('jwt')`                                              | The caller's own current plan, subscription status, entitlement limits/usage                                          |
+
+## 6. Cross-cutting mechanics
+
+### 6.1 Stripe SDK boundary — a real, stubbable client, mirroring `AiEngineClientService`'s own precedent
+
+Unlike AI (which goes through a separately-deployed `services/ai-engine` process with its own strict `aiGatewayEnvSchema.ANTHROPIC_API_KEY: z.string().min(1)`), `apps/api` integrates Stripe **directly, in-process** (ARCHITECTURE.md §2.1's own Commerce bounded context lives in `apps/api`, not a separate service — there is no independent-scaling/isolation reason for a new service, matching CLAUDE.md's own "don't create a new service for something a NestJS module can do" rule). This environment's `.env` has `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET` present but empty (no real Stripe test account provisioned here) — a new `billingEnvSchema` (`packages/config`) accepts an empty string (plain `z.string()`, not `.min(1)`), a deliberate deviation from `aiGatewayEnvSchema`'s own stricter pattern, because that stricter schema is only ever loaded by the separately-booted `ai-engine` process, which `apps/api`'s own e2e tests never start — whereas a `billingEnvSchema` loaded inside `AppModule`'s own DI graph runs at **every** e2e test's `app.init()`, regardless of whether that test touches billing at all. A strict, non-empty requirement here would break every e2e suite in this environment. The real Stripe API boundary is isolated behind a thin `StripeClientService` (wrapping the `stripe` npm SDK), `overrideProvider`-stubbed in e2e tests — the exact same "mock the boundary, not the module" precedent `writing-submissions.e2e-spec.ts` already established for `AiEngineClientService`. Webhook **signature verification**, by contrast, is real and unstubbed even in tests — it's pure local HMAC computation (`stripe.webhooks.constructEvent`), needs no live API call, and is exactly the security-critical path most worth testing for real.
+
+### 6.2 Webhook handling — real, synchronous Postgres sync
+
+`POST /v1/billing/webhooks/stripe` requires the **raw** request body for signature verification (Stripe's own `constructEvent(rawBody, signature, secret)` — a real NestJS implementation detail: the global body parser JSON-parses everything by default, so this one route needs `express.raw()` wired ahead of it, same as any standard Stripe/NestJS integration). Handled event types for T1: `checkout.session.completed` (creates/updates `Subscription` + upserts `Entitlement` to the Plan's own `limits`), `customer.subscription.updated` (syncs `status`/`currentPeriodEnd`; `PAST_DUE` keeps the existing `Entitlement` as a grace period — a real, deliberate product choice, not silently reverting on the first missed payment), `customer.subscription.deleted` (`status = CANCELED`, `Entitlement` reverts to the `FREE` plan's own `limits`), `invoice.paid`/`invoice.payment_failed` (real `Invoice` row sync). Every state change writes `EntitlementChangeLog` (`source: 'stripe_webhook'`) and publishes `billing.entitlement.changed`/`billing.subscription.changed` synchronously, in the same handler — before the webhook responds `200` to Stripe, so a subsequent `GET /v1/billing/me` in the same or a later request always sees the fresh state (§3.3).
+
+### 6.3 Entitlement-enforcement guard
+
+A real `EntitlementGuard` (NestJS `CanActivate`), parameterized by a required `Plan.limits` key (e.g. `@RequireEntitlement('pronunciationLabAccess')`), reads the caller's own `Entitlement.limits` (direct Postgres read, §3.3) and throws a real `403 Forbidden` with a structured "upgrade required" error body (API_GUIDELINES.md's own error-shape convention) if the flag is false/absent. Wired onto `PronunciationLabController` (E11) — the one concrete, already-shipped Premium-gated feature — as this epic's own real, end-to-end proof, not a bare unit test of the guard in isolation.
+
+## 7. ADR impact
+
+**ADR-054 (proposed):** Stripe integration lives directly in `apps/api` as a new `BillingModule`, not a separate microservice — no independent-scaling or isolation need exists (CLAUDE.md's own service-creation bar), and Commerce is already named as an `apps/api`-owned bounded context (ARCHITECTURE.md §2.1). Entitlement resolution reads Postgres directly (no cache) until request volume justifies a Redis layer, deliberately trading a small amount of read latency for a correctness guarantee (§3.3) that a naive cache could silently violate.
+
+## 8. Alternatives considered
+
+- **A separate `services/billing` microservice** (rejected) — no independent-scaling, different-runtime, or AI-cost/latency isolation reason exists (CLAUDE.md's own bar); Commerce is already scoped to `apps/api` (ARCHITECTURE.md §2.1).
+- **Caching `Entitlement` in Redis from day one** (rejected for T1, §3.3) — real risk of violating PRD's own "no paywall lag" acceptance criterion if invalidation isn't perfectly synchronous; deferred until the direct-Postgres-read path is proven correct, then added as a strictly synchronous-invalidation optimization, not a TTL-based one.
+- **Storing `stripePriceId` inside `Plan.limits` JSON instead of a new column** (rejected, §3.2) — `limits` is reserved for soft, product-tunable entitlement limits (its own header comment); a billing-provider identifier is a stable, typed, first-class fact about a `Plan`, the same reasoning `Subscription.stripeCustomerId` already used.
+- **Deferring entitlement enforcement entirely to a later epic** (rejected) — RISK_REGISTER already names this launch-blocking (PRD.md's own module-22 differentiator: "Anti-... safeguards... launch-blocking, not fast-follow" pattern mirrors gamification's own R-15 framing); every additional epic shipped before a real guard exists widens the "free Premium" gap.
+- **Requiring a real Stripe test API key in this environment** (rejected, §6.1) — no such key is provisioned here; the design instead makes the Stripe SDK boundary a real, stubbable seam, matching the already-established `AiEngineClientService` precedent, rather than blocking the entire epic on external account provisioning.
+
+## 9. Task sequence
+
+| Task   | Deliverable                                                                                                                                                                                                                 | Depends on | Evidence (design-phase)                                                                                                                                                                                                                                                       |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **T1** | `Plan.stripePriceId` migration (§3.2); `BillingModule` — real Checkout Session creation, real webhook signature verification + `Subscription`/`Invoice`/`Entitlement` sync, `billing.*` real emission; `GET /v1/billing/me` | E14        | Unit tests with a mocked `StripeClientService`; a real e2e test proving webhook-driven `Entitlement` sync is synchronously visible to a same-flow `GET /v1/billing/me` read, and a real signature-verification test (a request with a tampered/invalid signature is rejected) |
+| **T2** | `EntitlementGuard`/`@RequireEntitlement()`, wired onto `PronunciationLabController` (closes the entitlement-enforcement risk, §3.5)                                                                                         | T1         | Unit tests; a real e2e test proving a FREE-plan caller is rejected from Pronunciation Lab and a PREMIUM-plan caller is not                                                                                                                                                    |
+| **T3** | Missed-webhook reconciliation job (§3.4) + Redis-cached entitlement resolution with synchronous invalidation (§3.3's own deferred optimization)                                                                             | T2         | Real test proving a simulated missed webhook is caught and corrected by the reconciliation pass                                                                                                                                                                               |
+
+## 10. Open questions
+
+1. **The real trial length** (PRD.md §5.1 names a trial exists but not its duration) — this design assumes a Stripe-native trial (`subscription_data.trial_period_days` on the Checkout Session), with the actual day count a real product-tuning decision for whoever owns pricing, not this epic's own scope to finalize precisely (the same class of provisional-constant decision E14 T1 made for its own flat XP amounts).
+2. **Whether a `PAST_DUE` grace period has a hard time limit** before automatically reverting to FREE, or waits indefinitely for Stripe's own dunning/retry cycle to resolve to `CANCELED` — this design assumes the latter (simpler, and Stripe's own subscription lifecycle already handles dunning before emitting `customer.subscription.deleted`), not yet put to the user for a resolution decision.
+
+## 11. Risks
+
+| Risk                                                                                                                                                                                                                                                    | Mitigation                                                                                                                                                 | Owner                  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| This epic's own T1/T2 slice wires the entitlement guard into only one already-shipped Premium feature (Pronunciation Lab) — every other PRD-named Premium-gated capability (writing/story usage limits, AI conversation minute caps) remains unenforced | Wire the same, already-proven `EntitlementGuard` into each remaining feature's own controller the next time it's touched, or as a dedicated follow-up task | Backend Platform (TBD) |
+| T1 has no reconciliation job (§3.4) — a dropped Stripe webhook (rare, but real, at-least-once-not-guaranteed delivery) can leave `Entitlement` stale until T3 lands                                                                                     | Flagged here, not re-litigated; T3 closes this before general availability                                                                                 | Backend Platform (TBD) |
+| The entitlement-enforcement gap this epic closes was open since E11 with every Premium-only feature shipped free in the interim — real, already-tracked (found at E11, reconciled into this branch's own RISK_REGISTER at merge time)                   | This epic's own T2 is the fix                                                                                                                              | Backend Platform (TBD) |
+
+## 12. Gate sign-off log
+
+| Gate         | Status        | Reviewer | Date | Notes                                                                                            |
+| ------------ | ------------- | -------- | ---- | ------------------------------------------------------------------------------------------------ |
+| Architecture | ☐ Not started | —        | —    | Stripe-in-`apps/api` placement (ADR-054), the direct-Postgres-read entitlement design (§3.3)     |
+| Database     | ☐ Not started | —        | —    | One new column (`Plan.stripePriceId`, §3.2) — confirms the rest of `billing.prisma` already fits |
+| API          | ☐ Not started | —        | —    | New billing endpoints (§5), Stripe webhook route's own raw-body requirement (§6.2)               |
+| Security     | ☐ Not started | —        | —    | Real webhook signature verification (§6.2), the real entitlement-enforcement guard (§6.3/§3.5)   |
+| Testing      | ☐ Not started | —        | —    | Real e2e proof of synchronous entitlement propagation and signature-verification rejection       |
+
+## 13. Epic Approval
+
+Design not yet formally approved by an independent Architecture Gate review — proceeding to implementation by explicit user direction ("next"), the same pattern E9–E14 each followed.
