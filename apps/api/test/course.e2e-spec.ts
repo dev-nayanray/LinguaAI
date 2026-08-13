@@ -120,6 +120,16 @@ describe('CourseModule (e2e)', () => {
     for (const courseId of createdCourseIds) {
       await cleanupCourse(courseId);
     }
+    // This suite's own exercise-attempt tests are real activity signals
+    // (E14 T1/T2) -- a learner completing a lesson here can genuinely
+    // earn a real, globally-seeded Badge (e.g. "First Lesson Complete")
+    // or self-enroll into a real, globally-active Mission, same as any
+    // other learner anywhere in the suite. Both must be cleaned up before
+    // deleting the User row, or `UserBadge_userId_fkey`/
+    // `UserMission_userId_fkey` trips (a real gap found and fixed during
+    // E14 T2's own verification).
+    await setupPrisma.userBadge.deleteMany({ where: { userId: { in: createdUserIds } } });
+    await setupPrisma.userMission.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.userXP.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.streak.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.refreshToken.deleteMany({ where: { userId: { in: createdUserIds } } });
