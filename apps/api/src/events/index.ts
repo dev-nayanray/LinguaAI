@@ -1,8 +1,11 @@
 export {
-  createDomainEventsQueue,
+  createDomainEventsConsumerQueue,
+  createDomainEventsQueues,
+  domainEventsQueueName,
   DomainEventPublisher,
-  DOMAIN_EVENTS_QUEUE_NAME,
+  DOMAIN_EVENT_CONSUMERS,
   type DomainEvent,
+  type DomainEventConsumer,
   type PublishParams,
 } from '@linguaai/events';
-export { DOMAIN_EVENTS_QUEUE, EventsModule } from './events.module.js';
+export { DOMAIN_EVENTS_QUEUES, EventsModule } from './events.module.js';
