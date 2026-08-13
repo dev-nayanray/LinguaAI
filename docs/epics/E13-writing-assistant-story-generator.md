@@ -1,0 +1,142 @@
+# Epic E13 — Writing Assistant & AI Story Generator
+
+**Epic ID:** E13 (ROADMAP.md)
+**Status:** Implementation complete (T1–T3, 2026-08-13 — the epic's own full §9 task sequence, confirmed no further task remains).
+**Tech lead:** AI Engineering + Course Platform (TBD)
+**Gate owners assigned:** Architecture, Database, API, AI, Security, Testing, Documentation (Frontend/Accessibility gates apply to the later UI-focused epic that builds the actual inline-correction-diff/story-reader screens, not this backend-engine epic — see §3.5)
+
+## 0. Why this document exists now, and what it is not
+
+E12 (Listening & Reading Systems) is implementation-complete (T1–T2, 2026-08-13 — its own §9 task table's full sequence, confirmed no further task remains). Per ROADMAP.md, E13 is the next epic — both its dependencies (E5, E9) are already satisfied. This is the **first, single-pass design** for Writing Assistant & AI Story Generator (PRD.md modules 11 and 12) — the same process E4–E12 each went through (CLAUDE.md's own workflow rule). This document does not write any application code; it designs the module, surfaces real gaps found while doing so (§3), and proposes the ADRs implementation will need (§7).
+
+Unlike E10–E12, this epic's own AI mechanism already exists in large part: `RagRetrievalService` (E5 T7) was built specifically for this epic — its own doc comment names Grammar Coach (this epic) and Exam Coach (E19) as its real, intended first consumers, deliberately left unwired until now. The real, load-bearing gap found while drafting this design (§3.1) is that the mechanism has never had any real grounding content to retrieve.
+
+## 1. Epic Definition
+
+PRD.md names two modules this epic covers together (ROADMAP.md's own "Writing Assistant & AI Story Generator" bundling):
+
+| #   | Module             | Description                                     | Differentiator                                       |
+| --- | ------------------ | ----------------------------------------------- | ---------------------------------------------------- |
+| 11  | Writing Assistant  | Grammar correction, essay scoring               | Errors explained, not just flagged                   |
+| 12  | AI Story Generator | Personalized stories with vocabulary extraction | Stories reuse target vocabulary the user is learning |
+
+**In scope:**
+
+- A new, stateless `services/ai-engine` grammar/writing-correction capability, RAG-grounded against `KnowledgeBaseEntry` (`category: GRAMMAR_REFERENCE`) — real "explained, not just flagged" corrections per PRD's own differentiator, not a bare list of error spans.
+- A real, small, genuinely-embedded seed set of `GRAMMAR_REFERENCE` `KnowledgeBaseEntry` rows (§3.1) — without this, `RagRetrievalService.retrieveGroundingContext()` has nothing to retrieve, and ADR-008's own "never left to the model's parametric knowledge alone" principle for this feature would be true in name only.
+- `apps/api`'s new `WritingModule`: a real, persisted `WritingSubmission` (learner-submitted text, structured corrections, overall feedback), and — mirroring E10 T5's own `FluencyScoringService` vocabulary-extraction precedent — newly-corrected/introduced vocabulary saved into the learner's own `PersonalDictionary` (a new `VocabularySource` value).
+- A real AI Story Generator: a short, personalized story whose own vocabulary is deliberately drawn from the learner's own currently-learning terms (`PersonalDictionary`/SRS due set, E9), extending `ContentDraftingService`'s already-real `'content'` request class rather than inventing a new one (§3.3) — persisted as a new, learner-owned, re-readable `GeneratedStory` row.
+
+**Explicitly out of scope** (cited against ROADMAP.md/PRD.md's own classification, not silently absorbed):
+
+- **The actual inline-correction-diff UI / story-reader screen** — matching E4–E12's own precedent, this epic designs the schema/API a future UI consumes, not the actual screen (§3.5).
+- **Essay-length or exam-style extended scoring** (a full IELTS/TOEFL-style essay rubric with a numeric band score) — that is E19's own named scope (Exam Preparation System, which already depends on this epic's own RAG-grounding mechanism per §0); this epic's own "essay scoring" per PRD module 11 is formative (explained corrections + a real but provisional CEFR-level estimate), not a certified exam score.
+- **A full grammar-reference knowledge base** covering every rule for every launch language — the seed set this epic adds (§3.1) is real, working, and genuinely retrievable, but deliberately small (the same "real, if intentionally small, curated content" precedent E6 T1 already established for the placement-item bank); scaling it to full language coverage is real, separately-scoped content-ops work.
+- **Live, mid-conversation Grammar Coach invocation** (the Orchestrator detecting a grammar error mid-turn and handing off to a specialist) — RISK_REGISTER R-95 (found at E11) already names this exact general mechanism as unbuilt for any persona; this epic's own Writing Assistant is a dedicated, explicitly-invoked flow (the learner submits text on purpose), not a live conversational handoff, so it does not depend on R-95's own gap and does not close it either.
+- **Real entitlement/usage-limit enforcement** on AI-generated correction/story cost — the same platform-wide gap RISK_REGISTER R-96 already names (found at E11), not re-litigated here.
+
+## 2. Business Objective
+
+Closes PRD.md's remaining two core skill-practice modules (Speaking/E10, Pronunciation/E11, Listening/Reading/E12 already done; Writing/Story are modules 11-12) with a real, working correction-and-generation pipeline. Directly serves Persona 3 (the exam candidate, PRD.md §4) and feeds the platform's own vocabulary-reinforcement loop (E9) — corrected/introduced vocabulary from writing, and vocabulary deliberately reused in a generated story, both route back into `PersonalDictionary`, the same reinforcement pattern E10 T5 already established for speaking practice.
+
+## 3. Scoping boundary and conflicts found
+
+### 3.1 `RagRetrievalService` is real and wired for embedding/retrieval, but has no real `GRAMMAR_REFERENCE` content to retrieve
+
+E5 T7's own doc comment (`services/ai-engine/src/rag/rag-retrieval.service.ts`) states RAG grounding is deliberately not wired into `OrchestratorService`, since ADR-008 names it a blocking dependency specifically for Grammar Coach (this epic) and Exam Coach (E19) — each specialist's own pedagogical logic is the real consumer. Confirmed by direct inspection of `packages/database/scripts/seed.ts`'s `seedKnowledgeBaseEntries()`: exactly two rows exist today, both `CEFR_DESCRIPTOR`/`EXAM_RUBRIC`, zero `GRAMMAR_REFERENCE` rows — and even those two rows are seeded with `embeddingModelVersion: 'unseeded'` and no `embedding` value at all (the seed script never calls the Router's real `embed()`). A grammar-correction call today would retrieve nothing, making "RAG-grounded, not the model's parametric knowledge alone" true only mechanically, not in practice. This epic closes the gap for real: a new seed step adds a small, genuinely useful `GRAMMAR_REFERENCE` set (common English↔target-language interference errors, verb-conjugation/agreement rules — the same illustrative-language choice E6 T1's own item bank already made) with real embeddings computed via `RouterService.embed()`, not a placeholder string.
+
+### 3.2 Writing correction needs a new `AiRequestClass`; story generation reuses `'content'`
+
+`services/ai-engine/src/gateway/router.service.ts`'s `AiRequestClass` union (`'teacher' | 'assessment' | 'content' | 'fluency'`) has no member that fits "give a learner structured, explained feedback on their own free-form writing outside any placement assessment." `'assessment'` is scoped specifically to `AssessmentScoringService.scoreWritingResponse()` (ADR-039) — single-essay, placement-test critique producing a CEFR band for `ProficiencyLevel`, a materially different rubric/purpose from ongoing, repeatable writing-practice correction. Forcing this call into `'assessment'` would corrupt ADR-012's own per-request-class cost-circuit-breaker monitoring, the same category error ADR-039/041/048 already avoided for their own domains. A new `'writing'` class is added (§7, ADR-052). Story generation, by contrast, **is** a real instance of `'content'`'s own existing scope (admin-review-gated is not required here — a learner-triggered generation, but the same "structured creative drafting" shape `ContentDraftingService` already serves) — reusing it rather than adding a sixth class mirrors E9 T4's own precedent of extending `'content'` for AI-assisted vocabulary-item drafting rather than inventing a new class for a similar generation task.
+
+### 3.3 No `WritingSubmission`/`GeneratedStory` model exists yet
+
+A full-repo search confirms neither table exists in any `packages/database/schema/*.prisma` file. Both are new, real persistence — `WritingSubmission` mirrors `PronunciationLabAttempt`'s own precedent (E11 T2: a learner-scoped attempt row plus a structured result), `GeneratedStory` mirrors `PersonalDictionary`'s own per-user, listable-history shape.
+
+### 3.4 `VocabularySource` has no value for writing-derived or story-derived terms
+
+`vocabulary.prisma`'s `VocabularySource` enum (`READING | CAMERA_TRANSLATION | CONVERSATION | MANUAL | OTHER`) has no member for vocabulary a learner encounters via this epic's own two new flows. A new value, `WRITING`, is added for corrected/introduced terms from a writing submission — the same kind of enum extension E10 T5 made real for `CONVERSATION`. Story-generated vocabulary reuses `READING` (an AI-generated story is, mechanically, a reading passage the learner reads) rather than adding a third new value for a distinction with no real behavioral difference downstream.
+
+### 3.5 This epic is backend/engine + a real, minimal API surface — not the actual correction-diff/story-reader UI
+
+Matching every prior epic's own precedent (E4–E12), this epic designs and builds the real schema, AI mechanism, and API contract a future frontend consumes. The actual inline-diff correction view and story-reader screen are a later, UI-focused epic's own scope.
+
+## 4. Bounded context & ownership
+
+Writing correction and story generation both live in the AI Coaching bounded context (ARCHITECTURE.md §2.1) — `services/ai-engine` owns the model call and RAG grounding (both request classes), `apps/api`'s new `WritingModule` owns persistence and the learner-facing HTTP surface, matching every other AI-Coaching-adjacent feature's own established split (E10's `SpeakingModule`, E11's `PronunciationModule`).
+
+## 5. Component-by-component design summary
+
+| Component                                        | Responsibility                                                                              | New/Existing                  |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------- | ----------------------------- |
+| `services/ai-engine` — `WritingCoachService`     | RAG-grounded grammar correction (§6.1); one-shot, stateless                                 | New                           |
+| `services/ai-engine` — `KnowledgeBaseEntry` seed | Real, embedded `GRAMMAR_REFERENCE` content (§3.1)                                           | New (data), existing (schema) |
+| `apps/api` — `WritingModule`                     | `WritingSubmission` persistence, vocabulary extraction into `PersonalDictionary` (§6.2)     | New                           |
+| `apps/api` — `WritingModule` (story path)        | `GeneratedStory` persistence, queries the caller's own learning vocabulary (§6.3)           | New                           |
+| `ContentDraftingService`                         | Extended with a story-generation method under the existing `'content'` request class (§3.2) | Existing, extended            |
+| `PersonalDictionary`                             | New `WRITING` source; `READING` reused for story-derived terms                              | Existing, extended            |
+
+## 6. Cross-cutting mechanics
+
+### 6.1 RAG-grounded writing correction
+
+`WritingCoachService.correctWriting({ languageId, targetLanguageName, text })` embeds `text` via the Router (already real, E5 T1/T2), calls `RagRetrievalService.retrieveGroundingContext()` (already real, E5 T7) filtered to `category: GRAMMAR_REFERENCE` and the given `languageId` (plus language-agnostic rows), injects the formatted grounding context into the prompt via `formatGroundingContextForPrompt()` (already real), and returns a structured list of corrections (`{ original, corrected, explanation, ruleReference }`, `ruleReference` citing a retrieved `kb:<id>` tag when the model's correction rests on a specific grounded rule) plus overall feedback and a provisional CEFR-level estimate. Output is sanitized via `SafetyLayerService.sanitizeOutput()` (already real, E5 T8) before ever leaving `ai-engine`, the same discipline every other model-generated free-text field in this platform already carries.
+
+### 6.2 Real `WritingSubmission` persistence and vocabulary extraction
+
+`apps/api`'s new `WritingModule` calls the new stateless `POST /v1/writing-coaching/correct` endpoint (mirroring E11 T1/ADR-050's own "content-authoring is a one-shot operation, not a live session" reasoning), persists a real `WritingSubmission` row (submitted text, structured corrections, overall feedback, CEFR estimate, scoped to the caller's own `userId`), and — for each correction whose `corrected` form differs meaningfully from a term already in the learner's own `PersonalDictionary` — saves the corrected term (`source: 'WRITING'`), the same "the caller writes, the AI service never touches Postgres" boundary ADR-044/048/050 already established.
+
+### 6.3 AI Story Generator reusing the learner's own active vocabulary
+
+`apps/api`'s `WritingModule` (story path) queries the caller's own `PersonalDictionary` for `languageId` (bounded — the most recently added/reviewed N terms, avoiding an unbounded prompt), passes those terms to `ContentDraftingService`'s new `draftStory()` method (still `'content'` class) as a real "the story must naturally use these words" constraint, and persists the result as a `GeneratedStory` row (title, story text, the actual vocabulary terms the model confirms it used — not just the terms requested, since the model may not use all of them).
+
+## 7. New ADRs proposed (status `Proposed` — full text added to DECISIONS.md at implementation time, starting at ADR-052)
+
+| ADR     | Decision                                                                                                                                                                                        | Why it's needed now                                                                                                                                                     |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ADR-052 | A fifth `AiRequestClass` (`'writing'`) for RAG-grounded, explained grammar/writing correction — a materially different rubric/purpose from `'assessment'`'s own placement-test writing critique | Closes §3.2's own found category-error risk; keeps ADR-012's per-request-class cost monitoring meaningful                                                               |
+| ADR-053 | A real, genuinely-embedded `GRAMMAR_REFERENCE` `KnowledgeBaseEntry` seed set, computed via the Router's real `embed()` — not the existing seed script's placeholder `'unseeded'` rows           | Closes §3.1's own found gap: `RagRetrievalService` (E5 T7) has been real and wired since E5 but has never had real grounding content for this category to retrieve from |
+
+## 8. Alternatives considered
+
+- **Routing writing correction through `'assessment'`** (rejected, §3.2) — a materially different rubric/output shape and a formative, repeatable-practice context, not a placement-test one; the same reasoning E10 T5's own ADR-048 already used to justify a new class rather than reusing `'assessment'`/`'content'` for fluency scoring.
+- **A brand-new `'story'` request class for story generation** (rejected, §3.2) — no real requirement distinguishes "draft a lesson" from "draft a personalized story reusing given vocabulary"; both are structured creative-content generation, the same reasoning E9 T4 already used to extend `'content'` rather than add a class for AI-assisted vocabulary-item drafting.
+- **Deferring the `GRAMMAR_REFERENCE` seed to a later content-ops task, shipping RAG-grounded correction with zero retrievable content today** (rejected, §3.1) — would make "RAG-grounded, never left to the model's parametric knowledge alone" a claim contradicted by the platform's own actual data; a small, real, genuinely-embedded seed set is cheap and directly closes a named blocking dependency (ADR-008).
+- **A full IELTS/TOEFL-style essay rubric with a certified band score** (rejected, §1's own out-of-scope) — that is E19's (Exam Preparation System) own explicitly named scope; building it here would duplicate work and pre-empt a dependent epic's own design.
+- **Storing generated stories only ephemerally (return, never persist)** (rejected) — unlike `ContentDraftingService`'s own admin-review-gated lesson drafts (deliberately never persisted until an admin approves), a learner-generated story has no approval gate and no reason not to be a real, revisitable artifact — the same "real persistence, not a demo" bar this epic's own `WritingSubmission` already meets.
+
+## 9. Task sequence
+
+| Task   | Deliverable                                                                                                                                                  | Depends on | Evidence (design-phase)                                                                                                                         |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **T1** | `'writing'` `AiRequestClass` (ADR-052); real, embedded `GRAMMAR_REFERENCE` seed (ADR-053); `WritingCoachService`/`POST /v1/writing-coaching/correct` (§6.1)  | E12        | Unit tests with a mocked Router/`RagRetrievalService`; a real e2e test proving a genuine pgvector-grounded correction citing a seeded `kb:<id>` |
+| **T2** | `apps/api`'s `WritingModule`: `POST /v1/writing-submissions`, real `WritingSubmission` persistence, `WRITING`-sourced `PersonalDictionary` extraction (§6.2) | T1         | Unit tests with a mocked writing-coaching client; a real e2e test proving a persisted `WritingSubmission` and new `PersonalDictionary` rows     |
+| **T3** | AI Story Generator: `ContentDraftingService.draftStory()`, `apps/api`'s story-generation endpoint, real `GeneratedStory` persistence (§6.3)                  | T2         | Unit tests with a mocked `ContentDraftingService`; a real e2e test proving a persisted story whose own vocabulary list is populated             |
+
+## 10. Open questions
+
+1. **Whether a `WritingSubmission`'s own corrections should be re-run if the learner edits and resubmits the same text** — this design assumes each submission is independent (a new row every time, matching `PronunciationLabAttempt`'s own "each attempt is its own row" precedent), not a single mutable draft with correction history — not yet put to the user for a resolution decision.
+2. **How many of the learner's own `PersonalDictionary` terms a generated story should target** — this design assumes a small, bounded number (e.g. 5-8, avoiding both an unnaturally word-stuffed story and an unbounded prompt), a real, provisional MVP scoping call, not yet put to the user for a resolution decision.
+
+## 11. Risks
+
+| Risk                                                                                                                                                                                                                                      | Mitigation                                                                                                            | Owner                  |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| R-97 (new): The real `GRAMMAR_REFERENCE` seed this epic adds (§3.1/ADR-053) is deliberately small — real, working, genuinely retrievable, but covering only common, illustrative rules, not full grammar coverage for any launch language | Flagged here as a real, scoped content gap; scaling to full language coverage is separate, future content-ops work    | AI Engineering (TBD)   |
+| Real entitlement/usage-limit enforcement on AI correction/story generation cost has no guard — the same platform-wide gap RISK_REGISTER R-96 already names                                                                                | Flagged here, not re-litigated; E15's own future scope                                                                | Backend Platform (TBD) |
+| Live, mid-conversation Grammar Coach invocation (Orchestrator detecting an error mid-turn) remains unbuilt — RISK_REGISTER R-95's own already-tracked general specialist-invocation gap                                                   | Not this epic's scope (a dedicated, explicitly-invoked flow, not a conversational handoff); flagged, not re-litigated | AI Engineering (TBD)   |
+
+## 12. Gate sign-off log
+
+| Gate         | Status        | Reviewer | Date | Notes                                                                                     |
+| ------------ | ------------- | -------- | ---- | ----------------------------------------------------------------------------------------- |
+| Architecture | ☐ Not started | —        | —    | The new `'writing'` request class and RAG-grounded correction flow (§6.1, ADR-052)        |
+| Database     | ☐ Not started | —        | —    | New `WritingSubmission`/`GeneratedStory` models, `VocabularySource.WRITING`               |
+| API          | ☐ Not started | —        | —    | `POST /v1/writing-coaching/correct`, `POST /v1/writing-submissions`, story endpoint       |
+| AI           | ☐ Not started | —        | —    | First real consumer of `RagRetrievalService` (E5 T7); real embedded seed content          |
+| Security     | ☐ Not started | —        | —    | Learner-submitted free-form text as untrusted input into a RAG-grounded prompt            |
+| Testing      | ☐ Not started | —        | —    | Real e2e proof of genuine pgvector-grounded correction, submission, and story persistence |
+
+## 13. Epic Approval
+
+Design not yet formally approved by an independent Architecture Gate review — proceeding to implementation by explicit user direction ("next"), the same pattern E9–E12 each followed.
