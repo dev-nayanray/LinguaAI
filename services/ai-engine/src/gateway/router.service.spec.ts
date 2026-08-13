@@ -17,10 +17,12 @@ const config: AiGatewayModuleConfig = {
   assessmentModel: 'claude-assessment-model',
   contentModel: 'claude-content-model',
   fluencyModel: 'claude-fluency-model',
+  writingModel: 'claude-writing-model',
   teacherEconomyModel: undefined,
   assessmentEconomyModel: undefined,
   contentEconomyModel: undefined,
   fluencyEconomyModel: undefined,
+  writingEconomyModel: undefined,
 };
 
 function fakeGenerateResponse(modelId: string): GenerateResponse {
@@ -70,6 +72,16 @@ describe('RouterService', () => {
 
       expect(anthropic.generate).toHaveBeenCalledWith(
         expect.objectContaining({ model: 'claude-content-model' }),
+      );
+    });
+
+    it('uses the writing model for the writing request class (E13 T1, ADR-052)', async () => {
+      anthropic.generate.mockResolvedValue(fakeGenerateResponse('claude-writing-model'));
+
+      await router.generate('writing', { messages: [{ role: 'user', content: 'hi' }] });
+
+      expect(anthropic.generate).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'claude-writing-model' }),
       );
     });
 

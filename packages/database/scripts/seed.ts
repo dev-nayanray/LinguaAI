@@ -10,9 +10,61 @@
 // programs below are illustrative seed data, labeled as such, not a
 // product decision made by this script.
 
+import { randomUUID } from 'node:crypto';
+
 import { PrismaClient, type Prisma } from '@prisma/client';
+import OpenAI from 'openai';
 
 const prisma = new PrismaClient();
+
+// E13 T1 (ADR-053) — the same embedding model/dimension ADR-031 already
+// pins for every other real embedding in this platform
+// (`services/ai-engine/src/gateway/embedding.constants.ts`), duplicated
+// here rather than imported since `packages/database` cannot depend on
+// `services/ai-engine` (wrong dependency direction) — this script is the
+// one place outside that service real embeddings get computed.
+const EMBEDDING_MODEL = 'text-embedding-3-small';
+const EMBEDDING_DIMENSIONS = 1536;
+
+/** pgvector's own text input format for a `vector` column — `[v1,v2,...]`, cast with `::vector` at the SQL call site. Mirrors `services/ai-engine/src/shared/vector-search.util.ts`'s own `toVectorLiteral`. */
+function toVectorLiteral(embedding: number[]): string {
+  return `[${embedding.join(',')}]`;
+}
+
+/**
+ * Real embedding computation via OpenAI's own API, not a placeholder —
+ * closes the gap RISK_REGISTER R-97 (E13's own design phase) found: this
+ * script's own pre-existing `CEFR_DESCRIPTOR`/`EXAM_RUBRIC` rows were
+ * seeded with `embeddingModelVersion: 'unseeded'` and no real `embedding`
+ * value at all, making them unretrievable by `RagRetrievalService`'s own
+ * `embedding IS NOT NULL` filter. Returns `null` (not a thrown error) when
+ * `OPENAI_API_KEY` is empty — this environment's own already-known,
+ * already-tracked credential gap (RISK_REGISTER R-88) — so the rest of
+ * this seed script still completes; a genuine API failure with a real key
+ * present is still a thrown error, never silently swallowed.
+ */
+async function computeEmbedding(text: string): Promise<number[] | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    console.warn(
+      'OPENAI_API_KEY is not set (RISK_REGISTER R-88) — skipping real embedding computation; this row will be seeded with embeddingModelVersion: "unseeded" and will not be retrievable by RagRetrievalService.',
+    );
+    return null;
+  }
+
+  const client = new OpenAI({ apiKey });
+  const response = await client.embeddings.create({ model: EMBEDDING_MODEL, input: text });
+  const embedding = response.data[0]?.embedding;
+  if (!embedding) {
+    throw new Error('OpenAI embed() returned no embedding in the response data');
+  }
+  if (embedding.length !== EMBEDDING_DIMENSIONS) {
+    throw new Error(
+      `Embedding provider returned a ${embedding.length}-dimension vector, expected ${EMBEDDING_DIMENSIONS} per ADR-031 — refusing to insert a vector that would fail the column's own vector(${EMBEDDING_DIMENSIONS}) type.`,
+    );
+  }
+  return embedding;
+}
 
 async function seedLanguages() {
   // Illustrative subset, not the decided 10-language MVP roster (PRD.md
@@ -173,6 +225,75 @@ async function seedKnowledgeBaseEntries() {
     created.push(row);
   }
   console.log(`Seeded ${entries.length} KnowledgeBaseEntry rows.`);
+
+  created.push(...(await seedGrammarReferenceEntries()));
+  return created;
+}
+
+/**
+ * E13 T1 (§3.1, ADR-053) — a real, if deliberately small, curated
+ * `GRAMMAR_REFERENCE` set (RISK_REGISTER R-97's own explicitly-scoped
+ * "closes the no-real-content-at-all half" fix), with genuinely computed
+ * embeddings (`computeEmbedding()` above), not placeholder rows. Spanish —
+ * the same illustrative-language choice E6 T1's own placement-item bank
+ * already made. `Unsupported("vector(n)")` fields are opaque to Prisma's
+ * normal client API (`ai.prisma`'s own field comment) — every write here
+ * is raw SQL, the same pre-existing, documented constraint
+ * `RagRetrievalService`'s own reads already work within.
+ */
+async function seedGrammarReferenceEntries(): Promise<{ id: string }[]> {
+  const spanish = await prisma.language.findUnique({ where: { code: 'es' } });
+  const entries = [
+    {
+      title: 'Ser vs. estar',
+      content:
+        'Spanish has two verbs for "to be": "ser" for permanent/defining qualities (identity, origin, profession) and "estar" for temporary states or location. "Soy cansado" (wrong) vs. "Estoy cansado" (correct, "I am tired" — a temporary state, not a permanent trait).',
+    },
+    {
+      title: 'Subject-verb agreement with irregular -ar/-er/-ir conjugation',
+      content:
+        'Spanish verbs conjugate by person and number; a common English-speaker error is defaulting to the infinitive or third-person form regardless of subject. "Yo tiene" (wrong) vs. "Yo tengo" (correct) — "tener" is irregular in the "yo" form.',
+    },
+    {
+      title: 'Gender and number agreement of adjectives',
+      content:
+        'Spanish adjectives must agree in gender and number with the noun they modify, unlike English. "La casa blanco" (wrong) vs. "La casa blanca" (correct) — "casa" is feminine, so the adjective takes the feminine "-a" ending.',
+    },
+  ];
+
+  const created: { id: string }[] = [];
+  for (const entry of entries) {
+    const existing = await prisma.knowledgeBaseEntry.findFirst({ where: { title: entry.title } });
+    if (existing) {
+      created.push(existing);
+      continue;
+    }
+
+    const embedding = await computeEmbedding(entry.content);
+    const id = randomUUID();
+    if (embedding) {
+      await prisma.$executeRaw`
+        INSERT INTO "KnowledgeBaseEntry"
+          (id, "languageId", category, title, content, embedding, "embeddingModelVersion", "knowledgeBaseVersion", "isActive", "createdAt", "updatedAt")
+        VALUES
+          (${id}::uuid, ${spanish?.id ?? null}::uuid, 'GRAMMAR_REFERENCE'::"KnowledgeBaseCategory", ${entry.title}, ${entry.content}, ${toVectorLiteral(embedding)}::vector, ${EMBEDDING_MODEL}, 'v1', true, now(), now())
+      `;
+    } else {
+      await prisma.knowledgeBaseEntry.create({
+        data: {
+          id,
+          languageId: spanish?.id,
+          category: 'GRAMMAR_REFERENCE',
+          title: entry.title,
+          content: entry.content,
+          embeddingModelVersion: 'unseeded',
+          knowledgeBaseVersion: 'v1',
+        },
+      });
+    }
+    created.push({ id });
+  }
+  console.log(`Seeded ${entries.length} GRAMMAR_REFERENCE KnowledgeBaseEntry rows.`);
   return created;
 }
 

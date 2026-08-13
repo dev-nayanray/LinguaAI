@@ -23,7 +23,7 @@ const VALID_DRAFT = {
     {
       type: 'READING',
       title: 'At the Restaurant',
-      content: { text: 'Quisiera una mesa para dos, por favor.' },
+      content: { passage: 'Quisiera una mesa para dos, por favor.' },
       exercises: [
         {
           type: 'MULTIPLE_CHOICE',

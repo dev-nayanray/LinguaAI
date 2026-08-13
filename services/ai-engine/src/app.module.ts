@@ -16,6 +16,7 @@ import { PartitionMaintenanceModule } from './partition-maintenance/partition-ma
 import { PromptModule } from './prompts/prompt.module.js';
 import { RagModule } from './rag/rag.module.js';
 import { SafetyModule } from './safety/safety.module.js';
+import { WritingCoachingModule } from './writing-coaching/writing-coaching.module.js';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { SafetyModule } from './safety/safety.module.js';
     AgentSessionsModule,
     PartitionMaintenanceModule,
     FluencyScoringModule,
+    WritingCoachingModule,
   ],
   controllers: [HealthController],
   providers: [

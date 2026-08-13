@@ -8,6 +8,7 @@ describe('resolveAiGatewayConfig', () => {
     AI_MODEL_ASSESSMENT_DEFAULT: 'claude-assessment',
     AI_MODEL_CONTENT_DEFAULT: 'claude-content',
     AI_MODEL_FLUENCY_DEFAULT: 'claude-fluency',
+    AI_MODEL_WRITING_DEFAULT: 'claude-writing',
   };
   const originalEnv = process.env;
 
@@ -32,10 +33,12 @@ describe('resolveAiGatewayConfig', () => {
       assessmentModel: 'claude-assessment',
       contentModel: 'claude-content',
       fluencyModel: 'claude-fluency',
+      writingModel: 'claude-writing',
       teacherEconomyModel: undefined,
       assessmentEconomyModel: undefined,
       contentEconomyModel: undefined,
       fluencyEconomyModel: undefined,
+      writingEconomyModel: undefined,
     });
   });
 
@@ -44,6 +47,7 @@ describe('resolveAiGatewayConfig', () => {
     process.env.AI_MODEL_ASSESSMENT_ECONOMY = 'claude-assessment-economy';
     process.env.AI_MODEL_CONTENT_ECONOMY = 'claude-content-economy';
     process.env.AI_MODEL_FLUENCY_ECONOMY = 'claude-fluency-economy';
+    process.env.AI_MODEL_WRITING_ECONOMY = 'claude-writing-economy';
 
     const config = resolveAiGatewayConfig();
 
@@ -51,6 +55,7 @@ describe('resolveAiGatewayConfig', () => {
     expect(config.assessmentEconomyModel).toBe('claude-assessment-economy');
     expect(config.contentEconomyModel).toBe('claude-content-economy');
     expect(config.fluencyEconomyModel).toBe('claude-fluency-economy');
+    expect(config.writingEconomyModel).toBe('claude-writing-economy');
   });
 
   it("treats an explicitly blank economy-tier env var (.env.example's own documented convention for an unset optional) as not configured, not a validation error", () => {
@@ -58,11 +63,13 @@ describe('resolveAiGatewayConfig', () => {
     process.env.AI_MODEL_ASSESSMENT_ECONOMY = '';
     process.env.AI_MODEL_CONTENT_ECONOMY = '';
     process.env.AI_MODEL_FLUENCY_ECONOMY = '';
+    process.env.AI_MODEL_WRITING_ECONOMY = '';
 
     expect(() => resolveAiGatewayConfig()).not.toThrow();
     expect(resolveAiGatewayConfig().teacherEconomyModel).toBeUndefined();
     expect(resolveAiGatewayConfig().contentEconomyModel).toBeUndefined();
     expect(resolveAiGatewayConfig().fluencyEconomyModel).toBeUndefined();
+    expect(resolveAiGatewayConfig().writingEconomyModel).toBeUndefined();
   });
 
   it('throws (fail-fast) when a required var is missing', () => {

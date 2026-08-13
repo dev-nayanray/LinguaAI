@@ -283,3 +283,56 @@ export const scoreFluencyResponseSchema = z.object({
   extractedVocabulary: z.array(extractedVocabularyItemSchema),
 });
 export type ScoreFluencyResponse = z.infer<typeof scoreFluencyResponseSchema>;
+
+// --- RAG-grounded writing correction (E13 T1, design doc §6.1, ADR-052) ---
+
+/**
+ * A single correction `WritingCoachService`'s own structured-output call
+ * must return — PRD module 11's own "errors explained, not just flagged"
+ * differentiator made real: `explanation` is required, not optional.
+ * `ruleReference` is the retrieved `kb:<id>` citation (`citationFor()`,
+ * `services/ai-engine/src/rag/format-grounding-context.ts`) when the
+ * correction rests on a specific grounded `GRAMMAR_REFERENCE` passage —
+ * omitted when the model corrects something general grounding didn't
+ * cover (e.g. a typo), the same "cite when a claim rests on a passage,
+ * not unconditionally" discipline `writingScoringPromptTemplate` already
+ * establishes for `writingCritiqueSchema`.
+ */
+export const writingCorrectionItemSchema = z.object({
+  original: z.string().min(1),
+  corrected: z.string().min(1),
+  explanation: z.string().min(1),
+  ruleReference: z.string().min(1).optional(),
+});
+export type WritingCorrectionItem = z.infer<typeof writingCorrectionItemSchema>;
+
+/**
+ * What the model must return for `WritingCoachService.correctWriting()` —
+ * a malformed or schema-violating response is a thrown error, never
+ * silently passed through as if valid, the same "reproducible scoring"
+ * bar `writingCritiqueSchema`/`fluencyScoringModelOutputSchema` already
+ * established. `cefrLevelEstimate` is a real but provisional formative
+ * signal, not a certified exam band (E13 design doc §1's own out-of-scope
+ * boundary against E19's future exam-scoring epic).
+ */
+export const writingCorrectionResultSchema = z.object({
+  corrections: z.array(writingCorrectionItemSchema),
+  overallFeedback: z.string().min(1),
+  cefrLevelEstimate: cefrLevelSchema,
+});
+export type WritingCorrectionResult = z.infer<typeof writingCorrectionResultSchema>;
+
+/**
+ * `POST /v1/writing-coaching/correct` request body — ADR-033's internal-
+ * trust pattern applied to writing correction, the same stateless,
+ * one-shot shape `scoreWritingRequestSchema` already established for
+ * placement-test scoring. `text`'s 10000-character cap mirrors
+ * `learnerResponse`'s own bound for the identical reason (a real, defensive
+ * ceiling on worst-case cost/latency for a free-form submission).
+ */
+export const correctWritingRequestSchema = z.object({
+  languageId: z.string().uuid(),
+  targetLanguageName: z.string().min(1),
+  text: z.string().min(1).max(10000),
+});
+export type CorrectWritingRequest = z.infer<typeof correctWritingRequestSchema>;

@@ -154,6 +154,8 @@ export const aiGatewayEnvSchema = z.object({
   AI_MODEL_CONTENT_DEFAULT: z.string().min(1),
   /** E10 T5 (ADR-048) — the fourth `AiRequestClass`, session-end speaking-practice fluency scoring (`services/ai-engine/src/fluency-scoring/`). A structured-output, one-shot rubric-scoring call over a full conversation transcript — a materially different shape from single-essay `'assessment'` scoring or freeform `'content'` drafting, the same "per-class cost monitoring stays meaningful" reasoning ADR-041 already established. */
   AI_MODEL_FLUENCY_DEFAULT: z.string().min(1),
+  /** E13 T1 (ADR-052) — the fifth `AiRequestClass`, RAG-grounded writing correction (`services/ai-engine/src/writing-coaching/`). A materially different rubric/purpose from single-essay placement `'assessment'` scoring: ongoing, repeatable formative practice, not a CEFR-banded placement critique — the same category-error avoidance ADR-039/041/048 each already established for their own domains. */
+  AI_MODEL_WRITING_DEFAULT: z.string().min(1),
   /**
    * ADR-034 (E5 T9): the cost circuit breaker's DEGRADE stage target —
    * "degrade new requests to a cheaper model tier where the request
@@ -166,6 +168,7 @@ export const aiGatewayEnvSchema = z.object({
   AI_MODEL_ASSESSMENT_ECONOMY: optionalNonEmptyString,
   AI_MODEL_CONTENT_ECONOMY: optionalNonEmptyString,
   AI_MODEL_FLUENCY_ECONOMY: optionalNonEmptyString,
+  AI_MODEL_WRITING_ECONOMY: optionalNonEmptyString,
 });
 export type AiGatewayEnv = z.infer<typeof aiGatewayEnvSchema>;
 

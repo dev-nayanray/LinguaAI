@@ -30,8 +30,12 @@ import type {
  * scoring over a full conversation transcript, again a materially different
  * shape from the other three (rubric-scored, one-shot, no session/memory
  * concept of its own despite reading an existing session's history).
+ * `'writing'` (E13 T1, ADR-052) is the fifth — RAG-grounded, explained
+ * writing correction, a materially different rubric/purpose from
+ * `'assessment'`'s own single-essay placement-test critique (ongoing,
+ * repeatable formative practice, not a CEFR-banded placement score).
  */
-export type AiRequestClass = 'teacher' | 'assessment' | 'content' | 'fluency';
+export type AiRequestClass = 'teacher' | 'assessment' | 'content' | 'fluency' | 'writing';
 
 /** ADR-034 (T9): 'economy' is the cost circuit breaker's DEGRADE target — falls back to 'default' per class if no economy model is configured, rather than failing the request over a config gap. */
 export type ModelTier = 'default' | 'economy';
@@ -63,6 +67,8 @@ export class RouterService {
         return this.config.contentModel;
       case 'fluency':
         return this.config.fluencyModel;
+      case 'writing':
+        return this.config.writingModel;
     }
   }
 
@@ -76,6 +82,8 @@ export class RouterService {
         return this.config.contentEconomyModel;
       case 'fluency':
         return this.config.fluencyEconomyModel;
+      case 'writing':
+        return this.config.writingEconomyModel;
     }
   }
 
