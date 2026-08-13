@@ -382,3 +382,69 @@ export const writingSubmissionCorrectedPayloadSchema = z.object({
 export type WritingSubmissionCorrectedPayload = z.infer<
   typeof writingSubmissionCorrectedPayloadSchema
 >;
+
+// --- AI Story Generator (E13 T3, design doc §6.3) ---
+
+/**
+ * `ContentDraftingService.draftStory()`'s own request shape — still the
+ * `'content'` `AiRequestClass` (§3.2's own reasoning: a real instance of
+ * `'content'`'s existing "structured creative drafting" scope, not a
+ * materially different rubric needing a new class). `vocabularyTerms` is
+ * bounded (1-10) — a real, provisional MVP scoping call (design doc §10
+ * open question 2) avoiding both an unnaturally word-stuffed story and an
+ * unbounded prompt.
+ */
+export const draftStoryRequestSchema = z.object({
+  languageId: z.string().uuid(),
+  targetLanguageName: z.string().min(1),
+  cefrLevel: cefrLevelSchema,
+  vocabularyTerms: z.array(z.string().min(1)).min(1).max(10),
+});
+export type DraftStoryRequest = z.infer<typeof draftStoryRequestSchema>;
+
+/**
+ * What the model must return for `ContentDraftingService.draftStory()` —
+ * a malformed or schema-violating response is a thrown error, never
+ * silently passed through, the same "reproducible" bar every other
+ * AI-output-consuming service in this platform already carries.
+ * `vocabularyUsed` is the model's own confirmation of which requested
+ * terms it actually used — not assumed to be every term in
+ * `DraftStoryRequest.vocabularyTerms`, since the model may reasonably
+ * skip a term that wouldn't fit naturally (the prompt's own instruction).
+ */
+export const storyDraftSchema = z.object({
+  title: z.string().min(1),
+  storyText: z.string().min(1),
+  vocabularyUsed: z.array(z.string().min(1)),
+});
+export type StoryDraft = z.infer<typeof storyDraftSchema>;
+
+/**
+ * `POST /v1/stories` request body (E13 T3, design doc §6.3) — `apps/api`'s
+ * learner-facing endpoint. Deliberately just `languageId`: the story's
+ * own target vocabulary is never caller-supplied — `StoryService` queries
+ * the caller's own `PersonalDictionary` for that language itself, the
+ * same "the server derives what it already owns, the caller doesn't
+ * dictate it" discipline `createWritingSubmissionRequestSchema`'s own
+ * header comment already established for `targetLanguageName`.
+ */
+export const createStoryRequestSchema = z.object({
+  languageId: z.string().uuid(),
+});
+export type CreateStoryRequest = z.infer<typeof createStoryRequestSchema>;
+
+/**
+ * `POST /v1/stories` response — a real, persisted `GeneratedStory` row
+ * (`ai.prisma`), the same "wire-only DTO, no separate `@linguaai/types`
+ * restatement" precedent `writingSubmissionResponseSchema`'s own header
+ * comment already established.
+ */
+export const generatedStoryResponseSchema = z.object({
+  storyId: z.string().uuid(),
+  languageId: z.string().uuid(),
+  title: z.string(),
+  storyText: z.string(),
+  vocabularyUsed: z.array(z.string()),
+  createdAt: z.string().datetime(),
+});
+export type GeneratedStoryResponse = z.infer<typeof generatedStoryResponseSchema>;

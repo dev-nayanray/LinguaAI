@@ -89,6 +89,7 @@ model Language {
   assessmentItems           AssessmentItem[]
   pronunciationLabAttempts  PronunciationLabAttempt[]
   writingSubmissions        WritingSubmission[]
+  generatedStories          GeneratedStory[]
 
   @@map("Language")
 }

@@ -148,6 +148,7 @@ model User {
   pronunciationScores       PronunciationScore[]
   pronunciationLabAttempts  PronunciationLabAttempt[]
   writingSubmissions        WritingSubmission[]
+  generatedStories          GeneratedStory[]
   userXp                    UserXP?
   streak                    Streak?
   userBadges                UserBadge[]

@@ -1,6 +1,11 @@
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
+  draftStoryRequestSchema,
+  type DraftStoryRequest,
+  type StoryDraft,
+} from '@linguaai/validation/ai-coaching';
+import {
   draftLessonRequestSchema,
   type ContentDraftLesson,
   type DraftLessonRequest,
@@ -49,5 +54,17 @@ export class ContentDraftingController {
     @Body(new ZodValidationPipe(draftVocabularyItemRequestSchema)) dto: DraftVocabularyItemRequest,
   ): Promise<VocabularyItemDraft> {
     return this.contentDrafting.draftVocabularyItem(dto);
+  }
+
+  @Post('draft-story')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Generate a personalized short story naturally reusing the given vocabulary terms — shown directly to the learner, not an admin-review-gated proposal',
+  })
+  async draftStory(
+    @Body(new ZodValidationPipe(draftStoryRequestSchema)) dto: DraftStoryRequest,
+  ): Promise<StoryDraft> {
+    return this.contentDrafting.draftStory(dto);
   }
 }

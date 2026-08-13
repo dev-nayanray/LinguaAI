@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import {
+  storyDraftSchema,
+  type DraftStoryRequest,
+  type StoryDraft,
+} from '@linguaai/validation/ai-coaching';
+import {
   contentDraftLessonSchema,
   type ContentDraftLesson,
   type DraftLessonRequest,
@@ -15,6 +20,7 @@ import { renderTemplate } from '../prompts/render-template.js';
 import { SafetyLayerService } from '../safety/safety-layer.service.js';
 import { parseJsonTolerantOfMarkdownFence } from '../shared/parse-json-tolerant-of-markdown-fence.util.js';
 import { contentDraftingPromptTemplate } from './content-drafting.prompt.js';
+import { storyDraftingPromptTemplate } from './story-drafting.prompt.js';
 import { vocabularyDraftingPromptTemplate } from './vocabulary-drafting.prompt.js';
 
 /**
@@ -85,6 +91,39 @@ export class ContentDraftingService {
   }
 
   /**
+   * E13 T3 (design doc §6.3) — unlike `draftLesson()`/`draftVocabularyItem()`,
+   * this result is shown directly to the learner once generated, never an
+   * `ADMIN`-review-gated proposal (the caller, `apps/api`'s `StoryService`,
+   * persists it as a real `GeneratedStory` immediately) — still the same
+   * `'content'` request class (§3.2's own reasoning: a real instance of
+   * `'content'`'s existing scope, not a materially different rubric).
+   * `sanitizeOutput` remains mandatory regardless of the "shown directly to
+   * the learner" difference — that discipline protects against the model
+   * itself emitting unsafe markup, independent of any human review step.
+   */
+  async draftStory(input: DraftStoryRequest): Promise<StoryDraft> {
+    const systemPrompt = renderTemplate(storyDraftingPromptTemplate.template, {
+      targetLanguageName: input.targetLanguageName,
+      cefrLevel: input.cefrLevel,
+      vocabularyTerms: input.vocabularyTerms.join(', '),
+    });
+
+    const response = await this.router.generate('content', {
+      systemPrompt,
+      messages: [
+        {
+          role: 'user',
+          content: `Write a story using these vocabulary terms: ${input.vocabularyTerms.join(', ')}`,
+        },
+      ],
+      temperature: 0.7,
+    });
+
+    const draft = this.parseAndValidateStoryDraft(response.content);
+    return this.sanitizeStoryDraft(draft);
+  }
+
+  /**
    * A malformed or schema-violating model response is a thrown error,
    * never silently passed through as a guessed draft — the same
    * "reproducible, never a silent guess" discipline every other
@@ -151,6 +190,28 @@ export class ContentDraftingService {
             ? this.safetyLayer.sanitizeOutput(example.translation)
             : undefined,
       })),
+    };
+  }
+
+  /** Same "not valid JSON" / "fails schema validation" discipline as `parseAndValidateLessonDraft` (E13 T3). */
+  private parseAndValidateStoryDraft(rawContent: string): StoryDraft {
+    const parsedJson = parseJsonTolerantOfMarkdownFence(rawContent, 'ContentDraftingService');
+
+    const result = storyDraftSchema.safeParse(parsedJson);
+    if (!result.success) {
+      throw new Error(
+        `ContentDraftingService: model response failed schema validation: ${result.error.message}`,
+      );
+    }
+    return result.data;
+  }
+
+  /** Every model-generated free-text field is sanitized (AI_GOVERNANCE.md §7) — `title`/`storyText` are shown directly to the learner, `vocabularyUsed` is a list of the model's own already-given input terms, never freeform model prose, so it is not sanitized here. */
+  private sanitizeStoryDraft(draft: StoryDraft): StoryDraft {
+    return {
+      ...draft,
+      title: this.safetyLayer.sanitizeOutput(draft.title),
+      storyText: this.safetyLayer.sanitizeOutput(draft.storyText),
     };
   }
 }

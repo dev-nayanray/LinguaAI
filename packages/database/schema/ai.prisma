@@ -322,6 +322,33 @@ model WritingSubmission {
   @@map("WritingSubmission")
 }
 
+/// E13 T3 — a real, persisted AI-generated story reusing the learner's own
+/// currently-learning vocabulary (`ContentDraftingService.draftStory()`,
+/// `ai-engine`'s `POST /v1/content-authoring/draft-story`, still the
+/// `'content'` AiRequestClass). Unlike `ContentDraftingService`'s own
+/// lesson/vocabulary-item drafts (an ADMIN-review-gated proposal, never
+/// auto-persisted), a generated story is shown directly to the learner
+/// and persisted immediately — a real, learner-owned, re-readable
+/// artifact, not a proposal awaiting review.
+model GeneratedStory {
+  id         String @id @default(uuid()) @db.Uuid
+  userId     String @db.Uuid
+  languageId String @db.Uuid
+
+  title     String
+  storyText String @db.Text
+  /// The vocabulary terms the model actually confirmed using — not necessarily every term requested (StoryDraft's own schema comment).
+  vocabularyUsed String[]
+
+  createdAt DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  language Language @relation(fields: [languageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("GeneratedStory")
+}
+
 /// Session-level speaking-practice scoring — ties to AIAgentSession (not
 /// partitioned), a normal same-file Prisma relation.
 model FluencyScore {

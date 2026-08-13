@@ -1,3 +1,4 @@
+import type { DraftStoryRequest, StoryDraft } from '@linguaai/validation/ai-coaching';
 import type { ContentDraftLesson, DraftLessonRequest } from '@linguaai/validation/content';
 import type {
   DraftVocabularyItemRequest,
@@ -61,6 +62,29 @@ describe('ContentDraftingController', () => {
     const result = await controller.draftVocabularyItem(dto);
 
     expect(contentDrafting.draftVocabularyItem).toHaveBeenCalledWith(dto);
+    expect(result).toEqual(draft);
+  });
+
+  it('draftStory delegates to ContentDraftingService.draftStory and returns its result', async () => {
+    const draft: StoryDraft = {
+      title: 'Un Día con Mi Perro',
+      storyText: 'Tengo un perro.',
+      vocabularyUsed: ['perro'],
+    };
+    const contentDrafting = { draftStory: jest.fn().mockResolvedValue(draft) };
+    const controller = new ContentDraftingController(
+      contentDrafting as unknown as ContentDraftingService,
+    );
+    const dto: DraftStoryRequest = {
+      languageId: 'lang-1',
+      targetLanguageName: 'Spanish',
+      cefrLevel: 'A2',
+      vocabularyTerms: ['perro'],
+    };
+
+    const result = await controller.draftStory(dto);
+
+    expect(contentDrafting.draftStory).toHaveBeenCalledWith(dto);
     expect(result).toEqual(draft);
   });
 });

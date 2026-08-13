@@ -3,6 +3,7 @@ import { parseSseStream } from '@linguaai/utils';
 import {
   agentMessageStreamEventSchema,
   correctWritingRequestSchema,
+  draftStoryRequestSchema,
   endAgentSessionRequestSchema,
   scoreFluencyRequestSchema,
   scoreFluencyResponseSchema,
@@ -10,15 +11,18 @@ import {
   sendAgentMessageRequestSchema,
   startAgentSessionRequestSchema,
   startAgentSessionResponseSchema,
+  storyDraftSchema,
   writingCorrectionResultSchema,
   writingCritiqueSchema,
   type AgentMessageStreamEvent,
   type CorrectWritingRequest,
+  type DraftStoryRequest,
   type ScoreFluencyResponse,
   type ScoreWritingRequest,
   type SendAgentMessageRequest,
   type StartAgentSessionRequest,
   type StartAgentSessionResponse,
+  type StoryDraft,
   type WritingCorrectionResult,
   type WritingCritiqueSchema,
 } from '@linguaai/validation/ai-coaching';
@@ -242,5 +246,25 @@ export class AiEngineClientService {
       );
     }
     return writingCorrectionResultSchema.parse(await response.json());
+  }
+
+  /**
+   * E13 T3 (design doc §6.3) — wired into `StoryService.generateStory()`.
+   */
+  async draftStory(input: DraftStoryRequest): Promise<StoryDraft> {
+    const response = await fetch(`${this.config.AI_ENGINE_URL}/v1/content-authoring/draft-story`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(draftStoryRequestSchema.parse(input)),
+    });
+    if (!response.ok) {
+      const errorBody = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      throw new Error(
+        `ai-engine returned ${response.status} drafting a story: ${errorBody?.error?.message ?? 'unknown error'}`,
+      );
+    }
+    return storyDraftSchema.parse(await response.json());
   }
 }

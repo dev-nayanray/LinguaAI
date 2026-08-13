@@ -1,3 +1,4 @@
+import type { DraftStoryRequest } from '@linguaai/validation/ai-coaching';
 import type { DraftLessonRequest } from '@linguaai/validation/content';
 import type { DraftVocabularyItemRequest } from '@linguaai/validation/vocabulary';
 
@@ -325,6 +326,119 @@ describe('ContentDraftingService', () => {
       const service = buildService(router);
 
       await expect(service.draftVocabularyItem(VOCAB_INPUT)).rejects.toThrow(/schema validation/);
+    });
+  });
+
+  describe('draftStory', () => {
+    const STORY_INPUT: DraftStoryRequest = {
+      languageId: 'lang-es',
+      targetLanguageName: 'Spanish',
+      cefrLevel: 'A2',
+      vocabularyTerms: ['perro', 'gato'],
+    };
+
+    const VALID_STORY_DRAFT = {
+      title: 'Un Día con Mi Perro',
+      storyText: 'Tengo un perro y un gato. Mi perro se llama Rex.',
+      vocabularyUsed: ['perro'],
+    };
+
+    function fakeStoryGenerateResponse(
+      overrides: Partial<GenerateResponse> = {},
+    ): GenerateResponse {
+      return {
+        content: JSON.stringify(VALID_STORY_DRAFT),
+        inputTokens: 120,
+        outputTokens: 200,
+        modelId: 'claude-content-model',
+        latencyMs: 700,
+        ...overrides,
+      };
+    }
+
+    it("calls RouterService.generate with the 'content' request class", async () => {
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(fakeStoryGenerateResponse());
+      const service = buildService(router);
+
+      await service.draftStory(STORY_INPUT);
+
+      expect(router.generate).toHaveBeenCalledWith('content', expect.any(Object));
+    });
+
+    it('interpolates the language/CEFR level/vocabulary terms into the rendered system prompt', async () => {
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(fakeStoryGenerateResponse());
+      const service = buildService(router);
+
+      await service.draftStory(STORY_INPUT);
+
+      const call = router.generate.mock.calls[0]![1] as { systemPrompt: string };
+      expect(call.systemPrompt).toContain('Spanish');
+      expect(call.systemPrompt).toContain('A2');
+      expect(call.systemPrompt).toContain('perro, gato');
+    });
+
+    it('returns a validated story draft parsed from the model response', async () => {
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(fakeStoryGenerateResponse());
+      const service = buildService(router);
+
+      const result = await service.draftStory(STORY_INPUT);
+
+      expect(result.title).toBe('Un Día con Mi Perro');
+      expect(result.vocabularyUsed).toEqual(['perro']);
+    });
+
+    it('tolerates a ```json markdown-fenced response (a common real-model quirk)', async () => {
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(
+        fakeStoryGenerateResponse({
+          content: '```json\n' + JSON.stringify(VALID_STORY_DRAFT) + '\n```',
+        }),
+      );
+      const service = buildService(router);
+
+      const result = await service.draftStory(STORY_INPUT);
+
+      expect(result.title).toBe('Un Día con Mi Perro');
+    });
+
+    it('sanitizes title and storyText using the real SafetyLayerService', async () => {
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(
+        fakeStoryGenerateResponse({
+          content: JSON.stringify({
+            ...VALID_STORY_DRAFT,
+            title: 'Title <script>alert(1)</script>',
+            storyText: 'Story <script>alert(1)</script> text.',
+          }),
+        }),
+      );
+      const service = buildService(router);
+
+      const result = await service.draftStory(STORY_INPUT);
+
+      expect(result.title).not.toContain('<script>');
+      expect(result.storyText).not.toContain('<script>');
+    });
+
+    it('throws when the model response is not valid JSON', async () => {
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(fakeStoryGenerateResponse({ content: 'not json at all' }));
+      const service = buildService(router);
+
+      await expect(service.draftStory(STORY_INPUT)).rejects.toThrow(/not valid JSON/);
+    });
+
+    it('throws when the model response is valid JSON but fails schema validation', async () => {
+      const router = fakeRouter();
+      router.generate.mockResolvedValue(
+        fakeStoryGenerateResponse({ content: JSON.stringify({ title: 'x' }) }),
+      );
+      const service = buildService(router);
+
+      await expect(service.draftStory(STORY_INPUT)).rejects.toThrow(/schema validation/);
     });
   });
 });
