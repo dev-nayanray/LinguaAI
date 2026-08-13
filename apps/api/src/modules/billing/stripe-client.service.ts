@@ -70,4 +70,20 @@ export class StripeClientService {
   constructWebhookEvent(rawBody: Buffer, signature: string): Stripe.Event {
     return this.stripe.webhooks.constructEvent(rawBody, signature, this.webhookSecret);
   }
+
+  /**
+   * `ReconciliationRunner`'s own real read (E15 T3, §3.4) — the most
+   * recently created/updated 100 subscriptions across this Stripe
+   * account, `status: 'all'` so canceled ones are included (a dropped
+   * `customer.subscription.deleted` webhook is exactly the failure mode
+   * this job exists to catch). A bounded, single-page read, not
+   * exhaustive pagination — a real, honest MVP scope limit (the same
+   * "real, if intentionally small" precedent E6 T1's own item bank
+   * already established), sufficient to catch a recently-missed webhook
+   * without an unbounded full-account scan every run.
+   */
+  async listRecentSubscriptions(): Promise<Stripe.Subscription[]> {
+    const page = await this.stripe.subscriptions.list({ status: 'all', limit: 100 });
+    return page.data;
+  }
 }

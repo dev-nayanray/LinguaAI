@@ -14,17 +14,22 @@ import {
 import type Stripe from 'stripe';
 
 import { APP_PRISMA_CLIENT, SERVICE_ROLE_PRISMA_CLIENT } from '../../database/index.js';
+import { EntitlementCacheService } from './entitlement-cache.service.js';
 import { mapStripeInvoiceStatus, mapStripeSubscriptionStatus } from './stripe-status.util.js';
 import { StripeClientService } from './stripe-client.service.js';
 
 /**
- * `BillingModule` (E15 T1, design doc §6). Real Stripe Checkout creation
- * and webhook-driven `Subscription`/`Invoice`/`Entitlement` sync.
- * Entitlements are always resolved by reading Postgres directly — never a
- * cache (§3.3) — so a `GET /v1/billing/me` immediately after this same
- * service processes a webhook always sees the fresh state, closing PRD's
- * own "no paywall lag" acceptance criterion by construction rather than
- * by cache-invalidation discipline.
+ * `BillingModule` (E15 T1-T3, design doc §6). Real Stripe Checkout
+ * creation and webhook-driven `Subscription`/`Invoice`/`Entitlement`
+ * sync. T1 resolved entitlements by reading Postgres directly, no cache
+ * at all (§3.3's own original deferral). T3 adds `EntitlementCacheService`
+ * — a real Redis cache-aside layer — but the "no paywall lag" guarantee
+ * still holds by construction, not by hoping TTL expiry is fast enough:
+ * every real entitlement-changing write (`syncEntitlement()`) invalidates
+ * the caller's own cache entry synchronously, in the same call, before
+ * `handleWebhookEvent()` returns — so a `GET /v1/billing/me` immediately
+ * after this same service processes a webhook still always sees the
+ * fresh state, cache included.
  *
  * Two Prisma clients, a real, load-bearing distinction found while
  * implementing this task (not assumed from the design doc alone):
@@ -47,6 +52,7 @@ export class BillingService {
     @Inject(SERVICE_ROLE_PRISMA_CLIENT) private readonly servicePrisma: PrismaClient,
     private readonly stripeClient: StripeClientService,
     private readonly events: DomainEventPublisher,
+    private readonly cache: EntitlementCacheService,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
 
@@ -105,7 +111,29 @@ export class BillingService {
     return status.limits[key] === true;
   }
 
+  /**
+   * Cache-aside (E15 T3, §3.3's own deferred optimization): checks
+   * `EntitlementCacheService` first, falls through to a real Postgres
+   * read on a miss (or a Redis failure — `EntitlementCacheService` is
+   * fail-open), then populates the cache. Safe to share one cache entry
+   * across both `appPrisma`/`servicePrisma` call sites — the underlying
+   * data is identical either way, only the RLS access path differs.
+   */
   private async resolveStatus(
+    userId: string,
+    prisma: PrismaClient,
+  ): Promise<BillingStatusResponse> {
+    const cached = await this.cache.get(userId);
+    if (cached) {
+      return cached;
+    }
+
+    const status = await this.resolveStatusFromPostgres(userId, prisma);
+    await this.cache.set(userId, status);
+    return status;
+  }
+
+  private async resolveStatusFromPostgres(
     userId: string,
     prisma: PrismaClient,
   ): Promise<BillingStatusResponse> {
@@ -146,10 +174,10 @@ export class BillingService {
     switch (event.type) {
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
-        await this.syncSubscription(event.data.object);
+        await this.reconcileSubscription(event.data.object);
         return;
       case 'customer.subscription.deleted':
-        await this.syncSubscription(event.data.object, { forceCanceled: true });
+        await this.reconcileSubscription(event.data.object, { forceCanceled: true });
         return;
       case 'invoice.paid':
       case 'invoice.payment_failed':
@@ -165,7 +193,16 @@ export class BillingService {
     }
   }
 
-  private async syncSubscription(
+  /**
+   * The one real unit of subscription-sync work — called both from a
+   * live webhook (`handleWebhookEvent()`) and from `ReconciliationRunner`
+   * (E15 T3, §3.4), which re-runs this same method against every
+   * recently-listed real Stripe subscription on a periodic schedule,
+   * catching whatever a dropped webhook delivery left stale. Idempotent
+   * either way — `existing` decides create vs. update, never assumes
+   * which caller invoked it.
+   */
+  async reconcileSubscription(
     subscription: Stripe.Subscription,
     options: { forceCanceled?: boolean } = {},
   ): Promise<void> {
@@ -270,6 +307,11 @@ export class BillingService {
       },
       update: { planId: targetPlan.id, limits: targetPlan.limits as Prisma.InputJsonValue },
     });
+
+    // Synchronous invalidation (§3.3/T3) -- before this method returns,
+    // never deferred, so the cache can never be the reason a caller sees
+    // stale entitlement data.
+    await this.cache.invalidate(userId);
 
     await this.servicePrisma.entitlementChangeLog.create({
       data: {

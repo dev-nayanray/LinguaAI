@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { DomainEventPublisher } from '@linguaai/events';
 
 import { BillingService } from './billing.service.js';
+import type { EntitlementCacheService } from './entitlement-cache.service.js';
 import type { StripeClientService } from './stripe-client.service.js';
 
 const USER_ID = '11111111-1111-1111-1111-111111111111';
@@ -43,11 +44,21 @@ function fakeLogger() {
   return { warn: jest.fn(), error: jest.fn(), info: jest.fn(), debug: jest.fn() };
 }
 
+/** Always a cache miss + no-op writes -- these unit tests exercise real Postgres-resolution logic, not the cache layer itself (`entitlement-cache.service.spec.ts` covers that). */
+function fakeCache(): jest.Mocked<Pick<EntitlementCacheService, 'get' | 'set' | 'invalidate'>> {
+  return {
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue(undefined),
+    invalidate: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
 function buildService(
   prisma: ReturnType<typeof fakePrisma>,
   stripeClient: ReturnType<typeof fakeStripeClient> = fakeStripeClient(),
   events: ReturnType<typeof fakeEvents> = fakeEvents(),
   logger: ReturnType<typeof fakeLogger> = fakeLogger(),
+  cache: ReturnType<typeof fakeCache> = fakeCache(),
 ): BillingService {
   return new BillingService(
     prisma as never,
@@ -59,6 +70,7 @@ function buildService(
     prisma as never,
     stripeClient as unknown as StripeClientService,
     events as unknown as DomainEventPublisher,
+    cache as unknown as EntitlementCacheService,
     logger as never,
   );
 }
@@ -222,6 +234,7 @@ describe('BillingService.hasEntitlement', () => {
       servicePrisma as never,
       fakeStripeClient() as unknown as StripeClientService,
       fakeEvents() as unknown as DomainEventPublisher,
+      fakeCache() as unknown as EntitlementCacheService,
       fakeLogger() as never,
     );
 

@@ -71,11 +71,19 @@ describe('BillingController (e2e)', () => {
   const realStripeForWebhooks = new Stripe('sk_test_placeholder');
   const stripeClientStub: Pick<
     StripeClientService,
-    'createCheckoutSession' | 'constructWebhookEvent'
+    'createCheckoutSession' | 'constructWebhookEvent' | 'listRecentSubscriptions'
   > = {
     createCheckoutSession,
     constructWebhookEvent: (rawBody, signature) =>
       realStripeForWebhooks.webhooks.constructEvent(rawBody, signature, WEBHOOK_SECRET),
+    // BillingModule's own real reconciliation Worker (E15 T3) runs inside
+    // *every* app instance this suite boots -- a real, found cross-cutting
+    // effect: an incomplete stub here previously crashed with
+    // "listRecentSubscriptions is not a function" if the repeatable job's
+    // own cron happened to land while this suite's app was still up. An
+    // empty result is the real, correct "nothing to reconcile" behavior
+    // for a stub that was never given any subscriptions to know about.
+    listRecentSubscriptions: jest.fn().mockResolvedValue([]),
   };
 
   let originalPremiumStripePriceId: string | null = null;
@@ -179,6 +187,17 @@ describe('BillingController (e2e)', () => {
   it('creates a real Checkout Session referencing the real, configured Premium Price id', async () => {
     createCheckoutSession.mockResolvedValue({ url: 'https://checkout.stripe.com/test-session' });
     const learner = await freshSession();
+    // Re-affirmed immediately before the real request, not just in
+    // `beforeAll` -- `Plan.tier` is a real, globally-unique singleton
+    // other e2e spec files (e.g. `billing-reconciliation.e2e-spec.ts`)
+    // also legitimately configure for their own purposes, so a narrow,
+    // concurrent multi-file test invocation can otherwise race this
+    // value between this suite's own `beforeAll` and this specific
+    // assertion (found the hard way running these two files together).
+    await setupPrisma.plan.update({
+      where: { tier: 'PREMIUM' },
+      data: { stripePriceId: TEST_PRICE_ID },
+    });
 
     const res = await request(app.getHttpServer())
       .post('/v1/billing/checkout')
