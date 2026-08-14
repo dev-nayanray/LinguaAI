@@ -1,0 +1,204 @@
+# Epic E19 — Exam Preparation System
+
+**Epic ID:** E19 (ROADMAP.md)
+**Status:** Design — first, single-pass design (2026-08-14), proceeding to implementation by explicit user direction ("next"), the same pattern E9–E17 each followed.
+**Tech lead:** Backend Platform (TBD)
+**Gate owners assigned:** Architecture, Database, API, Security, Testing, Documentation (Frontend/Accessibility gates apply to a later UI epic that builds the actual mock-test-taking screens, not this backend epic — see §3.6, same split E17 made for its own admin-analytics API)
+
+## 0. Why this document exists now, and what it is not
+
+E17 (Analytics Platform) is implementation-complete (T1–T3, 2026-08-14 — its own §9 task table's full sequence, confirmed no further task remains). Per ROADMAP.md's own dependency table, E18 (Admin Platform) is nominally next by number, but has real, standing, uncommitted work-in-progress already sitting in this repository's own working tree under a different, unrelated effort (`apps/admin/*`, `apps/api/src/modules/admin/`, `docs/epics/E18-admin-platform.md`, `packages/validation/src/admin/`, etc. — preserved via `git stash` under `e18-admin-wip-standing-exclusion`, not this session's own scope to touch or build on top of). E19 (Exam Preparation System)'s own dependencies (E5 AI Gateway, E13 Writing Assistant) are both already implementation-complete, and it needs no E18 output — this is the next epic this session actually proceeds with, matching CLAUDE.md's own workflow rule (a module gets a real design before implementation) the same way E4–E17 each did.
+
+This is the **first, single-pass design** for the Exam Preparation System (PRD.md module 19, Journey E, §7's own acceptance criteria). This document does not write any application code; it designs the module, surfaces real gaps found while doing so (§3), and proposes the ADRs implementation will need (§7).
+
+Unlike most of this session's prior "own dedicated service" epics, this one needs **no new service** — ARCHITECTURE.md names no `exam-service`, and PRD/ROADMAP name no independent-scaling or isolation justification for one (ARCHITECTURE.md §2's own bar, already applied consistently this session). This epic is `apps/api` application code plus one focused, RAG-grounded extension of `services/ai-engine`'s already-existing scoring machinery — the same shape E12 (Listening & Reading) and E13 (Writing Assistant) both took, needing no new service either.
+
+Confirmed via direct inspection, a real and unusually favorable starting position: `packages/database/schema/exams.prisma` already has a real, migration-ready schema for most of this epic's own data model (`ExamProgram`, `MockTestAttempt`, `MockTestSectionScore`, `Certificate`, `ExamProgramKnowledgeBaseEntry` — all built at E4 T8, ADR-030). `packages/database/scripts/seed.ts` already seeds one real, genuinely-embedded `EXAM_RUBRIC`-category `KnowledgeBaseEntry` ("IELTS Speaking Band 7 Descriptor") — closed for real embedding at E13 T1 (RISK_REGISTER R-97). `services/ai-engine/src/writing-coaching/writing-coaching.service.ts`'s own doc comment states outright: "`RagRetrievalService`'s own doc comment names Grammar Coach (this service) and **Exam Coach (E19)** as its intended first callers, deliberately left unwired until now." This epic is that deliberately-reserved extension point, not a novel design.
+
+## 1. Epic Definition
+
+PRD.md names one module this epic covers:
+
+| #   | Module           | Description                                                   | Differentiator                                      |
+| --- | ---------------- | ------------------------------------------------------------- | --------------------------------------------------- |
+| 19  | Exam Preparation | IELTS, TOEFL, JLPT, TOPIK, HSK, DELE (PRD.md §5.1, Journey E) | Real, rubric-scored mock tests, not generic quizzes |
+
+PRD.md Journey E: "user selects a target exam ... and target score/date. Curriculum re-weights toward exam-format practice; mock tests are scored against the exam's real rubric." **Acceptance criteria (PRD.md §7):** at least one full mock test per supported exam at MVP; scoring rubric is documented and consistent; user can see historical mock scores over time.
+
+ROADMAP.md is explicit that MVP scope is narrower than the full 6-program vision: "Module 19 — Exam Preparation (1–2 exam programs at launch, RAG-grounded scoring)" (line 26); "Exam Preparation — full 6-program breadth: **Version 1.1**, MVP ships 1–2 programs; breadth is a fast-follow" (line 114). This epic ships **exactly one** real, fully-working exam program — **IELTS Academic** — satisfying "at least one full mock test per supported exam" literally for the one program MVP actually supports, not a stub for all six. IELTS was already the implicit choice: it is PRD.md's own named example (Persona 3, "Aisha, the Exam Candidate," studying for IELTS) and the only `ExamProgram` with any real seed data or RAG-embedded rubric content today (§0).
+
+**In scope:**
+
+- `ExamProgram` admin authoring (`ADMIN`-gated, mirroring `CourseModule`'s own established pattern, §3.6) — create/list/get/update, `rubric` as structured `Json` (already the schema's own shape).
+- A new `MockTestSection` model (§4, real migration) — an `ExamProgram`'s own ordered, per-skill content (Reading passage + questions, Listening script/audio + questions, Writing task prompt, Speaking cue-card prompts), admin-authored the same way `Activity`/`Exercise` are today (E8 T1).
+- A real, seeded IELTS Academic `ExamProgram` with all four real sections (Reading/Listening/Writing/Speaking), IELTS's own real band-descriptor rubric, and genuinely embedded `EXAM_RUBRIC` `KnowledgeBaseEntry` rows per section/band (extending E13 T1's own single seeded entry, not duplicating its embedding-computation approach).
+- Learner-facing exam-program discovery (`GET /v1/exam-programs`, active only) and a fixed-form mock-test attempt lifecycle (`POST`/`GET /v1/mock-test-attempts`) — IELTS is a fixed-form test (not computer-adaptive, unlike E6's own placement assessment), so the full section set is served at attempt start, not one item at a time (§3.4).
+- Real per-section scoring (T2): objective auto-scoring for Reading/Listening (reusing `Skill`-keyed multiple-choice/true-false scoring, the same shape `exercise-scoring.util.ts` already established for `Exercise`), RAG-grounded AI band-scoring for Writing/Speaking against the real `EXAM_RUBRIC` knowledge base (a new `'exam'` `AiRequestClass`, extending `WritingCoachService`/`AssessmentScoringService`'s own already-established one-shot structured-output pattern, §3.2).
+- Real overall band-score aggregation on attempt completion (T2) — IELTS's own real, documented convention: overall band = the average of the four section bands, rounded to the nearest 0.5 (§3.5) — plus a new `exam.mock_test.completed` domain event.
+- Historical mock-score visibility (T3) — `GET /v1/mock-test-attempts` (own, paginated, newest first), satisfying PRD.md §7's own named acceptance criterion literally.
+- Real `Certificate` issuance (T3) on every completed attempt, mirroring how a real IELTS Test Report Form is issued regardless of the score achieved (§3.7) — reuses `exams.prisma`'s own already-designed `Certificate.examProgramId` branch (E4 T8), no new certificate model.
+
+**Explicitly out of scope** (cited against ROADMAP.md/PRD.md's own classification, not silently absorbed):
+
+- **The other five exam programs (TOEFL, JLPT, TOPIK, HSK, DELE)** — ROADMAP.md §Version 1.1 names full 6-program breadth as an explicit fast-follow, not an MVP requirement. The schema (`ExamProgram` is a data-driven row, `MockTestSection`/rubric equally so) needs no further migration to add them later — only content-authoring effort, which this epic does not spend on programs PRD/ROADMAP do not require at MVP.
+- **Curriculum re-weighting toward exam-format practice** (PRD.md Journey E step 2's own second half) — a real `recommendation-engine` integration (its own `LearningPlan`/`DailyGoal` generation would need to consult a learner's own active exam-prep goal). No such per-goal weighting mechanism exists anywhere in `recommendation-engine` today; retrofitting one is real, separately-scoped `recommendation-engine` work, not this epic's own API-and-scoring-engine scope. Tracked as a named follow-up (§11), not silently dropped.
+- **Persisting a learner's own target score/target exam date** — PRD.md Journey E's own narrative color, not named in §7's own acceptance criteria (which names only "at least one full mock test," "documented rubric," and "historical mock scores"). Building a persisted preference for a value nothing yet consumes (no re-weighting exists, §above) would be a premature model with no real reader — deferred as a named, tracked follow-up once curriculum re-weighting itself is real.
+- **A real proctoring/anti-cheat/timed-section mechanism** — PRD/ROADMAP name no such requirement for this epic; a real IELTS exam is strictly timed, but this platform's own MVP mock-test experience is untimed self-practice, the same "practice, not certification" framing PRD.md itself applies to every other assessment surface in this codebase (E6's placement test, E9's SRS reviews) — Certificate issuance here is explicitly a **practice score report**, not a credential (§3.7 names this distinction precisely).
+- **A CSV/PDF export of mock-score history or the Certificate itself** — no PRD/ROADMAP requirement names one; `Certificate`'s own existing verification-token/hash mechanism (E4 T8) already covers "prove this happened," matching E20 (Certificate System)'s own future scope for the actual verification-page UI, not this epic's.
+
+## 2. Business Objective
+
+PRD.md's own named Persona 3 ("Aisha, the Exam Candidate") has "high willingness to pay for exam-specific coaching close to the exam date" — PRD.md §7 already names exam-prep add-ons as a real, tracked Version-1.1+ monetization lever. Without this epic, that entire persona and its own monetization path are unaddressed: today this platform has real placement assessment (E6), real writing correction (E13), real speaking/pronunciation scoring (E10/E11), and real listening/reading content (E12) — but no single, exam-shaped, rubric-consistent mock test tying them together against a named exam's own real scoring convention. This epic is the first place all four already-real skill-scoring capabilities converge into one coherent, product-shaped feature.
+
+## 3. Real gaps found while designing this epic, and the decisions made about each
+
+### 3.1 No `MockTestSection` content model exists — `ExamProgram.rubric` is scoring metadata only, not test content
+
+`exams.prisma`'s own header comment is explicit that `ExamProgram.rubric` is "rubric metadata ... consumed by RAG-grounded scoring — this schema only stores the shape," not the actual Reading passage, Listening script, Writing prompt, or Speaking cue cards a learner is served. Confirmed via full-schema inspection: no such content model exists anywhere in `exams.prisma`, and reusing `content.prisma`'s own `Activity`/`Course` hierarchy would be a real category error — IELTS mock-test content has no `Level`/`Unit`/`Lesson` home; it belongs to an `ExamProgram` directly, ordered by section, not by curriculum position. This epic adds a real, new `MockTestSection` model (§4) — a genuine, first-class content type, not a workaround.
+
+### 3.2 Writing/Speaking exam scoring needs a new `AiRequestClass` — IELTS band criteria are materially different from CEFR placement or grammar-correction rubrics
+
+`AssessmentScoringService` (E6 T4, `'assessment'` class) scores a CEFR band (A1–C2) against CEFR proficiency descriptors; `WritingCoachService` (E13 T1, `'writing'` class) corrects grammar against `GRAMMAR_REFERENCE` entries, producing no numeric score at all. IELTS scoring is a third, materially different shape: a 0–9 band per section, judged against IELTS's own four named criteria per skill (e.g., Writing: Task Achievement, Coherence & Cohesion, Lexical Resource, Grammatical Range & Accuracy) and grounded in `EXAM_RUBRIC`-category descriptors, not `CEFR_DESCRIPTOR`/`GRAMMAR_REFERENCE` ones. Following ADR-052's own precedent exactly ("a materially different rubric/purpose" justified a new class for `'writing'` over reusing `'assessment'`), this epic adds a fourth-since-then, sixth-overall `AiRequestClass`: `'exam'`.
+
+### 3.3 Reading/Listening exam scoring is objective, not AI-graded — reuses `exercise-scoring.util.ts`'s own shape, not a new AI call
+
+A real IELTS Reading/Listening section is multiple-choice/true-false/short-answer with one real correct answer per question — an objective-scoring problem, the same shape `apps/api`'s own `exercise-scoring.util.ts` (E8 T2) already solved for `Exercise.correctAnswer`. Running these through an LLM would be slower, costlier, and less deterministic than a real objective comparison for zero accuracy benefit — this epic's own `MockTestSection` content for these two skills stores a real, per-question `correctAnswer` shape scored in application code, mirroring `exercise-scoring.util.ts`'s own established pattern rather than reimplementing or generalizing it prematurely (a new, small, exam-scoped utility, not a shared abstraction forced across two genuinely different content shapes — `Exercise` rows live under a `Quiz`/`Activity`; `MockTestSection` questions live under an `ExamProgram` section directly).
+
+### 3.4 Fixed-form delivery, not computer-adaptive — a real, deliberate divergence from E6's own assessment-attempt shape
+
+`AssessmentController`'s own attempt lifecycle (E6 T2) serves one item at a time, adaptively selecting the next item based on the caller's own running performance (`AdaptiveItemSelectionService`) — appropriate for a placement test whose whole point is minimizing item count while converging on a CEFR band. A real IELTS exam is the opposite: a **fixed-form** paper — every candidate sees the same four sections in the same order, no adaptivity. This epic's own `POST /v1/mock-test-attempts` therefore returns the exam program's **entire** ordered section set immediately (learner-facing view, no `correctAnswer`/rubric leaked — the same discipline `exercisePublicViewSchema` already established), not an item-by-item serve loop. This is a real, considered design choice, not an oversight of E6's own precedent — the two attempt shapes solve genuinely different problems.
+
+### 3.5 Overall band-score aggregation: IELTS's own real, documented rounding convention, not an invented formula
+
+A real IELTS Test Report Form's own overall band score is the **arithmetic mean of the four section band scores, rounded to the nearest 0.5** (IELTS's own publicly documented scoring convention — 0.25 rounds up, consistent with standard "round half up" behavior applied at the 0.5 grid). This epic's own T2 aggregation implements exactly this rule, not an invented or simplified alternative, since PRD.md §7's own acceptance criterion ("scoring rubric is documented and consistent") is a correctness bar this epic is explicitly on the hook for, not just an internal implementation detail.
+
+### 3.6 Auth model: `ADMIN`-role-gated authoring, reusing `CourseModule`'s own established pattern — same precedent E17 §3.6 already cites
+
+No new auth model is invented. `MockTestSection`/`ExamProgram` authoring endpoints are `@Controller('admin/...')` + `AuthGuard('jwt')` + `RolesGuard` + `MfaGuard` + `@Roles('ADMIN')` (ADR-041's own precedent, already reused by E17's own admin-analytics endpoints). Learner-facing endpoints (`GET /v1/exam-programs`, mock-test-attempt lifecycle) require only a valid Bearer token and ownership-scoping (404 on mismatch) — the same shape `AssessmentController`'s own attempt endpoints already established (§ assessment.controller.ts's own doc comment: "an attempt is scoped to its own owner ... not a role or org").
+
+### 3.7 `Certificate` issuance here is a practice score report, not a credential — named explicitly, not conflated with E20's future scope
+
+`exams.prisma`'s own `Certificate` model is deliberately shared across `courseId`/`levelId`/`examProgramId` triggers (E4 T8's own "exactly one of the three is set" design). This epic issues a real `Certificate` row (with `examProgramId` set) on **every** completed mock-test attempt, regardless of score — matching how a real IELTS Test Report Form is issued to every test-taker, not just high scorers. This is explicitly a **practice score report** artifact (its own real, verifiable proof "this mock test happened and scored X"), not a claim of exam-passing credential status — PRD.md names no MVP requirement for the latter, and E20 (Certificate System, not yet designed) is the more likely future home for any richer credentialing/verification-page UI. This epic reuses the existing model and its existing verification-token mechanism (E4 T8) exactly as designed; it does not extend or reinterpret it.
+
+## 4. Schema reference
+
+**Already real (E4 T8, no change needed):** `ExamProgram` (`id`, `name`, `code` unique, `description`, `rubric` `Json`, `isActive`), `MockTestAttempt` (`id`, `userId`, `examProgramId`, `status` reusing `AssessmentStatus`, `overallScore` nullable `Float`, `startedAt`/`completedAt`), `MockTestSectionScore` (`id`, `mockTestAttemptId`, `skill` reusing `Skill`, `score`, unique on `[mockTestAttemptId, skill]`), `Certificate` (`id`, `userId`, `courseId`/`levelId`/`examProgramId` nullable trio, `verificationTokenHash` unique, `issuedAt`), `ExamProgramKnowledgeBaseEntry` (N:N join, `examProgramId`/`knowledgeBaseEntryId`).
+
+**New this epic (T1, real migration required):**
+
+```prisma
+model MockTestSection {
+  id            String @id @default(uuid()) @db.Uuid
+  examProgramId String @db.Uuid
+  skill         Skill
+  order         Int
+  /// Real, skill-specific shape (§6.1) — READING: { passage, questions }; LISTENING: { audioUrl, transcript, questions }; WRITING: { taskPrompt, minWords }; SPEAKING: { prompts: string[] }. Validated at the application layer (packages/validation/src/exams), the same "Prisma stores Json, Zod validates the shape" split content.prisma's own header comment already establishes for Activity.content (E12 T1).
+  content       Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  examProgram ExamProgram @relation(fields: [examProgramId], references: [id])
+
+  @@unique([examProgramId, skill])
+  @@index([examProgramId])
+  @@map("MockTestSection")
+}
+```
+
+One section per skill per exam program (`@@unique([examProgramId, skill])`) — a real IELTS paper has exactly one Reading, one Listening, one Writing, one Speaking section; this is the correct cardinality, not an artificial simplification (a future exam program needing multiple Writing tasks, e.g. TOEFL's two, is real, out-of-scope-for-MVP schema evolution, not silently precluded — `@@unique` can be revisited when that program is actually built).
+
+`ExamProgram` gets a new back-relation: `mockTestSections MockTestSection[]`.
+
+No change needed to `identity.prisma` (`User.mockTestAttempts`/`certificates` already exist, E4 T8) or `ai.prisma` (`KnowledgeBaseCategory.EXAM_RUBRIC` already exists, E4 T8/E13 T1's own real embedding fix).
+
+## 5. API surface
+
+| Endpoint                                                               | Auth             | Task | Purpose                                                                                                                                               |
+| ---------------------------------------------------------------------- | ---------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`/`GET`/`GET :id`/`PATCH /v1/admin/exam-programs`                 | `ADMIN`          | T1   | `ExamProgram` authoring (§3.6)                                                                                                                        |
+| `POST`/`GET`/`GET :skill`/`PATCH /v1/admin/exam-programs/:id/sections` | `ADMIN`          | T1   | `MockTestSection` authoring, nested under its own program (§3.1/§4)                                                                                   |
+| `GET /v1/exam-programs`                                                | Bearer           | T1   | Active exam programs, learner-facing (no rubric/`correctAnswer` leaked)                                                                               |
+| `POST /v1/mock-test-attempts`                                          | Bearer           | T1   | Start a fixed-form attempt — returns every section's public-view content immediately (§3.4)                                                           |
+| `GET /v1/mock-test-attempts/:id`                                       | Bearer, own only | T1   | Read an attempt's own current state                                                                                                                   |
+| `POST /v1/mock-test-attempts/:id/sections/:skill/responses`            | Bearer, own only | T2   | Submit a section's response — objective score (Reading/Listening) or AI band score (Writing/Speaking, §3.2/3.3)                                       |
+| `POST /v1/mock-test-attempts/:id/complete`                             | Bearer, own only | T2   | Complete once all four sections are scored — real overall band aggregation (§3.5), `exam.mock_test.completed` emission, `Certificate` issuance (§3.7) |
+| `GET /v1/mock-test-attempts`                                           | Bearer, own only | T3   | Historical mock scores, paginated, newest first — PRD.md §7's own named acceptance criterion                                                          |
+
+## 6. Cross-cutting mechanics
+
+### 6.1 `MockTestSection.content`'s own per-skill shapes (T1, `packages/validation/src/exams`)
+
+Mirrors `packages/validation/src/content`'s own `superRefine`-per-`type` pattern (E12 T1) exactly, keyed by `skill` instead of `ActivityType`:
+
+- `READING`: `{ passage: string, questions: [{ prompt, options: string[], correctIndex: number }] }`
+- `LISTENING`: `{ audioUrl: string, transcript: string, questions: [{ prompt, options: string[], correctIndex: number }] }` — `audioUrl` synthesized server-side on section creation, reusing `SpeechServiceClientService.synthesizeSpeech()` exactly as `LessonContentService.createActivity()` already does for `LISTENING` `Activity` content (E12 T1, §6.2) — an admin supplies only `{ script, questions }` at request time, mirroring `draftListeningActivityContentSchema`'s own request/persisted asymmetry.
+- `WRITING`: `{ taskPrompt: string, minWords: number }`
+- `SPEAKING`: `{ prompts: string[] }` (IELTS's own real three-part structure — a short Q&A, a 1–2 minute cue-card monologue, a follow-up discussion — modeled as an ordered prompt list, not three separate models, since none of the three needs independent scoring metadata)
+
+A learner-facing public view (served at attempt start, §3.4) strips `correctAnswer`-shaped fields from Reading/Listening questions (`correctIndex` omitted, mirroring `exercisePublicViewSchema`'s own established discipline) — the rubric/answer key never leaves the server before a section is actually scored.
+
+### 6.2 `ExamScoringService` (T2, `services/ai-engine/src/exam-scoring/`)
+
+Structurally mirrors `WritingCoachService`/`AssessmentScoringService` exactly: no `OrchestratorService`/session, a one-shot structured-output call per Writing/Speaking submission. `RagRetrievalService.retrieveGroundingContext({ category: 'EXAM_RUBRIC', ... })` grounds the prompt against the real seeded band descriptors (§0); `RouterService.generate('exam', ...)` issues the call; `SafetyLayerService` delimits the learner's own submission as untrusted input and sanitizes the model's own feedback text, the same discipline every prior scoring/coaching service in this codebase already applies. Returns a real `{ band: number (0-9, 0.5 steps), feedback: string }` shape, schema-validated, never silently passed through malformed (matching `AssessmentScoringService`'s own "refusing to guess a score" bar).
+
+### 6.3 Objective section scoring (T2, `apps/api`)
+
+A new, small `exam-section-scoring.util.ts` — `correctIndex`-keyed multiple-choice comparison against a submitted `selectedIndex` array, one point per correct question, converted to a 0–9 band via IELTS's own real, publicly documented raw-score-to-band conversion table (stored as part of the section's own seeded content or a fixed lookup table, per §11 open question — the exact real IELTS conversion table has minor per-administration variance; this epic uses IELTS's own most commonly published table, not an invented linear scale, and names the real caveat in §11 rather than silently presenting it as authoritative for every real administration).
+
+### 6.4 `exam.mock_test.completed` domain event (T2, `EVENT_ARCHITECTURE.md` catalog addition)
+
+New cataloged event, `producedBy: 'apps/api'`, payload `{ mockTestAttemptId, examProgramId, overallScore }` — lands in `LearningEvent` via E17 T1's own already-real, generic ingestion consumer with zero new wiring needed (the exact "any future metric already has its raw data" property E17 T1's own design doc §11 named as its own intended benefit). No new consumer needed for this epic itself; a future analytics reporting endpoint over exam-prep outcomes is real, separately-scoped follow-up work once a product need names it (the same "prove the mechanism, defer the dedicated rollup" precedent E17 §0's own risk table already established).
+
+## 7. ADR impact
+
+**ADR-057 (proposed, T1):** A new `MockTestSection` model (§4) is the real content home for exam mock-test material — deliberately not folded into `content.prisma`'s own `Activity`/Course hierarchy, since IELTS content has no curriculum position (`Level`/`Unit`/`Lesson`), only an `ExamProgram`/skill/order position.
+
+**ADR-058 (proposed, T2):** A sixth `AiRequestClass` (`'exam'`) for RAG-grounded IELTS band scoring — a materially different rubric/purpose from `'assessment'`'s own CEFR placement critique and `'writing'`'s own grammar-correction rubric (§3.2), following ADR-052's own precedent exactly.
+
+Both formally accepted once T1/T2 actually ship each decision, not pre-committed here ahead of the implementation that would make them real — the same discipline ADR-056 (E17 T2/T3) already established this session.
+
+## 8. Alternatives considered
+
+- **Reusing `content.prisma`'s `Activity`/`Course` hierarchy for exam content instead of a new `MockTestSection` model** (rejected, §3.1) — a real category error; IELTS content has no curriculum position.
+- **Reusing the `'assessment'` or `'writing'` `AiRequestClass` for exam band scoring instead of a new `'exam'` class** (rejected, §3.2) — IELTS's own real per-skill criteria and 0–9 band scale are materially different rubrics from either existing class's own purpose, the same reasoning that already justified `'writing'` itself as its own class over reusing `'assessment'` (ADR-052).
+- **AI-grading Reading/Listening sections instead of objective scoring** (rejected, §3.3) — slower, costlier, and less deterministic than a real objective comparison for a question type that has one real correct answer; no accuracy benefit.
+- **Item-by-item adaptive delivery, matching E6's own assessment-attempt shape** (rejected, §3.4) — a real IELTS exam is fixed-form, not computer-adaptive; the two attempt shapes solve genuinely different problems, and forcing one pattern onto the other would misrepresent how the real exam actually works.
+- **Building all six named exam programs at MVP** (rejected, §1) — ROADMAP.md §Version 1.1 explicitly scopes full 6-program breadth as a fast-follow, not MVP; the schema needs no further migration to add the other five later, only content-authoring effort this epic does not spend where PRD/ROADMAP do not require it.
+- **Persisting a learner's own target score/exam date at MVP** (rejected, §1) — no real consumer exists yet (curriculum re-weighting is out of scope, §1); a persisted value nothing reads is a premature model.
+- **Gating Certificate issuance on a passing score, rather than issuing one for every completed attempt** (rejected, §3.7) — misrepresents what a real IELTS Test Report Form actually is (issued regardless of score); this epic's own Certificate is explicitly a practice score report, not a credential gate.
+
+## 9. Task sequence
+
+| Task   | Deliverable                                                                                                                                                                                                                                                                                                                                                                                                                                        | Depends on | Evidence (design-phase)                             |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------------------------------------------------- |
+| **T1** | Not started. `MockTestSection` schema (§4, ADR-057), `packages/validation/src/exams` (§6.1), `apps/api`'s new `ExamModule` — `ADMIN` authoring for `ExamProgram`/`MockTestSection` (§5, §3.6), learner-facing `GET /v1/exam-programs` and the fixed-form `POST`/`GET /v1/mock-test-attempts` (§3.4). Real seeded IELTS Academic program with all four real sections, extending E13 T1's own real-embedding seed pattern for `EXAM_RUBRIC` entries. | E4, E13    | Design-phase only — no implementation evidence yet. |
+| **T2** | Not started. `ExamScoringService` (`services/ai-engine`, §6.2, ADR-058), objective section scoring (§6.3), overall band aggregation (§3.5), `exam.mock_test.completed` event (§6.4).                                                                                                                                                                                                                                                               | T1         | Design-phase only.                                  |
+| **T3** | Not started. `GET /v1/mock-test-attempts` historical listing (§5), `Certificate` issuance on completion (§3.7).                                                                                                                                                                                                                                                                                                                                    | T2         | Design-phase only.                                  |
+
+## 10. Open questions
+
+1. **The exact IELTS raw-score-to-band conversion table for Reading/Listening (§6.3)** — IELTS itself publishes slightly different tables per test administration/version; this epic uses the most commonly published reference table as a real, documented starting point (not an invented linear scale), named honestly as an approximation rather than an authoritative per-administration guarantee.
+2. **Whether `recommendation-engine`'s own curriculum-weighting mechanism should eventually consult an active exam-prep goal** (§1's own named follow-up) — real, separately-scoped `recommendation-engine` work, not this epic's own to design.
+
+## 11. Risks
+
+| Risk                                                                                                                                                                                  | Mitigation                                                                                                                                                         | Owner                  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
+| The Reading/Listening raw-score-to-band conversion table (§6.3/§10) is a real, published reference, not a guarantee identical to every real IELTS administration's own official table | Named explicitly as an approximation in the product surface if this ever needs a compliance-grade guarantee; revisit if a real stakeholder needs a different table | Backend Platform (TBD) |
+| Curriculum re-weighting toward exam-format practice (PRD.md Journey E) is not built by this epic (§1)                                                                                 | Real, separately-scoped `recommendation-engine` follow-up once a product need actually schedules it                                                                | Backend Platform (TBD) |
+| Only one of six named exam programs (IELTS) is real at MVP                                                                                                                            | ROADMAP.md's own explicit Version-1.1 fast-follow scope; schema needs no further migration to add the other five                                                   | Backend Platform (TBD) |
+
+## 12. Gate sign-off log
+
+| Gate         | Status        | Reviewer | Date | Notes                                                                                         |
+| ------------ | ------------- | -------- | ---- | --------------------------------------------------------------------------------------------- |
+| Architecture | ☐ Not started | —        | —    | New `MockTestSection` model (§3.1/§4, ADR-057), new `'exam'` `AiRequestClass` (§3.2, ADR-058) |
+| Database     | ☐ Not started | —        | —    | New migration for `MockTestSection` (§4)                                                      |
+| API          | ☐ Not started | —        | —    | New `/v1/exam-programs`, `/v1/mock-test-attempts`, `/v1/admin/exam-programs*` endpoints (§5)  |
+| Security     | ☐ Not started | —        | —    | `ADMIN`-role gating for authoring (§3.6), ownership-scoping for attempts, no new PII exposure |
+| Testing      | ☐ Not started | —        | —    | Real e2e proof of fixed-form delivery, objective + AI scoring, overall band aggregation       |
+
+## 13. Epic Approval
+
+Design not yet formally approved by an independent Architecture Gate review — proceeding to implementation by explicit user direction ("next"), the same pattern E9–E17 each followed.
