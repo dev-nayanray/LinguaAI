@@ -74,6 +74,7 @@ describe('ExamsModule (e2e)', () => {
       where: { examProgramId: { in: createdExamProgramIds } },
     });
     await setupPrisma.examProgram.deleteMany({ where: { id: { in: createdExamProgramIds } } });
+    await setupPrisma.certificate.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.refreshToken.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.session.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.consentRecord.deleteMany({ where: { userId: { in: createdUserIds } } });
@@ -375,13 +376,43 @@ describe('ExamsModule (e2e)', () => {
       expect(completeRes.body.status).toBe('COMPLETED');
       expect(completeRes.body.overallScore).toBe(7.5);
 
-      // Idempotent on repeat calls — matches AssessmentService's own established contract.
+      // A real Certificate is issued on completion (T3, §3.7) — the raw
+      // verification token is returned exactly once, here.
+      expect(typeof completeRes.body.certificateVerificationToken).toBe('string');
+      const certificate = await setupPrisma.certificate.findFirst({
+        where: {
+          userId: learner.userId,
+          examProgramId: (
+            await setupPrisma.examProgram.findUniqueOrThrow({ where: { code: 'IELTS' } })
+          ).id,
+        },
+      });
+      expect(certificate).not.toBeNull();
+      expect(certificate!.verificationTokenHash).not.toBe(
+        completeRes.body.certificateVerificationToken,
+      );
+
+      // Idempotent on repeat calls — matches AssessmentService's own established contract. No second Certificate, no raw token to return.
       const repeatCompleteRes = await request(app.getHttpServer())
         .post(`/v1/mock-test-attempts/${attemptId}/complete`)
         .set('Authorization', `Bearer ${learner.accessToken}`);
       expect(repeatCompleteRes.status).toBe(200);
       expect(repeatCompleteRes.body.overallScore).toBe(7.5);
+      expect(repeatCompleteRes.body.certificateVerificationToken).toBeNull();
+      const certificateCountAfterRepeat = await setupPrisma.certificate.count({
+        where: { userId: learner.userId },
+      });
+      expect(certificateCountAfterRepeat).toBe(1);
 
+      // GET /v1/mock-test-attempts (T3) — historical listing, own only, newest first.
+      const listRes = await request(app.getHttpServer())
+        .get('/v1/mock-test-attempts')
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+      expect(listRes.status).toBe(200);
+      expect(listRes.body.data.some((a: { id: string }) => a.id === attemptId)).toBe(true);
+      expect(listRes.body.meta.total).toBeGreaterThanOrEqual(1);
+
+      await setupPrisma.certificate.deleteMany({ where: { userId: learner.userId } });
       await setupPrisma.mockTestSectionScore.deleteMany({
         where: { mockTestAttemptId: attemptId },
       });
@@ -442,6 +473,30 @@ describe('ExamsModule (e2e)', () => {
       expect(res.status).toBe(409);
 
       await setupPrisma.mockTestAttempt.delete({ where: { id: attemptId } });
+    });
+
+    it("GET /v1/mock-test-attempts scopes results to the caller's own attempts only, rejects unauthenticated", async () => {
+      const unauth = await request(app.getHttpServer()).get('/v1/mock-test-attempts');
+      expect(unauth.status).toBe(401);
+
+      const owner = await freshSession();
+      const intruder = await freshSession();
+      const ownerAttemptId = await startIeltsAttempt(owner);
+      await startIeltsAttempt(intruder);
+
+      const res = await request(app.getHttpServer())
+        .get('/v1/mock-test-attempts')
+        .set('Authorization', `Bearer ${owner.accessToken}`);
+      expect(res.status).toBe(200);
+      const ids = (res.body.data as { id: string }[]).map((a) => a.id);
+      expect(ids).toContain(ownerAttemptId);
+      for (const attempt of res.body.data as { userId: string }[]) {
+        expect(attempt.userId).toBe(owner.userId);
+      }
+
+      await setupPrisma.mockTestAttempt.deleteMany({
+        where: { userId: { in: [owner.userId, intruder.userId] } },
+      });
     });
   });
 });

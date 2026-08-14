@@ -268,3 +268,38 @@ export const examMockTestCompletedPayloadSchema = z.object({
   overallScore: z.number().min(0).max(9),
 });
 export type ExamMockTestCompletedPayload = z.infer<typeof examMockTestCompletedPayloadSchema>;
+
+// --- Historical mock-score visibility & Certificate issuance (T3, design doc §3.7/§5) ---
+
+/** `GET /v1/mock-test-attempts` — own, paginated, newest first (PRD.md §7's own named acceptance criterion). */
+export const mockTestAttemptListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type MockTestAttemptListQuery = z.infer<typeof mockTestAttemptListQuerySchema>;
+
+export const mockTestAttemptListResponseSchema = z.object({
+  data: z.array(mockTestAttemptSchema),
+  meta: z.object({
+    page: z.number().int(),
+    pageSize: z.number().int(),
+    total: z.number().int(),
+  }),
+});
+export type MockTestAttemptListResponse = z.infer<typeof mockTestAttemptListResponseSchema>;
+
+/**
+ * `POST .../complete`'s own real response (design doc §3.7) — a real
+ * `Certificate` is issued on every completed attempt, regardless of
+ * score (a practice score report, not a credential gate). The raw
+ * verification token is returned exactly once, here, on the call that
+ * actually transitions the attempt to `COMPLETED` — `exams.prisma`'s own
+ * header comment establishes the hash-not-raw storage discipline
+ * (`PasswordResetToken`/`MfaChallengeToken`'s own precedent), so it can
+ * never be recovered later. `null` on an idempotent repeat call (the
+ * `Certificate` already exists; there is no raw token left to return).
+ */
+export const completeMockTestAttemptResponseSchema = mockTestAttemptSchema.extend({
+  certificateVerificationToken: z.string().nullable(),
+});
+export type CompleteMockTestAttemptResponse = z.infer<typeof completeMockTestAttemptResponseSchema>;

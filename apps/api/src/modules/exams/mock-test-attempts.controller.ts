@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -13,8 +14,12 @@ import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import {
+  mockTestAttemptListQuerySchema,
   startMockTestAttemptRequestSchema,
   submitSectionResponseRequestSchema,
+  type CompleteMockTestAttemptResponse,
+  type MockTestAttemptListQuery,
+  type MockTestAttemptListResponse,
   type MockTestAttemptResponse,
   type MockTestSectionScoreResponse,
   type StartMockTestAttemptRequest,
@@ -57,6 +62,15 @@ export class MockTestAttemptsController {
     return this.mockTestAttemptsService.start(req.user, dto);
   }
 
+  @Get()
+  @ApiOperation({ summary: "List the caller's own mock-test attempts, paginated, newest first" })
+  async list(
+    @Req() req: JwtAuthenticatedRequest,
+    @Query(new ZodValidationPipe(mockTestAttemptListQuerySchema)) query: MockTestAttemptListQuery,
+  ): Promise<MockTestAttemptListResponse> {
+    return this.mockTestAttemptsService.list(req.user, query);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: "Read an attempt's own current state" })
   async get(
@@ -86,12 +100,12 @@ export class MockTestAttemptsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Complete an attempt once every section has been scored (idempotent on repeat calls) — real overall band aggregation, exam.mock_test.completed emission',
+      'Complete an attempt once every section has been scored (idempotent on repeat calls) — real overall band aggregation, Certificate issuance, exam.mock_test.completed emission',
   })
   async complete(
     @Req() req: JwtAuthenticatedRequest,
     @Param('id') id: string,
-  ): Promise<MockTestAttemptResponse> {
+  ): Promise<CompleteMockTestAttemptResponse> {
     return this.mockTestAttemptsService.complete(req.user, id);
   }
 }

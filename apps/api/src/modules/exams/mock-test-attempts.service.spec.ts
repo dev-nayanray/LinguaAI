@@ -36,6 +36,9 @@ describe('MockTestAttemptsService', () => {
   const scoreFindMany = jest.fn();
   const scoreCreate = jest.fn();
   const scoreExamSection = jest.fn();
+  const attemptFindMany = jest.fn();
+  const attemptCount = jest.fn();
+  const certificateCreate = jest.fn();
   const publish = jest.fn();
   const prisma = {
     examProgram: { findUnique: examProgramFindUnique },
@@ -43,6 +46,8 @@ describe('MockTestAttemptsService', () => {
       create: attemptCreate,
       findUnique: attemptFindUnique,
       update: attemptUpdate,
+      findMany: attemptFindMany,
+      count: attemptCount,
     },
     mockTestSection: { findMany: sectionFindMany, findUnique: sectionFindUnique },
     mockTestSectionScore: {
@@ -50,6 +55,7 @@ describe('MockTestAttemptsService', () => {
       findMany: scoreFindMany,
       create: scoreCreate,
     },
+    certificate: { create: certificateCreate },
   };
   const aiEngineClient = { scoreExamSection };
   const events = { publish };
@@ -263,14 +269,16 @@ describe('MockTestAttemptsService', () => {
   });
 
   describe('complete', () => {
-    it('is idempotent — returns the already-completed attempt without recomputing anything', async () => {
+    it('is idempotent — returns the already-completed attempt without recomputing anything, and no new certificate token', async () => {
       attemptFindUnique.mockResolvedValue(baseAttempt({ status: 'COMPLETED', overallScore: 6.5 }));
       const service = buildService();
 
       const result = await service.complete(caller, attemptId);
 
       expect(result.status).toBe('COMPLETED');
+      expect(result.certificateVerificationToken).toBeNull();
       expect(sectionFindMany).not.toHaveBeenCalled();
+      expect(certificateCreate).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
     });
 
@@ -282,13 +290,15 @@ describe('MockTestAttemptsService', () => {
 
       await expect(service.complete(caller, attemptId)).rejects.toBeInstanceOf(ConflictException);
       expect(attemptUpdate).not.toHaveBeenCalled();
+      expect(certificateCreate).not.toHaveBeenCalled();
     });
 
-    it('computes the real overall band as the mean of every section score, rounded to the nearest 0.5, and publishes exam.mock_test.completed', async () => {
+    it('computes the real overall band as the mean of every section score, rounded to the nearest 0.5, issues a real Certificate, and publishes exam.mock_test.completed', async () => {
       attemptFindUnique.mockResolvedValue(baseAttempt());
       sectionFindMany.mockResolvedValue([{}, {}, {}, {}]);
       scoreFindMany.mockResolvedValue([{ score: 7 }, { score: 6.5 }, { score: 7 }, { score: 6 }]);
       attemptUpdate.mockResolvedValue(baseAttempt({ status: 'COMPLETED', overallScore: 6.5 }));
+      certificateCreate.mockResolvedValue({ id: 'cert-1' });
       const service = buildService();
 
       const result = await service.complete(caller, attemptId);
@@ -299,11 +309,51 @@ describe('MockTestAttemptsService', () => {
           data: expect.objectContaining({ status: 'COMPLETED', overallScore: 6.5 }),
         }),
       );
+      expect(certificateCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ userId, examProgramId }),
+        }),
+      );
+      const certData = certificateCreate.mock.calls[0]![0].data;
+      expect(typeof certData.verificationTokenHash).toBe('string');
+      expect(certData.verificationTokenHash).toHaveLength(64); // SHA-256 hex digest
+      expect(typeof result.certificateVerificationToken).toBe('string');
       expect(publish).toHaveBeenCalledWith('exam.mock_test.completed', {
         userId,
         payload: { mockTestAttemptId: attemptId, examProgramId, overallScore: 6.5 },
       });
       expect(result.status).toBe('COMPLETED');
+    });
+  });
+
+  describe('list', () => {
+    it("scopes the query to the caller's own attempts, newest first, paginated", async () => {
+      attemptFindMany.mockResolvedValue([baseAttempt({ status: 'COMPLETED', overallScore: 6.5 })]);
+      attemptCount.mockResolvedValue(1);
+      const service = buildService();
+
+      const result = await service.list(caller, { page: 1, pageSize: 20 });
+
+      expect(attemptFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId },
+          orderBy: { createdAt: 'desc' },
+          skip: 0,
+          take: 20,
+        }),
+      );
+      expect(result.data).toHaveLength(1);
+      expect(result.meta).toEqual({ page: 1, pageSize: 20, total: 1 });
+    });
+
+    it('computes the correct offset for page 2', async () => {
+      attemptFindMany.mockResolvedValue([]);
+      attemptCount.mockResolvedValue(0);
+      const service = buildService();
+
+      await service.list(caller, { page: 2, pageSize: 10 });
+
+      expect(attemptFindMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 10, take: 10 }));
     });
   });
 });

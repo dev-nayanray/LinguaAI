@@ -1,7 +1,12 @@
+import { createHash, randomBytes } from 'node:crypto';
+
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { PrismaClient, Skill } from '@linguaai/database';
 import {
   examMockTestCompletedPayloadSchema,
+  type CompleteMockTestAttemptResponse,
+  type MockTestAttemptListQuery,
+  type MockTestAttemptListResponse,
   type MockTestAttemptResponse,
   type MockTestSectionPublicView,
   type MockTestSectionScoreResponse,
@@ -22,6 +27,13 @@ const AI_SCORED_SKILLS: readonly Skill[] = ['WRITING', 'SPEAKING'];
 /** IELTS's own real overall-score convention: mean of the 4 section bands, rounded to the nearest 0.5 (design doc §3.5) — 0.25 rounds up, matching `Math.round`'s own "round half towards +Infinity" behavior for positive numbers. */
 function roundToNearestHalfBand(value: number): number {
   return Math.round(value * 2) / 2;
+}
+
+/** `exams.prisma`'s own documented entropy/hash spec (E4 T8 header comment) — 32 random bytes, base64url-encoded raw token; SHA-256 hex digest is what's actually stored. Mirrors `auth.service.ts`'s own established `hashToken` pattern (`PasswordResetToken`/`MfaChallengeToken`). */
+function generateVerificationToken(): { rawToken: string; tokenHash: string } {
+  const rawToken = randomBytes(32).toString('base64url');
+  const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+  return { rawToken, tokenHash };
 }
 
 /**
@@ -225,15 +237,19 @@ export class MockTestAttemptsService {
   }
 
   /**
-   * `POST .../complete` (E19 T2, design doc §5/§3.5/§6.4) — idempotent on
-   * repeat calls, the same "complete" contract `AssessmentService.completeAttempt`
-   * already established. Real overall band aggregation: mean of every
-   * scored section's own band, rounded to the nearest 0.5.
+   * `POST .../complete` (E19 T2/T3, design doc §5/§3.5/§3.7/§6.4) —
+   * idempotent on repeat calls, the same "complete" contract
+   * `AssessmentService.completeAttempt` already established. Real overall
+   * band aggregation: mean of every scored section's own band, rounded to
+   * the nearest 0.5. A real `Certificate` is issued on the call that
+   * actually completes the attempt (§3.7) — a practice score report,
+   * issued regardless of the score achieved, mirroring how a real IELTS
+   * Test Report Form is issued to every test-taker.
    */
-  async complete(caller: RequestUser, attemptId: string): Promise<MockTestAttemptResponse> {
+  async complete(caller: RequestUser, attemptId: string): Promise<CompleteMockTestAttemptResponse> {
     const attempt = await this.getOwnedAttempt(caller, attemptId);
     if (attempt.status === 'COMPLETED') {
-      return toWireAttempt(attempt);
+      return { ...toWireAttempt(attempt), certificateVerificationToken: null };
     }
 
     const [sections, scores] = await Promise.all([
@@ -255,6 +271,15 @@ export class MockTestAttemptsService {
       data: { status: 'COMPLETED', completedAt: new Date(), overallScore },
     });
 
+    const { rawToken, tokenHash } = generateVerificationToken();
+    await this.appPrisma.certificate.create({
+      data: {
+        userId: caller.userId,
+        examProgramId: attempt.examProgramId,
+        verificationTokenHash: tokenHash,
+      },
+    });
+
     const eventPayload = examMockTestCompletedPayloadSchema.parse({
       mockTestAttemptId: updated.id,
       examProgramId: updated.examProgramId,
@@ -265,7 +290,28 @@ export class MockTestAttemptsService {
       payload: eventPayload,
     });
 
-    return toWireAttempt(updated);
+    return { ...toWireAttempt(updated), certificateVerificationToken: rawToken };
+  }
+
+  /** `GET /v1/mock-test-attempts` (E19 T3, design doc §5) — own, paginated, newest first. */
+  async list(
+    caller: RequestUser,
+    query: MockTestAttemptListQuery,
+  ): Promise<MockTestAttemptListResponse> {
+    const where = { userId: caller.userId };
+    const [data, total] = await Promise.all([
+      this.appPrisma.mockTestAttempt.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.appPrisma.mockTestAttempt.count({ where }),
+    ]);
+    return {
+      data: data.map(toWireAttempt),
+      meta: { page: query.page, pageSize: query.pageSize, total },
+    };
   }
 
   private async getOwnedAttempt(caller: RequestUser, id: string) {
