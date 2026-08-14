@@ -69,16 +69,21 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Create account')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Text(
+                'Start learning a new language today.',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 24),
               TextFormField(
                 controller: _displayNameController,
-                decoration: const InputDecoration(labelText: 'Name'),
+                decoration: const InputDecoration(labelText: 'Name', prefixIcon: Icon(Icons.person_outline)),
                 validator: (value) =>
                     (value == null || value.trim().isEmpty) ? 'Enter your name' : null,
               ),
@@ -86,7 +91,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               TextFormField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(labelText: 'Email'),
+                decoration: const InputDecoration(labelText: 'Email', prefixIcon: Icon(Icons.mail_outline)),
                 validator: (value) =>
                     (value == null || !value.contains('@')) ? 'Enter a valid email' : null,
               ),
@@ -94,7 +99,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               TextFormField(
                 controller: _passwordController,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: 'Password'),
+                decoration: const InputDecoration(labelText: 'Password', prefixIcon: Icon(Icons.lock_outline)),
                 validator: (value) =>
                     (value == null || value.length < 12) ? 'At least 12 characters' : null,
               ),
@@ -104,6 +109,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 onChanged: (value) => setState(() => _tosAccepted = value ?? false),
                 title: const Text('I accept the Terms of Service and Privacy Policy'),
                 controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
               ),
               if (_errorMessage != null) ...[
                 const SizedBox(height: 8),

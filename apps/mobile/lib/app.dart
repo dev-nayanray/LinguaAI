@@ -3,9 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/theme/app_theme.dart';
 import 'core/theme/design_tokens.dart';
+import 'core/widgets/home_shell.dart';
 import 'features/auth/presentation/auth_controller.dart';
 import 'features/auth/presentation/auth_state.dart';
-import 'features/auth/presentation/home_screen.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/auth/presentation/mfa_challenge_screen.dart';
 
@@ -54,7 +54,7 @@ class _AuthGate extends ConsumerWidget {
       AuthInitializing() => const Scaffold(body: Center(child: CircularProgressIndicator())),
       AuthUnauthenticated() => const LoginScreen(),
       AuthMfaRequired() => const MfaChallengeScreen(),
-      AuthAuthenticated() => const HomeScreen(),
+      AuthAuthenticated() => const HomeShell(),
       AuthError(:final message) => Scaffold(body: Center(child: Text(message))),
     };
   }

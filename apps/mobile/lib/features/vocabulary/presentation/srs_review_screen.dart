@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/state_views.dart';
 import '../domain/vocabulary_models.dart';
 import 'vocabulary_providers.dart';
 
@@ -103,67 +105,93 @@ class _SrsReviewScreenState extends ConsumerState<SrsReviewScreen> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const LoadingView();
     }
     if (_errorMessage != null && _queue.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(_errorMessage!),
-            const SizedBox(height: 12),
-            FilledButton(onPressed: _loadInitial, child: const Text('Retry')),
-          ],
-        ),
-      );
+      return ErrorView(message: _errorMessage!, onRetry: _loadInitial);
     }
     if (_queue.isEmpty) {
-      return Center(
-        child: Text(
-          _reviewedCount > 0
-              ? 'All done! You reviewed $_reviewedCount card${_reviewedCount == 1 ? '' : 's'}.'
-              : 'No cards are due for review right now.',
-        ),
+      return EmptyStateView(
+        icon: Icons.celebration_outlined,
+        message: _reviewedCount > 0
+            ? 'All done! You reviewed $_reviewedCount card${_reviewedCount == 1 ? '' : 's'}.'
+            : 'No cards are due for review right now.',
       );
     }
     final item = _currentItem;
     if (item == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const LoadingView();
     }
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          LinearProgressIndicator(
+            value: _reviewedCount == 0
+                ? 0
+                : _reviewedCount / (_reviewedCount + _queue.length),
+            borderRadius: BorderRadius.circular(context.radii['pill']),
+          ),
+          const SizedBox(height: 8),
           Text('${_queue.length} card${_queue.length == 1 ? '' : 's'} left'),
-          const SizedBox(height: 32),
-          Text(item.term, style: Theme.of(context).textTheme.displayLarge),
-          const SizedBox(height: 16),
-          if (_revealed)
-            Text(
-              item.translationFor('en') ?? '(no English translation available)',
-              style: Theme.of(context).textTheme.headlineMedium,
-            )
-          else
-            TextButton(onPressed: () => setState(() => _revealed = true), child: const Text('Reveal')),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
+          Expanded(
+            child: Center(
+              child: Card(
+                color: context.appColors.surfaceElevated,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(item.term, style: Theme.of(context).textTheme.displayLarge),
+                      const SizedBox(height: 16),
+                      if (_revealed)
+                        Text(
+                          item.translationFor('en') ?? '(no English translation available)',
+                          style: Theme.of(context).textTheme.headlineMedium,
+                        )
+                      else
+                        OutlinedButton(
+                          onPressed: () => setState(() => _revealed = true),
+                          child: const Text('Reveal'),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
           if (_errorMessage != null) ...[
             Text(_errorMessage!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
             const SizedBox(height: 16),
           ],
-          if (_revealed)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                for (final quality in ReviewQuality.values)
-                  FilledButton(
-                    onPressed: _isSubmitting ? null : () => _rate(quality),
-                    child: Text(_labelFor(quality)),
-                  ),
-              ],
-            ),
+          if (_revealed) _buildQualityButtons(),
         ],
       ),
+    );
+  }
+
+  Widget _buildQualityButtons() {
+    final colors = context.appColors;
+    final buttonColors = {
+      ReviewQuality.again: colors.danger,
+      ReviewQuality.hard: colors.warning,
+      ReviewQuality.good: Theme.of(context).colorScheme.primary,
+      ReviewQuality.easy: colors.success,
+    };
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        for (final quality in ReviewQuality.values)
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: buttonColors[quality]),
+            onPressed: _isSubmitting ? null : () => _rate(quality),
+            child: Text(_labelFor(quality)),
+          ),
+      ],
     );
   }
 

@@ -52,16 +52,21 @@ class _MfaChallengeScreenState extends ConsumerState<MfaChallengeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Icon(Icons.shield_outlined, size: 40, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(height: 16),
             const Text('Enter the 6-digit code from your authenticator app.'),
             const SizedBox(height: 16),
             TextField(
               controller: _codeController,
               keyboardType: TextInputType.number,
               maxLength: 6,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.headlineLarge,
               decoration: const InputDecoration(labelText: 'Code'),
             ),
             if (_errorMessage != null)
               Text(_errorMessage!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            const SizedBox(height: 8),
             FilledButton(
               onPressed: _isSubmitting ? null : _submit,
               child: _isSubmitting

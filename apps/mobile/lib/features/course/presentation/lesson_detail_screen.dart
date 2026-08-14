@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/widgets/section_header.dart';
+import '../../../core/widgets/state_views.dart';
 import 'course_providers.dart';
 import 'exercise_screen.dart';
 
@@ -16,51 +18,44 @@ class LessonDetailScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Lesson')),
       body: lessonAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('Could not load this lesson.'),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: () => ref.invalidate(lessonDetailProvider(lessonId)),
-                  child: const Text('Retry'),
-                ),
-              ],
-            ),
-          ),
+        loading: () => const LoadingView(),
+        error: (error, _) => ErrorView(
+          message: 'Could not load this lesson.',
+          onRetry: () => ref.invalidate(lessonDetailProvider(lessonId)),
         ),
         data: (lesson) {
           final exercises = lesson.activities.expand((activity) => activity.exercises).toList();
           if (exercises.isEmpty) {
-            return const Center(child: Text('This lesson has no exercises yet.'));
+            return const EmptyStateView(message: 'This lesson has no exercises yet.');
           }
           return ListView(
+            padding: const EdgeInsets.all(16),
             children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  lesson.summary.title,
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-              ),
+              Text(lesson.summary.title, style: Theme.of(context).textTheme.headlineLarge),
+              const SizedBox(height: 20),
               for (final activity in lesson.activities) ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Text(activity.title, style: Theme.of(context).textTheme.bodyLarge),
-                ),
+                SectionHeader(activity.title),
                 for (final exercise in activity.exercises)
-                  ListTile(
-                    title: Text(exercise.prompt),
-                    subtitle: Text(exercise.type),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(builder: (_) => ExerciseScreen(exercise: exercise)),
+                  Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.12),
+                        child: Icon(
+                          _iconFor(exercise.type),
+                          size: 18,
+                          color: Theme.of(context).colorScheme.secondary,
+                        ),
+                      ),
+                      title: Text(exercise.prompt),
+                      subtitle: Text(exercise.type),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(builder: (_) => ExerciseScreen(exercise: exercise)),
+                      ),
                     ),
                   ),
+                const SizedBox(height: 12),
               ],
             ],
           );
@@ -68,4 +63,14 @@ class LessonDetailScreen extends ConsumerWidget {
       ),
     );
   }
+
+  IconData _iconFor(String exerciseType) => switch (exerciseType) {
+    'MULTIPLE_CHOICE' => Icons.check_box_outlined,
+    'LISTENING_COMPREHENSION' => Icons.headphones_outlined,
+    'FILL_BLANK' => Icons.edit_outlined,
+    'TRANSLATION' => Icons.translate,
+    'MATCHING' => Icons.compare_arrows,
+    'SPEAKING_PROMPT' => Icons.mic_none_outlined,
+    _ => Icons.quiz_outlined,
+  };
 }
