@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../course/presentation/course_list_screen.dart';
 import 'auth_controller.dart';
 import 'auth_state.dart';
 
-/// A real, minimal proof that a session survives past login — the course
-/// consumption/exercise-attempt screens this stub will be replaced by are
-/// T2's own scope (docs/epics/E21-mobile-application.md §9), not T1's.
+/// A real, minimal home screen — the actual course-browsing UI (E21 T2)
+/// lives in `features/course`; this screen is the entry point into it,
+/// plus a real proof the session survives past login (the caller's own
+/// name, sourced from the real `AuthAuthenticated` state).
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -26,7 +28,19 @@ class HomeScreen extends ConsumerWidget {
         ],
       ),
       body: Center(
-        child: Text(user != null ? 'Welcome, ${user.displayName}' : 'Signed in'),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(user != null ? 'Welcome, ${user.displayName}' : 'Signed in'),
+            const SizedBox(height: 24),
+            FilledButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const CourseListScreen()),
+              ),
+              child: const Text('Browse courses'),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -267,7 +267,7 @@ describe('CourseModule (e2e)', () => {
       MULTIPLE_CHOICE: await createExercise(
         'MULTIPLE_CHOICE',
         'How do you say hello in Spanish?',
-        { correctIndex: 0 },
+        { correctIndex: 0, options: ['Hola', 'Adiós', 'Gracias', 'Por favor'] },
         1,
       ),
       FILL_BLANK: await createExercise(
@@ -296,7 +296,7 @@ describe('CourseModule (e2e)', () => {
       LISTENING_COMPREHENSION: await createExercise(
         'LISTENING_COMPREHENSION',
         'Listen and choose what was said',
-        { correctIndex: 1 },
+        { correctIndex: 1, options: ['Buenos días', 'Buenas noches', 'Buenas tardes'] },
         5,
       ),
       SPEAKING_PROMPT: await createExercise(
@@ -595,6 +595,39 @@ describe('CourseModule (e2e)', () => {
         expect(exercise.correctAnswer).toBeUndefined();
         expect(exercise.prompt).toEqual(expect.any(String));
       }
+    }, 30000);
+
+    it('GET /v1/lessons/:id exposes a real, answer-free content field for MULTIPLE_CHOICE/LISTENING_COMPREHENSION/MATCHING, never leaking correctIndex or the true pairing order (E21 T2)', async () => {
+      const { lessonId } = await authorAndPublishCourse();
+      const learner = await freshSession();
+
+      const res = await request(app.getHttpServer())
+        .get(`/v1/lessons/${lessonId}`)
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+
+      const exercises = res.body.activities[0].exercises as Array<Record<string, unknown>>;
+      const byType = (type: string): Record<string, unknown> =>
+        exercises.find((exercise) => exercise.type === type)!;
+
+      const multipleChoice = byType('MULTIPLE_CHOICE');
+      expect(multipleChoice.content).toEqual({
+        options: ['Hola', 'Adiós', 'Gracias', 'Por favor'],
+      });
+      expect(multipleChoice.content).not.toHaveProperty('correctIndex');
+
+      const matching = byType('MATCHING');
+      const matchingContent = matching.content as { leftItems: string[]; rightItems: string[] };
+      expect(matchingContent.leftItems.sort()).toEqual(['Adios', 'Hola']);
+      expect(matchingContent.rightItems.sort()).toEqual(['Goodbye', 'Hello']);
+      // The real pairing (Hola->Hello, Adios->Goodbye) must not be
+      // recoverable from array index alone -- each list is independently
+      // sorted, not left in correctAnswer.pairs's own paired order.
+      expect(matchingContent.leftItems).toEqual(['Adios', 'Hola']);
+      expect(matchingContent.rightItems).toEqual(['Goodbye', 'Hello']);
+
+      expect(byType('FILL_BLANK').content).toBeNull();
+      expect(byType('TRANSLATION').content).toBeNull();
+      expect(byType('SPEAKING_PROMPT').content).toBeNull();
     }, 30000);
   });
 

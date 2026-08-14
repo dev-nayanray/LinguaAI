@@ -368,6 +368,21 @@ export type UpdateExerciseRequest = z.infer<typeof updateExerciseRequestSchema>;
  * so a future careless `.extend()` on this schema can't accidentally leak
  * the answer key through — that file's own doc comment states this exact
  * reasoning verbatim.
+ *
+ * `content` (real, found gap closed at E21 T2, the platform's first real
+ * exercise-taking client): before this field existed, no client — web or
+ * mobile — could actually render `MULTIPLE_CHOICE`/`LISTENING_COMPREHENSION`
+ * (needs the option list) or `MATCHING` (needs the left/right item lists),
+ * since that data lived only inside `correctAnswer`, which this schema
+ * correctly never exposes. `content` derives a safe, answer-free view from
+ * it server-side (`course-catalog.service.ts`'s own `publicExerciseContent`):
+ * `{ options }` for choice types (knowing the option text never reveals
+ * `correctIndex`); `{ leftItems, rightItems }` for `MATCHING`, each
+ * independently sorted rather than left in `correctAnswer.pairs`'s own
+ * paired order — same-index correlation between the two arrays would
+ * trivially reveal the correct pairing otherwise. `null` for `FILL_BLANK`/
+ * `TRANSLATION` (free-text response, no structured content to show) and
+ * `SPEAKING_PROMPT` (not submittable through this endpoint at all).
  */
 export const exercisePublicViewSchema = z.object({
   id: z.string().uuid(),
@@ -376,6 +391,12 @@ export const exercisePublicViewSchema = z.object({
   type: exerciseTypeSchema,
   prompt: z.string(),
   order: z.number().int(),
+  content: z
+    .union([
+      z.object({ options: z.array(z.string()) }),
+      z.object({ leftItems: z.array(z.string()), rightItems: z.array(z.string()) }),
+    ])
+    .nullable(),
 });
 export type ExercisePublicView = z.infer<typeof exercisePublicViewSchema>;
 

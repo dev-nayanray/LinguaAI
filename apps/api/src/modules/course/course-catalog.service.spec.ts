@@ -204,6 +204,88 @@ describe('CourseCatalogService', () => {
       expect(exercise.correctAnswer).toBeUndefined();
     });
 
+    it('exposes options for MULTIPLE_CHOICE/LISTENING_COMPREHENSION content without ever including correctIndex (E21 T2)', async () => {
+      const prisma = fakePrisma();
+      prisma.lesson.findUnique.mockResolvedValue({
+        ...publishedLesson,
+        activities: [
+          {
+            ...publishedLesson.activities[0],
+            exercises: [
+              {
+                ...publishedLesson.activities[0]!.exercises[0],
+                correctAnswer: { correctIndex: 0, options: ['Hola', 'Adiós'] },
+              },
+            ],
+          },
+        ],
+      });
+      const service = new CourseCatalogService(prisma as unknown as PrismaClient);
+
+      const result = await service.getLessonDetail('lesson-1');
+
+      const exercise = result.activities[0]?.exercises[0] as unknown as Record<string, unknown>;
+      expect(exercise.content).toEqual({ options: ['Hola', 'Adiós'] });
+    });
+
+    it('derives independently-sorted leftItems/rightItems for MATCHING, never the true paired order (E21 T2)', async () => {
+      const prisma = fakePrisma();
+      prisma.lesson.findUnique.mockResolvedValue({
+        ...publishedLesson,
+        activities: [
+          {
+            ...publishedLesson.activities[0],
+            exercises: [
+              {
+                ...publishedLesson.activities[0]!.exercises[0],
+                type: 'MATCHING',
+                correctAnswer: {
+                  pairs: [
+                    { left: 'Hola', right: 'Hello' },
+                    { left: 'Adios', right: 'Goodbye' },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      });
+      const service = new CourseCatalogService(prisma as unknown as PrismaClient);
+
+      const result = await service.getLessonDetail('lesson-1');
+
+      const exercise = result.activities[0]?.exercises[0] as unknown as Record<string, unknown>;
+      expect(exercise.content).toEqual({
+        leftItems: ['Adios', 'Hola'],
+        rightItems: ['Goodbye', 'Hello'],
+      });
+    });
+
+    it('returns null content for FILL_BLANK/TRANSLATION/SPEAKING_PROMPT (free text or unsubmittable, no structured content)', async () => {
+      const prisma = fakePrisma();
+      prisma.lesson.findUnique.mockResolvedValue({
+        ...publishedLesson,
+        activities: [
+          {
+            ...publishedLesson.activities[0],
+            exercises: [
+              {
+                ...publishedLesson.activities[0]!.exercises[0],
+                type: 'FILL_BLANK',
+                correctAnswer: { acceptable: ['Hola'] },
+              },
+            ],
+          },
+        ],
+      });
+      const service = new CourseCatalogService(prisma as unknown as PrismaClient);
+
+      const result = await service.getLessonDetail('lesson-1');
+
+      const exercise = result.activities[0]?.exercises[0] as unknown as Record<string, unknown>;
+      expect(exercise.content).toBeNull();
+    });
+
     it("throws 404 when the lesson's own course is a draft", async () => {
       const prisma = fakePrisma();
       prisma.lesson.findUnique.mockResolvedValue({

@@ -54,6 +54,40 @@ function toWireLesson(
   };
 }
 
+/**
+ * Derives a safe, answer-key-free view of `correctAnswer` per `ExerciseType`
+ * (E21 T2 — see `exercisePublicViewSchema`'s own doc comment for the real
+ * gap this closes). `MATCHING`'s `leftItems`/`rightItems` are each sorted
+ * independently, not left in `correctAnswer.pairs`'s own paired order —
+ * same-index correlation between the two arrays would trivially reveal the
+ * correct pairing otherwise; the real submission shape
+ * (`{ matches: [{ left, right }] }`) matches by text value, not index, so
+ * this reordering changes nothing about how an attempt is actually scored.
+ */
+function publicExerciseContent(exercise: Exercise): ExercisePublicView['content'] {
+  switch (exercise.type) {
+    case 'MULTIPLE_CHOICE':
+    case 'LISTENING_COMPREHENSION': {
+      const answer = exercise.correctAnswer as { options?: string[] } | null;
+      return answer?.options ? { options: answer.options } : null;
+    }
+    case 'MATCHING': {
+      const answer = exercise.correctAnswer as {
+        pairs?: Array<{ left: string; right: string }>;
+      } | null;
+      if (!answer?.pairs) {
+        return null;
+      }
+      return {
+        leftItems: [...new Set(answer.pairs.map((pair) => pair.left))].sort(),
+        rightItems: [...new Set(answer.pairs.map((pair) => pair.right))].sort(),
+      };
+    }
+    default:
+      return null;
+  }
+}
+
 function toWireExercisePublicView(exercise: Exercise): ExercisePublicView {
   return {
     id: exercise.id,
@@ -62,6 +96,7 @@ function toWireExercisePublicView(exercise: Exercise): ExercisePublicView {
     type: exercise.type,
     prompt: exercise.prompt,
     order: exercise.order,
+    content: publicExerciseContent(exercise),
   };
 }
 

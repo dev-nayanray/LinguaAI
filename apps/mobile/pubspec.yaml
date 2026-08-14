@@ -47,11 +47,27 @@ dependencies:
   # for mobile — Keychain on iOS, Keystore on Android).
   flutter_secure_storage: ^9.2.2
 
+  # Offline write-queue local persistence (ADR-062, §6.3) — sqflite rather
+  # than the design doc's originally-proposed `drift`: a disclosed
+  # deviation for the same reason ADR-061 chose plain Riverpod over its
+  # codegen variant (no `build_runner` step, lower risk in an environment
+  # where it's never been exercised). Raw SQL over a real SQLite file, not
+  # a typed query builder — the queue's own schema (endpoint, payload,
+  # createdAt) is simple enough not to need one.
+  sqflite: ^2.4.1
+  path_provider: ^2.1.5
+  path: ^1.9.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
 
   mocktail: ^1.0.4
+
+  # A pure-Dart/FFI sqflite backend for tests — real SQLite, no platform
+  # channel, so OfflineQueue's tests run against an actual database file,
+  # not a mock.
+  sqflite_common_ffi: ^2.3.4
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
