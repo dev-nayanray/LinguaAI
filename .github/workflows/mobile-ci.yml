@@ -1,0 +1,61 @@
+name: Mobile CI
+
+# DEPLOYMENT.md §8 (E21 T5): kept architecturally separate from ci.yml's
+# own web/API deploy cadence — a genuinely different toolchain (Dart/
+# Flutter, not Node/pnpm/Turborepo), so it can't share a job with
+# anything in ci.yml. Unlike every other workflow in this repo (ci.yml's
+# own header comment: "runs on every PR"), this one is `paths:`-filtered
+# to `apps/mobile/**` — a deliberate, disclosed deviation from that
+# convention: `flutter pub get`/`analyze`/`test` cost real CI minutes an
+# apps/api-only or packages/*-only PR has no reason to pay.
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/mobile-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/mobile-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-and-test:
+    name: flutter analyze + flutter test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Pinned to the exact commit v2.23.0 resolves to (confirmed via
+      # GitHub's own API at the time this workflow was written), matching
+      # ci.yml's own SHA-pinning discipline — every `uses:` in this repo
+      # is pinned to a commit, never a mutable tag.
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+
+      - name: Generate design tokens (ADR-024)
+        run: |
+          cd ../..
+          node packages/ui/scripts/generate-tokens.mjs --out apps/mobile/assets/design_tokens.json
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter analyze
+        run: flutter analyze
+
+      - name: flutter test
+        run: flutter test

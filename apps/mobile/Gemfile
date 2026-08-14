@@ -1,0 +1,7 @@
+source "https://rubygems.org"
+
+# Pinned to the exact version this Fastfile pair was genuinely verified
+# against in this environment (`fastlane lanes` run successfully from
+# both android/ and ios/) — matches this repo's own "pin dependencies,
+# don't float" discipline (pnpm-lock.yaml, SHA-pinned GitHub Actions).
+gem "fastlane", "2.238.0"

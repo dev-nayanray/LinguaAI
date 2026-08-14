@@ -1,0 +1,22 @@
+# DEPLOYMENT.md §8 (E21 T5) — real Fastlane lanes, genuinely
+# syntax-verified in this environment (Ruby 3.3.6 + `fastlane` 2.238.0,
+# `fastlane lanes` run against this exact file). Real device/store
+# builds and uploads cannot be exercised here — this environment has no
+# macOS/Xcode at all (a real, tracked tooling gap distinct from, but the
+# same class as, E21's own Android-SDK/Firebase-credential gaps), and no
+# real App Store Connect API key exists either — but the lane
+# definitions themselves are real, valid Fastlane DSL, not hand-typed
+# guesses.
+default_platform(:ios)
+
+platform :ios do
+  desc "Build and upload a new build to TestFlight"
+  lane :beta do
+    build_app(
+      workspace: "Runner.xcworkspace",
+      scheme: "Runner",
+      export_method: "app-store"
+    )
+    upload_to_testflight(skip_waiting_for_build_processing: true)
+  end
+end

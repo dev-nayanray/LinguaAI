@@ -1,0 +1,2 @@
+package_name(ENV["ANDROID_PACKAGE_NAME"] || "com.linguaai.mobile")
+json_key_file(ENV["PLAY_STORE_JSON_KEY_PATH"]) if ENV["PLAY_STORE_JSON_KEY_PATH"]

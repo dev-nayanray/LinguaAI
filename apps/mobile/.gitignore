@@ -38,6 +38,15 @@ migrate_working_dir/
 # packages/ui's own tokens.css).
 /assets/design_tokens.json
 
+# Fastlane (E21 T5) — real output from an actual lane run (screenshots,
+# reports, local env overrides), never source; Fastfile/Appfile
+# themselves are real, committed source.
+**/fastlane/report.xml
+**/fastlane/Preview.html
+**/fastlane/screenshots/**/*.png
+**/fastlane/test_output
+.bundle/
+
 # Symbolication related
 app.*.symbols
 

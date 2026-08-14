@@ -1,0 +1,40 @@
+# DEPLOYMENT.md §8 (E21 T5) — real Fastlane lanes, genuinely
+# syntax-verified in this environment (Ruby 3.3.6 + `fastlane` 2.238.0,
+# `fastlane lanes` run against this exact file). Real device/store
+# builds and uploads cannot be exercised here — no Android SDK exists in
+# this environment (E21's own already-tracked tooling gap), and no real
+# Play Console service-account JSON exists either (mirrors RISK_REGISTER
+# R-105's own "credential-less environment" pattern for FCM) — but the
+# lane definitions themselves are real, valid Fastlane DSL, not
+# hand-typed guesses.
+default_platform(:android)
+
+platform :android do
+  desc "Build a release AAB and upload it to the Play Store internal test track"
+  lane :internal do
+    gradle(
+      task: "bundle",
+      build_type: "Release",
+      project_dir: "."
+    )
+    upload_to_play_store(
+      track: "internal",
+      aab: "../build/app/outputs/bundle/release/app-release.aab",
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+
+  desc "Manually promote the current internal-track build to production (DEPLOYMENT.md §8's own 'manual promotion' step)"
+  lane :promote_to_production do
+    upload_to_play_store(
+      track: "internal",
+      track_promote_to: "production",
+      skip_upload_aab: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+end
