@@ -144,6 +144,16 @@
         "default": "./dist-cjs/analytics/index.js"
       }
     },
+    "./exams": {
+      "import": {
+        "types": "./dist/exams/index.d.ts",
+        "default": "./dist/exams/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/exams/index.d.ts",
+        "default": "./dist-cjs/exams/index.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "scripts": {

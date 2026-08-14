@@ -1,0 +1,228 @@
+// Exams & certification bounded context (ARCHITECTURE.md §2.1, DATABASE.md
+// §2.8). First real content (E19 T1, design doc §5/§6.1): ExamProgram/
+// MockTestSection admin authoring, learner-facing exam discovery, and the
+// fixed-form mock-test-attempt lifecycle. No @linguaai/types/exams module
+// exists yet (none of this bounded context's models were ever exposed
+// through that package) — this module defines its own canonical shapes
+// directly, the same precedent @linguaai/validation/analytics already
+// established for a bounded context with no @linguaai/types counterpart.
+
+import { z } from 'zod';
+import { skillSchema } from '../learning/index.js';
+
+// --- MockTestSection.content — real, skill-specific shapes (design doc §6.1) ---
+
+const mockTestQuestionSchema = z.object({
+  prompt: z.string().min(1),
+  options: z.array(z.string().min(1)).min(2),
+  correctIndex: z.number().int().min(0),
+});
+export type MockTestQuestion = z.infer<typeof mockTestQuestionSchema>;
+
+/** Learner-facing view of a question — `correctIndex` never leaves the server before a section is scored (design doc §6.1, mirrors `exercisePublicViewSchema`'s own discipline, E8 T2). */
+const mockTestQuestionPublicViewSchema = mockTestQuestionSchema.omit({ correctIndex: true });
+export type MockTestQuestionPublicView = z.infer<typeof mockTestQuestionPublicViewSchema>;
+
+export const readingSectionContentSchema = z.object({
+  passage: z.string().min(1),
+  questions: z.array(mockTestQuestionSchema).min(1),
+});
+export type ReadingSectionContent = z.infer<typeof readingSectionContentSchema>;
+
+export const listeningSectionContentSchema = z.object({
+  audioUrl: z.string().url(),
+  transcript: z.string().min(1),
+  questions: z.array(mockTestQuestionSchema).min(1),
+});
+export type ListeningSectionContent = z.infer<typeof listeningSectionContentSchema>;
+
+/** `POST .../sections` request shape for LISTENING — `audioUrl` doesn't exist yet at request time; `apps/api` synthesizes it server-side (design doc §6.1), the same request/persisted asymmetry `draftListeningActivityContentSchema` already established (E12 T1). */
+export const draftListeningSectionContentSchema = z.object({
+  script: z.string().min(1),
+  questions: z.array(mockTestQuestionSchema).min(1),
+});
+export type DraftListeningSectionContent = z.infer<typeof draftListeningSectionContentSchema>;
+
+export const writingSectionContentSchema = z.object({
+  taskPrompt: z.string().min(1),
+  minWords: z.number().int().min(1),
+});
+export type WritingSectionContent = z.infer<typeof writingSectionContentSchema>;
+
+export const speakingSectionContentSchema = z.object({
+  prompts: z.array(z.string().min(1)).min(1),
+});
+export type SpeakingSectionContent = z.infer<typeof speakingSectionContentSchema>;
+
+function addNestedContentIssues(
+  result: z.SafeParseReturnType<unknown, unknown>,
+  ctx: z.RefinementCtx,
+): void {
+  if (!result.success) {
+    for (const issue of result.error.issues) {
+      ctx.addIssue({ ...issue, path: ['content', ...issue.path] });
+    }
+  }
+}
+
+/** Applied to a *real, persisted* `MockTestSection` row being read back (admin view — includes `correctIndex`). */
+function refinePersistedSectionContent(
+  data: { skill: string; content: Record<string, unknown> },
+  ctx: z.RefinementCtx,
+): void {
+  if (data.skill === 'READING') {
+    addNestedContentIssues(readingSectionContentSchema.safeParse(data.content), ctx);
+  } else if (data.skill === 'LISTENING') {
+    addNestedContentIssues(listeningSectionContentSchema.safeParse(data.content), ctx);
+  } else if (data.skill === 'WRITING') {
+    addNestedContentIssues(writingSectionContentSchema.safeParse(data.content), ctx);
+  } else if (data.skill === 'SPEAKING') {
+    addNestedContentIssues(speakingSectionContentSchema.safeParse(data.content), ctx);
+  }
+}
+
+/** Applied to `createMockTestSectionRequestSchema` only — LISTENING's own real `audioUrl` doesn't exist yet at request time (§ above); every other skill has no such server-side transform. */
+function refineCreateSectionContent(
+  data: { skill: string; content: Record<string, unknown> },
+  ctx: z.RefinementCtx,
+): void {
+  if (data.skill === 'READING') {
+    addNestedContentIssues(readingSectionContentSchema.safeParse(data.content), ctx);
+  } else if (data.skill === 'LISTENING') {
+    addNestedContentIssues(draftListeningSectionContentSchema.safeParse(data.content), ctx);
+  } else if (data.skill === 'WRITING') {
+    addNestedContentIssues(writingSectionContentSchema.safeParse(data.content), ctx);
+  } else if (data.skill === 'SPEAKING') {
+    addNestedContentIssues(speakingSectionContentSchema.safeParse(data.content), ctx);
+  }
+}
+
+// --- ExamProgram (admin authoring, §5) ---
+
+export const examProgramSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  code: z.string(),
+  description: z.string().nullable(),
+  rubric: z.record(z.string(), z.unknown()),
+  isActive: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type ExamProgramResponse = z.infer<typeof examProgramSchema>;
+
+export const createExamProgramRequestSchema = z.object({
+  name: z.string().min(1),
+  code: z
+    .string()
+    .min(1)
+    .regex(/^[A-Z0-9_]+$/, 'code must be uppercase alphanumeric/underscore'),
+  description: z.string().min(1).optional(),
+  rubric: z.record(z.string(), z.unknown()),
+});
+export type CreateExamProgramRequest = z.infer<typeof createExamProgramRequestSchema>;
+
+export const updateExamProgramRequestSchema = z.object({
+  name: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+  rubric: z.record(z.string(), z.unknown()).optional(),
+  isActive: z.boolean().optional(),
+});
+export type UpdateExamProgramRequest = z.infer<typeof updateExamProgramRequestSchema>;
+
+// --- MockTestSection (admin authoring, nested under its own program, §5) ---
+
+export const mockTestSectionBaseSchema = z.object({
+  id: z.string().uuid(),
+  examProgramId: z.string().uuid(),
+  skill: skillSchema,
+  order: z.number().int(),
+  content: z.record(z.string(), z.unknown()),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export const mockTestSectionSchema = mockTestSectionBaseSchema.superRefine(
+  refinePersistedSectionContent,
+);
+export type MockTestSectionResponse = z.infer<typeof mockTestSectionSchema>;
+
+export const createMockTestSectionRequestSchema = z
+  .object({
+    skill: skillSchema,
+    order: z.number().int().min(0),
+    content: z.record(z.string(), z.unknown()),
+  })
+  .superRefine(refineCreateSectionContent);
+export type CreateMockTestSectionRequest = z.infer<typeof createMockTestSectionRequestSchema>;
+
+export const updateMockTestSectionRequestSchema = z.object({
+  order: z.number().int().min(0).optional(),
+  content: z.record(z.string(), z.unknown()).optional(),
+});
+export type UpdateMockTestSectionRequest = z.infer<typeof updateMockTestSectionRequestSchema>;
+
+// --- Learner-facing views (§3.4, §5) ---
+
+/** `correctAnswer`-shaped fields never leave the server before a section is scored — same discipline as `exercisePublicViewSchema` (E8 T2). */
+function refinePublicSectionContent(
+  data: { skill: string; content: Record<string, unknown> },
+  ctx: z.RefinementCtx,
+): void {
+  if (data.skill === 'READING') {
+    addNestedContentIssues(
+      readingSectionContentSchema
+        .extend({ questions: z.array(mockTestQuestionPublicViewSchema).min(1) })
+        .safeParse(data.content),
+      ctx,
+    );
+  } else if (data.skill === 'LISTENING') {
+    addNestedContentIssues(
+      listeningSectionContentSchema
+        .extend({ questions: z.array(mockTestQuestionPublicViewSchema).min(1) })
+        .safeParse(data.content),
+      ctx,
+    );
+  } else if (data.skill === 'WRITING') {
+    addNestedContentIssues(writingSectionContentSchema.safeParse(data.content), ctx);
+  } else if (data.skill === 'SPEAKING') {
+    addNestedContentIssues(speakingSectionContentSchema.safeParse(data.content), ctx);
+  }
+}
+
+export const mockTestSectionPublicViewSchema = mockTestSectionBaseSchema.superRefine(
+  refinePublicSectionContent,
+);
+export type MockTestSectionPublicView = z.infer<typeof mockTestSectionPublicViewSchema>;
+
+export const examProgramListResponseSchema = z.object({
+  data: z.array(examProgramSchema.omit({ rubric: true })),
+});
+export type ExamProgramListResponse = z.infer<typeof examProgramListResponseSchema>;
+
+// --- Mock-test-attempt lifecycle (§3.4, §5) ---
+
+export const mockTestAttemptStatusSchema = z.enum(['IN_PROGRESS', 'COMPLETED', 'ABANDONED']);
+
+export const mockTestAttemptSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  examProgramId: z.string().uuid(),
+  status: mockTestAttemptStatusSchema,
+  overallScore: z.number().nullable(),
+  startedAt: z.string().datetime(),
+  completedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type MockTestAttemptResponse = z.infer<typeof mockTestAttemptSchema>;
+
+export const startMockTestAttemptRequestSchema = z.object({
+  examProgramId: z.string().uuid(),
+});
+export type StartMockTestAttemptRequest = z.infer<typeof startMockTestAttemptRequestSchema>;
+
+/** `POST /v1/mock-test-attempts`'s own real response (design doc §3.4) — a fixed-form test serves every section's full public-view content immediately, not one item at a time. */
+export const startMockTestAttemptResponseSchema = mockTestAttemptSchema.extend({
+  sections: z.array(mockTestSectionPublicViewSchema),
+});
+export type StartMockTestAttemptResponse = z.infer<typeof startMockTestAttemptResponseSchema>;

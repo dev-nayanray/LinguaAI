@@ -1,0 +1,9 @@
+export { ExamCatalogController } from './exam-catalog.controller.js';
+export { ExamCatalogService } from './exam-catalog.service.js';
+export { ExamProgramAdminController } from './exam-program-admin.controller.js';
+export { ExamProgramService } from './exam-program.service.js';
+export { ExamsModule } from './exams.module.js';
+export { MockTestAttemptsController } from './mock-test-attempts.controller.js';
+export { MockTestAttemptsService } from './mock-test-attempts.service.js';
+export { MockTestSectionAdminController } from './mock-test-section-admin.controller.js';
+export { MockTestSectionService } from './mock-test-section.service.js';

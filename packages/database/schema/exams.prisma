@@ -72,8 +72,38 @@ model ExamProgram {
   mockTestAttempts     MockTestAttempt[]
   certificates         Certificate[]
   knowledgeBaseEntries ExamProgramKnowledgeBaseEntry[]
+  mockTestSections     MockTestSection[]
 
   @@map("ExamProgram")
+}
+
+/// E19 T1 — the real content home for exam mock-test material (design doc
+/// §3.1/§4, ADR-057). `ExamProgram.rubric` is scoring metadata only, never
+/// test content — deliberately not folded into content.prisma's own
+/// Activity/Course hierarchy either, since IELTS content has no curriculum
+/// position (Level/Unit/Lesson), only an ExamProgram/skill/order position.
+/// One section per skill per exam program (`@@unique`) — a real IELTS
+/// paper has exactly one Reading, one Listening, one Writing, one Speaking
+/// section; this is the real cardinality, not an artificial simplification.
+model MockTestSection {
+  id            String @id @default(uuid()) @db.Uuid
+  examProgramId String @db.Uuid
+  skill         Skill
+  order         Int
+  /// Real, skill-specific shape (design doc §6.1), validated at the
+  /// application layer (packages/validation/src/exams) — the same "Prisma
+  /// stores Json, Zod validates the shape" split content.prisma's own
+  /// header comment already establishes for Activity.content (E12 T1).
+  content Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  examProgram ExamProgram @relation(fields: [examProgramId], references: [id])
+
+  @@unique([examProgramId, skill])
+  @@index([examProgramId])
+  @@map("MockTestSection")
 }
 
 model ExamProgramKnowledgeBaseEntry {

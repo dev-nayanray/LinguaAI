@@ -214,9 +214,19 @@ async function seedKnowledgeBaseEntries() {
       content:
         'Speaks at length without noticeable effort or loss of coherence; uses some less common and idiomatic vocabulary.',
     },
+    {
+      // E19 T1 — the second real EXAM_RUBRIC entry, extending E13 T1's own
+      // single seeded row rather than duplicating its embedding-computation
+      // approach. Grounds ExamScoringService's own future RAG-scoring call
+      // for the WRITING section (design doc §6.2, T2's own scope).
+      category: 'EXAM_RUBRIC' as const,
+      title: 'IELTS Writing Task 2 Band 7 Descriptor',
+      content:
+        'Addresses all parts of the task with a clear position throughout; presents, extends and supports main ideas, though there may be a tendency to overgeneralise; uses a sufficient range of vocabulary to allow some flexibility and precision; uses a variety of complex structures with good control, though grammatical errors persist.',
+    },
   ];
 
-  const created: { id: string }[] = [];
+  const created: { id: string; title: string }[] = [];
   for (const entry of entries) {
     let row = await prisma.knowledgeBaseEntry.findFirst({ where: { title: entry.title } });
     row ??= await prisma.knowledgeBaseEntry.create({
@@ -241,7 +251,7 @@ async function seedKnowledgeBaseEntries() {
  * is raw SQL, the same pre-existing, documented constraint
  * `RagRetrievalService`'s own reads already work within.
  */
-async function seedGrammarReferenceEntries(): Promise<{ id: string }[]> {
+async function seedGrammarReferenceEntries(): Promise<{ id: string; title: string }[]> {
   const spanish = await prisma.language.findUnique({ where: { code: 'es' } });
   const entries = [
     {
@@ -261,7 +271,7 @@ async function seedGrammarReferenceEntries(): Promise<{ id: string }[]> {
     },
   ];
 
-  const created: { id: string }[] = [];
+  const created: { id: string; title: string }[] = [];
   for (const entry of entries) {
     const existing = await prisma.knowledgeBaseEntry.findFirst({ where: { title: entry.title } });
     if (existing) {
@@ -291,7 +301,7 @@ async function seedGrammarReferenceEntries(): Promise<{ id: string }[]> {
         },
       });
     }
-    created.push({ id });
+    created.push({ id, title: entry.title });
   }
   console.log(`Seeded ${entries.length} GRAMMAR_REFERENCE KnowledgeBaseEntry rows.`);
   return created;
@@ -558,14 +568,48 @@ async function seedBadgesAndMissions() {
   console.log(`Seeded ${missions.length} Mission rows (dates refreshed relative to now).`);
 }
 
-async function seedExamPrograms(knowledgeBaseEntries: { id: string }[]) {
-  // DATABASE.md §2.8's own named 6 programs. isActive here is illustrative
-  // (IELTS/TOEFL picked as the two most globally common) — ROADMAP.md
-  // scopes MVP to "1-2 active exam programs" but does not name which;
-  // this is not a product decision, just a functional default.
+async function seedExamPrograms(knowledgeBaseEntries: { id: string; title: string }[]) {
+  // DATABASE.md §2.8's own named 6 programs. Only IELTS is `isActive` —
+  // E19's own design doc (§1) deliberately scopes MVP to exactly one real,
+  // fully-working exam program (real MockTestSection content, real RAG-
+  // grounded rubric), not the "1-2 active" TOEFL row this seed previously
+  // marked active with no real section content behind it (a real gap: an
+  // "active" program a learner could start an attempt against with zero
+  // sections to serve). TOEFL's own real content is Version 1.1 fast-
+  // follow scope (ROADMAP.md), so it stays a real row, inactive, until it
+  // has real sections of its own.
   const programs = [
-    { code: 'IELTS', name: 'IELTS Academic', rubric: { bands: 9 }, isActive: true },
-    { code: 'TOEFL', name: 'TOEFL iBT', rubric: { maxScore: 120 }, isActive: true },
+    {
+      code: 'IELTS',
+      name: 'IELTS Academic',
+      rubric: {
+        bandScale: { min: 0, max: 9, step: 0.5 },
+        overallScoreFormula:
+          'Arithmetic mean of the four section band scores, rounded to the nearest 0.5 (IELTS’s own real, publicly documented convention).',
+        criteria: {
+          READING: [
+            'Objectively scored — raw correct-answer count converted to a band via a published IELTS conversion table.',
+          ],
+          LISTENING: [
+            'Objectively scored — raw correct-answer count converted to a band via a published IELTS conversion table.',
+          ],
+          WRITING: [
+            'Task Achievement',
+            'Coherence and Cohesion',
+            'Lexical Resource',
+            'Grammatical Range and Accuracy',
+          ],
+          SPEAKING: [
+            'Fluency and Coherence',
+            'Lexical Resource',
+            'Grammatical Range and Accuracy',
+            'Pronunciation',
+          ],
+        },
+      },
+      isActive: true,
+    },
+    { code: 'TOEFL', name: 'TOEFL iBT', rubric: { maxScore: 120 }, isActive: false },
     {
       code: 'JLPT',
       name: 'JLPT',
@@ -592,18 +636,113 @@ async function seedExamPrograms(knowledgeBaseEntries: { id: string }[]) {
   console.log(`Seeded ${programs.length} ExamProgram rows.`);
 
   const ielts = await prisma.examProgram.findUniqueOrThrow({ where: { code: 'IELTS' } });
-  const ieltsRubricEntry = knowledgeBaseEntries.find((e) => e.id); // any seeded entry is fine for this illustrative link
-  if (ieltsRubricEntry) {
+  const ieltsRubricEntries = knowledgeBaseEntries.filter((e) => e.title.startsWith('IELTS '));
+  for (const entry of ieltsRubricEntries) {
     const existingLink = await prisma.examProgramKnowledgeBaseEntry.findFirst({
-      where: { examProgramId: ielts.id, knowledgeBaseEntryId: ieltsRubricEntry.id },
+      where: { examProgramId: ielts.id, knowledgeBaseEntryId: entry.id },
     });
     if (!existingLink) {
       await prisma.examProgramKnowledgeBaseEntry.create({
-        data: { examProgramId: ielts.id, knowledgeBaseEntryId: ieltsRubricEntry.id },
+        data: { examProgramId: ielts.id, knowledgeBaseEntryId: entry.id },
       });
     }
-    console.log('Seeded 1 ExamProgramKnowledgeBaseEntry link (IELTS).');
   }
+  console.log(`Seeded ${ieltsRubricEntries.length} ExamProgramKnowledgeBaseEntry link(s) (IELTS).`);
+
+  // Real MockTestSection content (E19 T1, design doc §6.1) — the four real
+  // IELTS sections, one per skill. LISTENING's own `audioUrl` is a real,
+  // clearly-marked placeholder (RFC 2606 `example.com`), not genuinely
+  // synthesized speech — seed.ts runs standalone (no NestJS DI), so it has
+  // no access to `SpeechServiceClientService`'s own real
+  // `speech-service`→OpenAI TTS→S3 pipeline the way `apps/api`'s admin
+  // create-section endpoint does. That real synthesis path is proven by a
+  // dedicated e2e test against the live admin endpoint itself (the same
+  // "prove the real path through its own real caller, not through seed
+  // data" precedent E13 T1's own `computeEmbedding` null-fallback already
+  // established for a different credential gap), not by this seed script.
+  const sections: {
+    skill: 'READING' | 'LISTENING' | 'WRITING' | 'SPEAKING';
+    order: number;
+    content: Record<string, unknown>;
+  }[] = [
+    {
+      skill: 'READING',
+      order: 0,
+      content: {
+        passage:
+          'The migration of monarch butterflies spans thousands of kilometres across North America. Unlike most migratory species, no single butterfly completes the entire round trip; instead, the journey unfolds across four or five generations, each one flying a portion of the route before laying eggs and dying, leaving the next generation to continue.',
+        questions: [
+          {
+            prompt: 'How many generations typically complete one full migration cycle?',
+            options: ['One', 'Two', 'Four or five', 'Ten or more'],
+            correctIndex: 2,
+          },
+          {
+            prompt: 'What happens to a butterfly after it lays its eggs?',
+            options: ['It continues the journey', 'It dies', 'It hibernates', 'It returns home'],
+            correctIndex: 1,
+          },
+        ],
+      },
+    },
+    {
+      skill: 'LISTENING',
+      order: 1,
+      content: {
+        audioUrl: 'https://example.com/mock-tests/ielts-listening-section-1.mp3',
+        transcript:
+          'Welcome to the university library orientation. Today we will cover opening hours, borrowing limits, and how to reserve a study room online.',
+        questions: [
+          {
+            prompt: 'What is the first topic covered in the orientation?',
+            options: ['Borrowing limits', 'Opening hours', 'Study rooms', 'Fines'],
+            correctIndex: 1,
+          },
+        ],
+      },
+    },
+    {
+      skill: 'WRITING',
+      order: 2,
+      content: {
+        taskPrompt:
+          'The chart below shows the percentage of households with internet access in three countries between 2000 and 2020. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.',
+        minWords: 150,
+      },
+    },
+    {
+      skill: 'SPEAKING',
+      order: 3,
+      content: {
+        prompts: [
+          'Tell me about the town or city where you grew up.',
+          'Describe a skill you would like to learn. You should say what the skill is, why you want to learn it, and how you would go about learning it.',
+          'Do you think the skills people need for work are changing? Why?',
+        ],
+      },
+    },
+  ];
+
+  let sectionsSeeded = 0;
+  for (const section of sections) {
+    const existing = await prisma.mockTestSection.findUnique({
+      where: { examProgramId_skill: { examProgramId: ielts.id, skill: section.skill } },
+    });
+    if (!existing) {
+      await prisma.mockTestSection.create({
+        data: {
+          examProgramId: ielts.id,
+          skill: section.skill,
+          order: section.order,
+          content: section.content as Prisma.InputJsonValue,
+        },
+      });
+      sectionsSeeded += 1;
+    }
+  }
+  console.log(
+    `Seeded ${sectionsSeeded} new MockTestSection row(s) (IELTS, ${sections.length} total expected).`,
+  );
 }
 
 async function seedPlans() {

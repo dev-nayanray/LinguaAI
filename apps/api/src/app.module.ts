@@ -14,6 +14,7 @@ import { AuditModule } from './modules/audit/index.js';
 import { AuthModule } from './modules/auth/index.js';
 import { BillingModule } from './modules/billing/index.js';
 import { CourseModule } from './modules/course/index.js';
+import { ExamsModule } from './modules/exams/index.js';
 import { GamificationModule } from './modules/gamification/index.js';
 import { NotificationPreferencesModule } from './modules/notification-preferences/index.js';
 import { OrganizationsModule } from './modules/organizations/index.js';
@@ -46,6 +47,7 @@ import { WritingModule } from './modules/writing/index.js';
     BillingModule,
     NotificationPreferencesModule,
     AnalyticsModule,
+    ExamsModule,
   ],
   controllers: [HealthController],
   providers: [
