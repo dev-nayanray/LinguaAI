@@ -188,6 +188,21 @@ describe('AuthModule (e2e)', () => {
 
       expect(res.status).toBe(401);
     });
+
+    it('X-Client-Platform: mobile returns the refresh token in the JSON body and sets no cookie (E21 T1, no cookie jar)', async () => {
+      const email = uniqueEmail();
+      await request(app.getHttpServer()).post('/v1/auth/register').send(validRegisterBody(email));
+
+      const res = await request(app.getHttpServer())
+        .post('/v1/auth/login')
+        .set('X-Client-Platform', 'mobile')
+        .send({ email, password: 'correct horse battery staple' });
+
+      expect(res.status).toBe(200);
+      expect(typeof res.body.accessToken).toBe('string');
+      expect(typeof res.body.refreshToken).toBe('string');
+      expect(res.headers['set-cookie']).toBeUndefined();
+    });
   });
 
   describe('POST /v1/auth/refresh', () => {
@@ -267,6 +282,26 @@ describe('AuthModule (e2e)', () => {
         .post('/v1/auth/refresh')
         .set('Cookie', `refreshToken=${extractRefreshToken(winner)}`);
       expect(postRaceAttempt.status).toBe(401);
+    });
+
+    it('a body-supplied refresh token (mobile, E21 T1, no cookie jar) rotates and returns the new token in the body', async () => {
+      const email = uniqueEmail();
+      await request(app.getHttpServer()).post('/v1/auth/register').send(validRegisterBody(email));
+      const loginRes = await request(app.getHttpServer())
+        .post('/v1/auth/login')
+        .set('X-Client-Platform', 'mobile')
+        .send({ email, password: 'correct horse battery staple' });
+      const refreshToken = loginRes.body.refreshToken as string;
+
+      const res = await request(app.getHttpServer())
+        .post('/v1/auth/refresh')
+        .send({ refreshToken });
+
+      expect(res.status).toBe(200);
+      expect(typeof res.body.accessToken).toBe('string');
+      expect(typeof res.body.refreshToken).toBe('string');
+      expect(res.body.refreshToken).not.toBe(refreshToken);
+      expect(res.headers['set-cookie']).toBeUndefined();
     });
   });
 

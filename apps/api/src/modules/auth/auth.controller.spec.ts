@@ -49,7 +49,7 @@ describe('AuthController', () => {
     it('issues a session for req.user, sets an httpOnly/SameSite=strict refresh cookie, and returns the login response', async () => {
       const authService = {
         loginResponse: jest.fn().mockResolvedValue({
-          result: { accessToken: 'jwt-token', user: publicUser },
+          result: { status: 'AUTHENTICATED', accessToken: 'jwt-token', user: publicUser },
           refreshToken: 'raw-refresh-token',
         }),
       } as unknown as AuthService;
@@ -71,13 +71,17 @@ describe('AuthController', () => {
         'raw-refresh-token',
         expect.objectContaining({ httpOnly: true, sameSite: 'strict' }),
       );
-      expect(result).toEqual({ accessToken: 'jwt-token', user: publicUser });
+      expect(result).toEqual({
+        status: 'AUTHENTICATED',
+        accessToken: 'jwt-token',
+        user: publicUser,
+      });
     });
 
     it('falls back to a null device label when no user-agent header is present', async () => {
       const authService = {
         loginResponse: jest.fn().mockResolvedValue({
-          result: { accessToken: 'jwt-token', user: publicUser },
+          result: { status: 'AUTHENTICATED', accessToken: 'jwt-token', user: publicUser },
           refreshToken: 'raw-refresh-token',
         }),
       } as unknown as AuthService;
@@ -90,6 +94,33 @@ describe('AuthController', () => {
       await controller.login(req, res);
 
       expect(authService.loginResponse).toHaveBeenCalledWith(publicUser, null, null);
+    });
+
+    it('returns the refresh token in the JSON body, and sets no cookie, for an X-Client-Platform: mobile caller (E21 T1)', async () => {
+      const authService = {
+        loginResponse: jest.fn().mockResolvedValue({
+          result: { status: 'AUTHENTICATED', accessToken: 'jwt-token', user: publicUser },
+          refreshToken: 'raw-refresh-token',
+        }),
+      } as unknown as AuthService;
+      const controller = new AuthController(authService);
+      const cookie = jest.fn();
+      const res = { cookie } as unknown as Response;
+      const req = {
+        user: publicUser,
+        headers: { 'x-client-platform': 'mobile' },
+        ip: '1.2.3.4',
+      } as unknown as Parameters<AuthController['login']>[0];
+
+      const result = await controller.login(req, res);
+
+      expect(cookie).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        status: 'AUTHENTICATED',
+        accessToken: 'jwt-token',
+        user: publicUser,
+        refreshToken: 'raw-refresh-token',
+      });
     });
   });
 
@@ -107,7 +138,7 @@ describe('AuthController', () => {
         AuthController['refresh']
       >[0];
 
-      const result = await controller.refresh(req, res);
+      const result = await controller.refresh(req, {}, res);
 
       expect(authService.refreshSession).toHaveBeenCalledWith('old-raw-refresh');
       expect(cookie).toHaveBeenCalledWith(
@@ -118,13 +149,31 @@ describe('AuthController', () => {
       expect(result).toEqual({ accessToken: 'new-jwt' });
     });
 
-    it('throws UnauthorizedException when no refresh-token cookie is present, without calling AuthService', async () => {
+    it('falls back to a body-supplied refresh token and returns the rotated token in the body (mobile, E21 T1, no cookie jar)', async () => {
+      const authService = {
+        refreshSession: jest
+          .fn()
+          .mockResolvedValue({ accessToken: 'new-jwt', refreshToken: 'new-raw-refresh' }),
+      } as unknown as AuthService;
+      const controller = new AuthController(authService);
+      const cookie = jest.fn();
+      const res = { cookie } as unknown as Response;
+      const req = { cookies: {} } as unknown as Parameters<AuthController['refresh']>[0];
+
+      const result = await controller.refresh(req, { refreshToken: 'old-raw-refresh' }, res);
+
+      expect(authService.refreshSession).toHaveBeenCalledWith('old-raw-refresh');
+      expect(cookie).not.toHaveBeenCalled();
+      expect(result).toEqual({ accessToken: 'new-jwt', refreshToken: 'new-raw-refresh' });
+    });
+
+    it('throws UnauthorizedException when neither a cookie nor a body refresh token is present, without calling AuthService', async () => {
       const authService = { refreshSession: jest.fn() } as unknown as AuthService;
       const controller = new AuthController(authService);
       const res = { cookie: jest.fn() } as unknown as Response;
       const req = { cookies: {} } as unknown as Parameters<AuthController['refresh']>[0];
 
-      await expect(controller.refresh(req, res)).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(controller.refresh(req, {}, res)).rejects.toBeInstanceOf(UnauthorizedException);
       expect(authService.refreshSession).not.toHaveBeenCalled();
     });
   });
@@ -142,13 +191,29 @@ describe('AuthController', () => {
         cookies: { refreshToken: 'raw-refresh-token' },
       } as unknown as Parameters<AuthController['logout']>[0];
 
-      await controller.logout(req, res);
+      await controller.logout(req, {}, res);
 
       expect(authService.logout).toHaveBeenCalledWith('raw-refresh-token', 'u-1');
       expect(clearCookie).toHaveBeenCalledWith(
         'refreshToken',
         expect.objectContaining({ httpOnly: true }),
       );
+    });
+
+    it('falls back to a body-supplied refresh token when no cookie is present (mobile, E21 T1)', async () => {
+      const authService = {
+        logout: jest.fn().mockResolvedValue(undefined),
+      } as unknown as AuthService;
+      const controller = new AuthController(authService);
+      const res = { clearCookie: jest.fn() } as unknown as Response;
+      const req = {
+        user: { userId: 'u-1', role: 'USER', organizationId: null, orgRole: null },
+        cookies: {},
+      } as unknown as Parameters<AuthController['logout']>[0];
+
+      await controller.logout(req, { refreshToken: 'raw-refresh-token' }, res);
+
+      expect(authService.logout).toHaveBeenCalledWith('raw-refresh-token', 'u-1');
     });
   });
 

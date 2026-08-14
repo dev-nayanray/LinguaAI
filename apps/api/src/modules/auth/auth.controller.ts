@@ -17,6 +17,7 @@ import {
   mfaChallengeRequestSchema,
   passwordResetConfirmSchema,
   passwordResetRequestSchema,
+  refreshRequestBodySchema,
   registerRequestSchema,
   type LoginResponse,
   type MfaChallengeRequest,
@@ -25,6 +26,7 @@ import {
   type PasswordResetRequest,
   type PasswordResetRequestResponse,
   type PublicUser,
+  type RefreshRequestBody,
   type RefreshResponse,
   type RegisterRequest,
 } from '@linguaai/validation/identity';
@@ -48,6 +50,18 @@ import type { RequestUser } from './strategies/jwt.strategy.js';
 
 const REFRESH_TOKEN_COOKIE = 'refreshToken';
 const REFRESH_TOKEN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Mobile has no cookie jar (ADR-018) — a request carrying this header gets
+ * its refresh token in the JSON body instead of a `Set-Cookie` (E21 T1).
+ * A plain, self-declared client-type header, not a security boundary: it
+ * only ever changes *where* the already-authorized caller's own token is
+ * placed, never who is authorized.
+ */
+const MOBILE_CLIENT_HEADER = 'x-client-platform';
+
+function isMobileClient(req: Request): boolean {
+  return req.headers[MOBILE_CLIENT_HEADER] === 'mobile';
+}
 
 interface AuthenticatedRequest extends Request {
   user: PublicUser;
@@ -120,13 +134,25 @@ export class AuthController {
       req.ip ?? null,
     );
 
-    // httpOnly/secure/SameSite=strict cookie for web (Part 8, SECURITY.md
-    // §2, already decided) — the refresh token never appears in the JSON
-    // body.
-    if (refreshToken) {
-      setRefreshCookie(res, refreshToken);
+    if (!refreshToken) {
+      return result;
+    }
+    if (result.status !== 'AUTHENTICATED') {
+      // Unreachable in practice — AuthService.loginResponse only ever
+      // returns a truthy refreshToken alongside AUTHENTICATED — but kept
+      // as an explicit, type-safe guard rather than an unchecked spread
+      // onto a union type.
+      return result;
     }
 
+    // Mobile (E21 T1): the token travels in the JSON body, no cookie is
+    // set — there is no cookie jar to receive it. Web (unchanged): httpOnly/
+    // secure/SameSite=strict cookie only (Part 8, SECURITY.md §2), the
+    // refresh token never appears in the JSON body.
+    if (isMobileClient(req)) {
+      return { ...result, refreshToken };
+    }
+    setRefreshCookie(res, refreshToken);
     return result;
   }
 
@@ -156,39 +182,50 @@ export class AuthController {
       deviceLabel,
       req.ip ?? null,
     );
+    if (isMobileClient(req) && result.status === 'AUTHENTICATED') {
+      return { ...result, refreshToken };
+    }
     setRefreshCookie(res, refreshToken);
     return result;
   }
 
   /**
    * Rotates the refresh token and mints a new access token (Part 8) — auth
-   * is the refresh-token cookie itself, not a Bearer access token (Part 6's
+   * is the refresh-token itself, not a Bearer access token (Part 6's
    * endpoint table), so this route has no guard; `AuthService.refreshSession`
-   * is where the actual verification/atomicity happens.
+   * is where the actual verification/atomicity happens. Web supplies it via
+   * cookie (unchanged); mobile (E21 T1, no cookie jar) supplies it via the
+   * request body instead — cookie takes precedence when, implausibly, both
+   * are present, since it's the original, longer-established transport.
    */
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Rotate refresh token → new access token' })
   async refresh(
     @Req() req: RequestWithCookies,
+    @Body(new ZodValidationPipe(refreshRequestBodySchema)) body: RefreshRequestBody,
     @Res({ passthrough: true }) res: Response,
   ): Promise<RefreshResponse> {
-    const rawRefreshToken = req.cookies[REFRESH_TOKEN_COOKIE];
+    const cookieToken = req.cookies[REFRESH_TOKEN_COOKIE];
+    const rawRefreshToken = cookieToken ?? body.refreshToken;
     if (!rawRefreshToken) {
       throw new UnauthorizedException('No refresh token provided');
     }
 
     const { accessToken, refreshToken } = await this.authService.refreshSession(rawRefreshToken);
-    setRefreshCookie(res, refreshToken);
 
-    return { accessToken };
+    if (cookieToken) {
+      setRefreshCookie(res, refreshToken);
+      return { accessToken };
+    }
+    return { accessToken, refreshToken };
   }
 
   /**
    * "Revoke current session" (Part 6). Auth is the Bearer access token
    * (proves who's calling); which session to revoke is resolved from the
-   * refresh-token cookie — see `AuthService.logout`'s doc comment for why,
-   * and the known non-cookie-client gap it doesn't solve.
+   * refresh-token cookie, or — mobile, E21 T1, the same no-cookie-jar
+   * fallback as `refresh` above — the request body.
    */
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -197,9 +234,11 @@ export class AuthController {
   @ApiOperation({ summary: 'Revoke current session' })
   async logout(
     @Req() req: JwtAuthenticatedRequest & RequestWithCookies,
+    @Body(new ZodValidationPipe(refreshRequestBodySchema)) body: RefreshRequestBody,
     @Res({ passthrough: true }) res: Response,
   ): Promise<void> {
-    await this.authService.logout(req.cookies[REFRESH_TOKEN_COOKIE], req.user.userId);
+    const rawRefreshToken = req.cookies[REFRESH_TOKEN_COOKIE] ?? body.refreshToken;
+    await this.authService.logout(rawRefreshToken, req.user.userId);
     res.clearCookie(REFRESH_TOKEN_COOKIE, cookieOptions());
   }
 

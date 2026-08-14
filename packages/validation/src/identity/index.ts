@@ -245,17 +245,25 @@ export const publicUserSchema = userSchema.omit({
 export type PublicUser = z.infer<typeof publicUserSchema>;
 
 /**
- * `POST /v1/auth/login` response body — the refresh token travels only in
- * the httpOnly cookie (Part 8), never in this JSON body. Same
- * discriminated-union shape as `oauthCallbackResponseSchema` (E2-T11/T12),
- * for the identical reason: Part 6's endpoint table marks
- * `POST /v1/auth/mfa/challenge` as returning "Partial session (post-password,
- * pre-MFA)" for an MFA-enrolled `ADMIN`/`ENTERPRISE_ADMIN` (ADR-011's
- * mandatory step-up), so this endpoint cannot always return a full session —
- * `MFA_REQUIRED` carries only the opaque `challengeToken` the caller resubmits
- * to `/mfa/challenge`, never an access token. `AUTHENTICATED`'s own shape
- * (`accessToken`/`user`, no `status` narrowing needed by existing callers)
- * is unchanged from before this union existed — every e2e/unit test reading
+ * `POST /v1/auth/login` response body — for a web caller (no
+ * `X-Client-Platform: mobile` request header, E21 T1) the refresh token
+ * travels only in the httpOnly cookie (Part 8), never in this JSON body,
+ * exactly as originally designed. `refreshToken` is optional here
+ * specifically for the mobile transport (ADR-018 already committed to
+ * "secure device storage" for mobile, which requires the raw token be
+ * reachable at all — a native HTTP client has no cookie jar to receive
+ * Part 8's `Set-Cookie` from) — `AuthController.login` only ever populates
+ * it for a request carrying that header, so every existing web-facing
+ * caller's response shape is unchanged. Same discriminated-union shape as
+ * `oauthCallbackResponseSchema` (E2-T11/T12), for the identical reason:
+ * Part 6's endpoint table marks `POST /v1/auth/mfa/challenge` as returning
+ * "Partial session (post-password, pre-MFA)" for an MFA-enrolled
+ * `ADMIN`/`ENTERPRISE_ADMIN` (ADR-011's mandatory step-up), so this
+ * endpoint cannot always return a full session — `MFA_REQUIRED` carries
+ * only the opaque `challengeToken` the caller resubmits to `/mfa/challenge`,
+ * never an access token. `AUTHENTICATED`'s own shape (`accessToken`/`user`,
+ * no `status` narrowing needed by existing callers) is otherwise unchanged
+ * from before this union existed — every e2e/unit test reading
  * `loginRes.body.accessToken` directly still resolves, since that key is
  * still present at the top level for the (overwhelmingly common) non-MFA
  * case.
@@ -265,16 +273,44 @@ export const loginResponseSchema = z.discriminatedUnion('status', [
     status: z.literal('AUTHENTICATED'),
     accessToken: z.string().min(1),
     user: publicUserSchema,
+    refreshToken: z.string().min(1).optional(),
   }),
   z.object({ status: z.literal('MFA_REQUIRED'), challengeToken: z.string().min(1) }),
 ]);
 export type LoginResponse = z.infer<typeof loginResponseSchema>;
 
-/** `POST /v1/auth/refresh` response body (E2-T9) — same "no refresh token in the JSON body" rule as login; the rotated token is set via cookie only. */
+/**
+ * `POST /v1/auth/refresh` response body (E2-T9) — same web/mobile
+ * transport split as `loginResponseSchema` above: `refreshToken` is present
+ * only when the rotated token isn't also being set via cookie (i.e., the
+ * request itself supplied its current refresh token via body, not cookie —
+ * `AuthController.refresh`'s own mobile branch, E21 T1).
+ */
 export const refreshResponseSchema = z.object({
   accessToken: z.string().min(1),
+  refreshToken: z.string().min(1).optional(),
 });
 export type RefreshResponse = z.infer<typeof refreshResponseSchema>;
+
+/**
+ * `POST /v1/auth/refresh`/`POST /v1/auth/logout` request body (E21 T1) —
+ * the mobile-only alternative to the `refreshToken` cookie: optional so an
+ * ordinary web request (cookie-based, no body at all) still validates.
+ * `AuthController` reads the cookie first when present; this body is only
+ * ever consulted as the fallback for a caller with no cookie jar. `.default({})`
+ * (not a plain `z.object()`) is load-bearing: a cookie-only caller sends no
+ * request body and no JSON `Content-Type` at all, so Express's body parser
+ * never runs and `req.body` is `undefined`, not `{}` — a real, found bug
+ * (E21 T1) where the first draft of this schema 400'd every ordinary
+ * cookie-based `/refresh`/`logout` call before it ever reached the
+ * controller's own cookie-vs-body branching.
+ */
+export const refreshRequestBodySchema = z
+  .object({
+    refreshToken: z.string().min(1).optional(),
+  })
+  .default({});
+export type RefreshRequestBody = z.infer<typeof refreshRequestBodySchema>;
 
 /** OAuth callback response bodies (E2-T11/T12). `authenticated` matches `LoginResponse`'s shape; `link_required` is Part 8/High-3's "distinct response directing the caller to log in with their existing password first" — never an auto-link, never an error; `linked` is the authenticated-linking flow's (`POST /v1/users/me/oauth-accounts`, E2-T12) success response. */
 export const oauthCallbackResponseSchema = z.discriminatedUnion('status', [
