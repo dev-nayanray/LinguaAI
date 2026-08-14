@@ -39,6 +39,10 @@
  * exponential backoff" claim, previously unbacked by any real BullMQ
  * `attempts`/`backoff` option) is also closed here — every fan-out
  * `queue.add()` call now carries a real retry policy.
+ *
+ * `analytics-service` registered as the platform's third real consumer at
+ * E17 T1 — exactly the extension point this design already promised
+ * ("no other code changes required"), confirmed true in practice.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -51,7 +55,11 @@ import { Queue } from 'bullmq';
  * here is the entire integration surface for a future service to safely
  * become a third/fourth/etc. real consumer of the same event stream.
  */
-export const DOMAIN_EVENT_CONSUMERS = ['recommendation-engine', 'notification-service'] as const;
+export const DOMAIN_EVENT_CONSUMERS = [
+  'recommendation-engine',
+  'notification-service',
+  'analytics-service',
+] as const;
 export type DomainEventConsumer = (typeof DOMAIN_EVENT_CONSUMERS)[number];
 
 /**

@@ -806,6 +806,15 @@ importers:
 
   services/analytics-service:
     dependencies:
+      '@linguaai/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@linguaai/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@linguaai/events':
+        specifier: workspace:*
+        version: link:../../packages/events
       '@linguaai/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -818,6 +827,9 @@ importers:
       '@nestjs/platform-express':
         specifier: ^11.0.0
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)
+      bullmq:
+        specifier: ^5.0.0
+        version: 5.81.3
       reflect-metadata:
         specifier: ^0.2.0
         version: 0.2.2
@@ -843,6 +855,9 @@ importers:
       '@types/supertest':
         specifier: ^6.0.0
         version: 6.0.3
+      dotenv-cli:
+        specifier: ^7.4.4
+        version: 7.4.4
       jest:
         specifier: ^29.7.0
         version: 29.7.0(@types/node@22.20.1)
