@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { getPrismaClient } from '@linguaai/database';
-import { createDomainEventsQueue, type DomainEvent } from '@linguaai/events';
+import { createDomainEventsConsumerQueue, type DomainEvent } from '@linguaai/events';
 import cookieParser from 'cookie-parser';
 import type { Job } from 'bullmq';
 import { authenticator } from 'otplib';
@@ -32,7 +32,7 @@ describe('CourseModule (e2e)', () => {
   const createdUserIds: string[] = [];
   const createdLanguageIds: string[] = [];
   const createdCourseIds: string[] = [];
-  let inspectorQueue: ReturnType<typeof createDomainEventsQueue>;
+  let inspectorQueue: ReturnType<typeof createDomainEventsConsumerQueue>;
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
@@ -47,7 +47,10 @@ describe('CourseModule (e2e)', () => {
     if (!redisUrl) {
       throw new Error('REDIS_URL is not set — this suite requires a real Redis instance.');
     }
-    inspectorQueue = createDomainEventsQueue(redisUrl);
+    // E16 T1: inspects `recommendation-engine`'s own real, registered
+    // consumer queue (closes RISK_REGISTER R-89's per-consumer fan-out),
+    // not the old shared, competing-consumers queue.
+    inspectorQueue = createDomainEventsConsumerQueue(redisUrl, 'recommendation-engine');
   });
 
   /**
@@ -70,7 +73,7 @@ describe('CourseModule (e2e)', () => {
     while (Date.now() < deadline) {
       const jobs = await inspectorQueue.getJobs(['waiting', 'active', 'completed']);
       const match = jobs.find(
-        (job) => job.name === type && (job.data as DomainEvent).userId === userId,
+        (job: Job<DomainEvent>) => job.name === type && job.data.userId === userId,
       );
       if (match) {
         return match as Job<DomainEvent>;
@@ -120,6 +123,18 @@ describe('CourseModule (e2e)', () => {
     for (const courseId of createdCourseIds) {
       await cleanupCourse(courseId);
     }
+    // This suite's own exercise-attempt tests are real activity signals
+    // (E14 T1/T2) -- a learner completing a lesson here can genuinely
+    // earn a real, globally-seeded Badge (e.g. "First Lesson Complete")
+    // or self-enroll into a real, globally-active Mission, same as any
+    // other learner anywhere in the suite. Both must be cleaned up before
+    // deleting the User row, or `UserBadge_userId_fkey`/
+    // `UserMission_userId_fkey` trips (a real gap found and fixed during
+    // E14 T2's own verification).
+    await setupPrisma.userBadge.deleteMany({ where: { userId: { in: createdUserIds } } });
+    await setupPrisma.userMission.deleteMany({ where: { userId: { in: createdUserIds } } });
+    await setupPrisma.userXP.deleteMany({ where: { userId: { in: createdUserIds } } });
+    await setupPrisma.streak.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.refreshToken.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.session.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.consentRecord.deleteMany({ where: { userId: { in: createdUserIds } } });
@@ -757,9 +772,8 @@ describe('CourseModule (e2e)', () => {
       const jobsBeforeReattempt = (
         await inspectorQueue.getJobs(['waiting', 'active', 'completed'])
       ).filter(
-        (j) =>
-          j.name === 'learning.lesson.completed' &&
-          (j.data as DomainEvent).userId === learner.userId,
+        (j: Job<DomainEvent>) =>
+          j.name === 'learning.lesson.completed' && j.data.userId === learner.userId,
       ).length;
       await auth(
         request(app.getHttpServer()).post(`/v1/exercises/${exerciseIds.MULTIPLE_CHOICE}/attempts`),
@@ -768,9 +782,8 @@ describe('CourseModule (e2e)', () => {
       const jobsAfterReattempt = (
         await inspectorQueue.getJobs(['waiting', 'active', 'completed'])
       ).filter(
-        (j) =>
-          j.name === 'learning.lesson.completed' &&
-          (j.data as DomainEvent).userId === learner.userId,
+        (j: Job<DomainEvent>) =>
+          j.name === 'learning.lesson.completed' && j.data.userId === learner.userId,
       ).length;
       expect(jobsAfterReattempt).toBe(jobsBeforeReattempt);
     }, 30000);

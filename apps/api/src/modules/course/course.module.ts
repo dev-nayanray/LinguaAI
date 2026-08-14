@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { AiEngineClientModule } from '../ai-engine/ai-engine-client.module.js';
 import { AuthModule } from '../auth/index.js';
+import { GamificationModule } from '../gamification/index.js';
 import { ContentAuthoringController } from './content-authoring.controller.js';
 import { ContentVersioningService } from './content-versioning.service.js';
 import { CourseCatalogController } from './course-catalog.controller.js';
@@ -20,11 +21,14 @@ import { LessonContentService } from './lesson-content.service.js';
  * blast-radius justification, `AssessmentModule`/`RecommendationsModule`
  * already made the same call for their own domains). Imports `AuthModule`
  * for `RolesGuard`/`MfaGuard` (`ADMIN`-only admin routes) and `AuthGuard('jwt')`
- * (any authenticated user, learner-facing routes), and `AiEngineClientModule`
- * (T4) for `ContentAuthoringController`'s own AI-assisted drafting call.
+ * (any authenticated user, learner-facing routes), `AiEngineClientModule`
+ * (T4) for `ContentAuthoringController`'s own AI-assisted drafting call,
+ * and `GamificationModule` (E14 T1, ADR-054) — `ExerciseAttemptsService`'s
+ * own synchronous, in-process consumer of
+ * `GamificationService.recordActivity()`.
  */
 @Module({
-  imports: [AuthModule, AiEngineClientModule],
+  imports: [AuthModule, AiEngineClientModule, GamificationModule],
   controllers: [
     CourseHierarchyController,
     LessonContentController,

@@ -234,4 +234,34 @@ describe('createAuthClient', () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-1');
   });
+
+  it('request() reaches an arbitrary non-auth path as a Bearer-authenticated call', async () => {
+    useSessionStore.getState().setSession('tok-1', user);
+    fetchMock.mockResolvedValueOnce(fakeResponse(200, { data: [], meta: { page: 1 } }));
+
+    const result = await client.request<{ data: unknown[]; meta: { page: number } }>(
+      '/v1/courses?page=1',
+    );
+
+    expect(result).toEqual({ data: [], meta: { page: 1 } });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://api.test.local/v1/courses?page=1');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-1');
+  });
+
+  it('request() shares the same silent-refresh-and-retry behavior as the built-in auth methods', async () => {
+    useSessionStore.getState().setSession('stale-token', user);
+    fetchMock
+      .mockResolvedValueOnce(
+        fakeResponse(401, { error: { code: 'AUTH_REQUIRED', message: 'expired' } }),
+      ) // first request() attempt
+      .mockResolvedValueOnce(fakeResponse(200, { accessToken: 'fresh-token' })) // /v1/auth/refresh
+      .mockResolvedValueOnce(fakeResponse(200, { ...user, profile: null })) // /v1/users/me
+      .mockResolvedValueOnce(fakeResponse(200, { id: 'daily-goal-1' })); // retried request()
+
+    const result = await client.request<{ id: string }>('/v1/daily-goals/today');
+
+    expect(result).toEqual({ id: 'daily-goal-1' });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
 });

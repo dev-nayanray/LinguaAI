@@ -765,7 +765,9 @@ describe('AuthService', () => {
 
     it('creates a single-use PasswordResetToken and returns EMAIL_SENT for a real password account — identical response shape to the no-account case', async () => {
       servicePrisma.user.findUnique.mockResolvedValue(makeUserRow());
-      servicePrisma.passwordResetToken.create.mockResolvedValue({ id: 'prt-new' });
+      servicePrisma.passwordResetToken.create.mockResolvedValue({
+        id: '99999999-9999-4999-8999-999999999999',
+      });
 
       const result = await authService.requestPasswordReset('user@test.local');
 

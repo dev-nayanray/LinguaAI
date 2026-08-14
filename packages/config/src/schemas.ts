@@ -89,6 +89,27 @@ export const appRoleDatabaseEnvSchema = z.object({
   APP_DATABASE_URL: z.string().url(),
 });
 
+/**
+ * The `app_service_role` (`BYPASSRLS`)-only mirror of `appRoleDatabaseEnvSchema`
+ * above — for a `services/*` consumer (`notification-service`, E16 T2) that
+ * has no ordinary RLS-scoped writes of its own (its own `NotificationLog`/
+ * `NotificationPreference` tables carry no RLS policy at all) but genuinely
+ * needs BYPASSRLS to read an arbitrary user's `email`/`displayName` from a
+ * background BullMQ worker with no per-request session context to set
+ * `app.current_user_id` against — the same "no `app.current_user_id` exists
+ * yet" class of pre-session case `appDatabaseEnvSchema`'s own doc comment
+ * already names (registration, login's pre-auth lookup, bootstrap, GDPR
+ * erasure), just from a background consumer rather than an HTTP request.
+ * Kept as its own minimal fragment, not `appDatabaseEnvSchema` wholesale —
+ * a service with no ordinary `app_role`-scoped use case is never required
+ * to configure a credential it will never use, the same reasoning
+ * `appRoleDatabaseEnvSchema`'s own header comment already established.
+ */
+export const serviceRoleDatabaseEnvSchema = z.object({
+  APP_SERVICE_ROLE_DATABASE_URL: z.string().url(),
+});
+export type ServiceRoleDatabaseEnv = z.infer<typeof serviceRoleDatabaseEnvSchema>;
+
 /** Consumed by apps/api's AuthModule (E2-T8/T9) — JWT signing/verification only; database URLs live in `appDatabaseEnvSchema`. */
 export const authEnvSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(1),
@@ -179,6 +200,51 @@ export const aiEngineClientEnvSchema = z.object({
   AI_ENGINE_URL: z.string().url(),
 });
 export type AiEngineClientEnv = z.infer<typeof aiEngineClientEnvSchema>;
+
+/**
+ * Consumed by `apps/api`'s own new `BillingModule` (E15 T1, design doc
+ * §6.1). Deliberately **not** `.min(1)` on the Stripe fields, unlike every
+ * other real-provider-key schema above (`ANTHROPIC_API_KEY`,
+ * `AZURE_SPEECH_KEY`, ...) — those are all loaded by a *separately-booted*
+ * service process (`services/ai-engine`, `services/speech-service`) whose
+ * own e2e tests never run through `apps/api`'s own `AppModule`. Stripe
+ * integrates directly, in-process, inside `apps/api` (no independent-
+ * scaling/isolation reason for a new service, CLAUDE.md's own bar), so a
+ * strict, non-empty requirement here would fail *every* `apps/api` e2e
+ * test's own `app.init()` in this environment, where no real Stripe test
+ * key is provisioned (`.env`'s own `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`
+ * are present but empty). The real Stripe API boundary is a separate,
+ * `overrideProvider`-stubbable `StripeClientService` — the same "mock the
+ * boundary, not the module" precedent `AiEngineClientService`/
+ * `writing-submissions.e2e-spec.ts` already established (E13).
+ */
+export const billingEnvSchema = z.object({
+  STRIPE_SECRET_KEY: z.string(),
+  STRIPE_WEBHOOK_SECRET: z.string(),
+});
+export type BillingEnv = z.infer<typeof billingEnvSchema>;
+
+/**
+ * Consumed by `services/notification-service`'s own new email module (E16
+ * T2). `.env`'s own already-committed `EMAIL_PROVIDER=smtp` (predates this
+ * epic) is respected, not overridden — `nodemailer`'s SMTP transport is
+ * the direct fit, sending through the real local `mailhog` container in
+ * dev/test (`docker-compose.yml`) and a real SMTP relay in production.
+ * `SMTP_USER`/`SMTP_PASSWORD` are blank-tolerant (`optionalNonEmptyString`)
+ * since MailHog needs no auth — a strict `.min(1)` here would fail this
+ * environment's own `.env`, the same blank-tolerance reasoning
+ * `optionalUrl`'s own header comment already established for optional
+ * fields.
+ */
+export const emailEnvSchema = z.object({
+  EMAIL_PROVIDER: z.literal('smtp'),
+  SMTP_HOST: z.string().min(1),
+  SMTP_PORT: z.coerce.number().int().positive(),
+  SMTP_USER: optionalNonEmptyString,
+  SMTP_PASSWORD: optionalNonEmptyString,
+  EMAIL_FROM: z.string().email(),
+});
+export type EmailEnv = z.infer<typeof emailEnvSchema>;
 
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
 export type ServerUrlEnv = z.infer<typeof serverUrlEnvSchema>;
