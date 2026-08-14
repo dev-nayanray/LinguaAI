@@ -103,6 +103,10 @@ export default function ProfilePage() {
           Billing & subscription
         </a>
 
+        <a href="/settings/notifications" className="block text-sm text-primary hover:underline">
+          Notification settings
+        </a>
+
         <Button
           variant="secondary"
           className="w-full"
