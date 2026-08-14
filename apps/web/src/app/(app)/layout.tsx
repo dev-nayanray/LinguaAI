@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useSessionStore } from '@linguaai/auth-client';
 import { Button } from '@linguaai/ui';
 import { BottomTabBar, Sidebar, type NavItem } from '@linguaai/ui/navigation';
-import { BookOpen, LayoutDashboard, User } from 'lucide-react';
+import { BookMarked, BookOpen, LayoutDashboard, User } from 'lucide-react';
 
 import { ThemeToggle } from '@/components/theme-toggle';
 import { authClient } from '@/lib/auth-client';
@@ -17,6 +17,11 @@ const NAV_ITEMS: NavItem[] = [
     icon: <LayoutDashboard className="h-4 w-4" aria-hidden="true" />,
   },
   { href: '/courses', label: 'Courses', icon: <BookOpen className="h-4 w-4" aria-hidden="true" /> },
+  {
+    href: '/vocabulary',
+    label: 'Vocabulary',
+    icon: <BookMarked className="h-4 w-4" aria-hidden="true" />,
+  },
   { href: '/profile', label: 'Profile', icon: <User className="h-4 w-4" aria-hidden="true" /> },
 ];
 

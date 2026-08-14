@@ -76,12 +76,20 @@ export default function DashboardPage() {
       )}
 
       <h2 className="mt-10 type-heading-lg text-text">Continue learning</h2>
-      <div className="mt-4 grid grid-cols-1 gap-4 tablet:grid-cols-2">
+      <div className="mt-4 grid grid-cols-1 gap-4 tablet:grid-cols-3">
         <a href="/courses">
           <Card className="h-full transition-colors duration-micro hover:bg-surface-muted">
             <CardHeader>
               <CardTitle>Browse courses</CardTitle>
               <CardDescription>Pick a lesson from your structured curriculum.</CardDescription>
+            </CardHeader>
+          </Card>
+        </a>
+        <a href="/vocabulary">
+          <Card className="h-full transition-colors duration-micro hover:bg-surface-muted">
+            <CardHeader>
+              <CardTitle>Vocabulary</CardTitle>
+              <CardDescription>Search the catalog and review your saved words.</CardDescription>
             </CardHeader>
           </Card>
         </a>
