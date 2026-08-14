@@ -8,6 +8,7 @@ import {
   type AnalyticsDateRangeQuery,
   type CefrProgressionQuery,
   type CefrProgressionResponse,
+  type OverviewResponse,
 } from '@linguaai/validation/analytics';
 
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
@@ -46,5 +47,16 @@ export class AnalyticsController {
     @Query(new ZodValidationPipe(analyticsDateRangeQuerySchema)) query: AnalyticsDateRangeQuery,
   ): Promise<AiCostResponse> {
     return this.analyticsService.getAiCost(query);
+  }
+
+  @Get('overview')
+  @ApiOperation({
+    summary:
+      'Core business metrics (PRD.md §7) — activation, D1/D7/D30 retention, Free→Premium conversion, AI cost per active user',
+  })
+  async getOverview(
+    @Query(new ZodValidationPipe(analyticsDateRangeQuerySchema)) query: AnalyticsDateRangeQuery,
+  ): Promise<OverviewResponse> {
+    return this.analyticsService.getOverview(query);
   }
 }

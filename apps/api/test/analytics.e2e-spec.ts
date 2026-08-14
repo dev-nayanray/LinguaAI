@@ -34,6 +34,11 @@ describe('AnalyticsController (e2e)', () => {
   });
 
   afterAll(async () => {
+    // Belt-and-suspenders — the overview test's own inline cleanup covers
+    // the ordinary path; this catches anything left behind by an early
+    // test failure.
+    await setupPrisma.entitlement.deleteMany({ where: { userId: { in: createdUserIds } } });
+    await setupPrisma.learningEvent.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.aIUsageLog.deleteMany({ where: { userId: { in: createdUserIds } } });
     await setupPrisma.proficiencyLevelHistory.deleteMany({
       where: { userId: { in: createdUserIds } },
@@ -212,5 +217,113 @@ describe('AnalyticsController (e2e)', () => {
       .set('Authorization', `Bearer ${admin.accessToken}`);
 
     expect(res.status).toBe(400);
+  });
+
+  describe('GET overview', () => {
+    // A fixed, far-past window, isolated from every other test in this
+    // suite's own real-time `freshSession()` registrations — a cohort
+    // query scoped to "now" would otherwise sweep in every other test's
+    // own users, making an exact-count assertion meaningless.
+    const cohortFrom = new Date('2020-01-01T00:00:00.000Z');
+    const cohortTo = new Date('2020-01-02T00:00:00.000Z');
+
+    /** Registers a real user, then backdates `createdAt` into this describe block's own isolated cohort window. */
+    async function freshCohortUser(withinWindowOffsetMs: number): Promise<RegisteredSession> {
+      const session = await freshSession();
+      await setupPrisma.user.update({
+        where: { id: session.userId },
+        data: { createdAt: new Date(cohortFrom.getTime() + withinWindowOffsetMs) },
+      });
+      return session;
+    }
+
+    it('reports real activation/retention/conversion/AI-cost figures over a controlled, isolated signup cohort', async () => {
+      const admin = await freshAdminSession();
+
+      // u1: activated (both real events within 24h) + returns on D1 + converts to Premium.
+      const u1 = await freshCohortUser(0);
+      // u2: not activated (only one of the two required event types), never returns, stays FREE.
+      const u2 = await freshCohortUser(60 * 60 * 1000);
+
+      await setupPrisma.learningEvent.createMany({
+        data: [
+          {
+            eventId: randomUUID(),
+            type: 'assessment.attempt.completed',
+            version: 1,
+            occurredAt: new Date(cohortFrom.getTime() + 2 * 60 * 60 * 1000),
+            producedBy: 'apps/api',
+            userId: u1.userId,
+            payload: {},
+          },
+          {
+            eventId: randomUUID(),
+            type: 'learning.lesson.completed',
+            version: 1,
+            occurredAt: new Date(cohortFrom.getTime() + 5 * 60 * 60 * 1000),
+            producedBy: 'apps/api',
+            userId: u1.userId,
+            payload: {},
+          },
+          // u1's own D1 return — exactly one calendar day after signup.
+          {
+            eventId: randomUUID(),
+            type: 'learning.exercise.answered',
+            version: 1,
+            occurredAt: new Date(cohortFrom.getTime() + 24 * 60 * 60 * 1000 + 60 * 60 * 1000),
+            producedBy: 'apps/api',
+            userId: u1.userId,
+            payload: {},
+          },
+          {
+            eventId: randomUUID(),
+            type: 'assessment.attempt.completed',
+            version: 1,
+            occurredAt: new Date(cohortFrom.getTime() + 2 * 60 * 60 * 1000),
+            producedBy: 'apps/api',
+            userId: u2.userId,
+            payload: {},
+          },
+        ],
+      });
+
+      const premiumPlan = await setupPrisma.plan.upsert({
+        where: { tier: 'PREMIUM' },
+        create: { tier: 'PREMIUM', name: 'Premium', limits: {}, isActive: true },
+        update: {},
+      });
+      await setupPrisma.entitlement.create({
+        data: { userId: u1.userId, planId: premiumPlan.id, limits: {}, usage: {} },
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(
+          `/v1/admin/analytics/overview?from=${cohortFrom.toISOString()}&to=${cohortTo.toISOString()}`,
+        )
+        .set('Authorization', `Bearer ${admin.accessToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.activation).toEqual({ cohortSize: 2, count: 1, rate: 0.5 });
+      expect(res.body.retention.d1).toEqual({ cohortSize: 2, count: 1, rate: 0.5 });
+      expect(res.body.conversion).toEqual({ cohortSize: 2, count: 1, rate: 0.5 });
+
+      await setupPrisma.entitlement.delete({ where: { userId: u1.userId } });
+      await setupPrisma.learningEvent.deleteMany({
+        where: { userId: { in: [u1.userId, u2.userId] } },
+      });
+    });
+
+    it('defaults to the last 30 days when from/to are omitted', async () => {
+      const admin = await freshAdminSession();
+
+      const res = await request(app.getHttpServer())
+        .get('/v1/admin/analytics/overview')
+        .set('Authorization', `Bearer ${admin.accessToken}`);
+
+      expect(res.status).toBe(200);
+      const to = new Date(res.body.to as string).getTime();
+      const from = new Date(res.body.from as string).getTime();
+      expect(to - from).toBe(30 * 24 * 60 * 60 * 1000);
+    });
   });
 });

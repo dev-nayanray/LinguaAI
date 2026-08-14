@@ -80,3 +80,42 @@ export const aiCostResponseSchema = z.object({
   byModelId: z.array(aiCostByDimensionSchema),
 });
 export type AiCostResponse = z.infer<typeof aiCostResponseSchema>;
+
+/**
+ * `GET /v1/admin/analytics/overview` response (E17 T3, design doc §5) —
+ * PRD.md §7's own named core business metrics: activation, D1/D7/D30
+ * retention, Free→Premium conversion, AI cost per active user. The
+ * cohort for every metric here is "users whose `User.createdAt` falls in
+ * `[from, to]`" — `from`/`to` default to the last 30 days when omitted
+ * (a reasonable admin-report default, not PRD-specified).
+ */
+export const rateWithCountsSchema = z.object({
+  cohortSize: z.number().int().nonnegative(),
+  count: z.number().int().nonnegative(),
+  /** `count / cohortSize`, or `null` when the cohort is empty — a real "no data yet" signal, not a misleading 0%. */
+  rate: z.number().min(0).max(1).nullable(),
+});
+export type RateWithCounts = z.infer<typeof rateWithCountsSchema>;
+
+export const overviewResponseSchema = z.object({
+  from: z.string().datetime(),
+  to: z.string().datetime(),
+  /** PRD.md §7 — "% of signups completing assessment + first lesson within 24h." */
+  activation: rateWithCountsSchema,
+  /** Of the same signup cohort, the % with a real recorded event on the exact calendar day N days after signup. */
+  retention: z.object({
+    d1: rateWithCountsSchema,
+    d7: rateWithCountsSchema,
+    d30: rateWithCountsSchema,
+  }),
+  /** Of the same signup cohort, the % with a currently non-FREE `Entitlement`. */
+  conversion: rateWithCountsSchema,
+  aiCostPerActiveUser: z.object({
+    totalCostUsdMicros: z.number().int().nonnegative(),
+    /** A user with at least one real `LearningEvent` in `[from, to]`. */
+    activeUserCount: z.number().int().nonnegative(),
+    /** `totalCostUsdMicros / activeUserCount`, or `null` when there are no active users. */
+    costPerActiveUserUsdMicros: z.number().nonnegative().nullable(),
+  }),
+});
+export type OverviewResponse = z.infer<typeof overviewResponseSchema>;
