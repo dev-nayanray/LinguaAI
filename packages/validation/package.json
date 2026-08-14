@@ -134,6 +134,16 @@
         "default": "./dist-cjs/notification/index.js"
       }
     },
+    "./analytics": {
+      "import": {
+        "types": "./dist/analytics/index.d.ts",
+        "default": "./dist/analytics/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/analytics/index.d.ts",
+        "default": "./dist-cjs/analytics/index.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
