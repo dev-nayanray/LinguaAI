@@ -8,6 +8,7 @@ import type {
 
 import { APP_PRISMA_CLIENT } from '../../database/index.js';
 import type { RequestUser } from '../auth/strategies/jwt.strategy.js';
+import { CertificateService } from '../certificates/certificate.service.js';
 import { GamificationService } from '../gamification/index.js';
 import { ContentVersioningService } from './content-versioning.service.js';
 import { scoreExerciseResponse } from './exercise-scoring.util.js';
@@ -36,6 +37,7 @@ export class ExerciseAttemptsService {
     private readonly versioning: ContentVersioningService,
     private readonly events: DomainEventPublisher,
     private readonly gamification: GamificationService,
+    private readonly certificateService: CertificateService,
   ) {}
 
   async submitAttempt(
@@ -169,5 +171,59 @@ export class ExerciseAttemptsService {
     // most once (confirmed by direct inspection of this method's own
     // early-return guards above) — no separate idempotency check needed.
     await this.gamification.recordActivity(userId, { type: 'LESSON_COMPLETED' });
+
+    await this.maybeIssueLevelCertificate(userId, lessonId);
+  }
+
+  /**
+   * E20 T1 (design doc §3.2/§6.2) — the identical shape of check
+   * `maybeEmitLessonCompleted` already proved correct one level down: a
+   * `Level` is "completed" the moment every attemptable `Exercise` across
+   * every `Lesson` in every `Unit` under it has at least one attempt on
+   * record for this user. A real `Certificate`-existence check guards
+   * against issuing a second certificate for a `Level` already certified
+   * (`Certificate` carries no unique constraint on `(userId, levelId)` —
+   * only `verificationTokenHash` is unique, so this service is the real
+   * enforcement point).
+   */
+  private async maybeIssueLevelCertificate(userId: string, lessonId: string): Promise<void> {
+    const lesson = await this.appPrisma.lesson.findUnique({
+      where: { id: lessonId },
+      select: { unit: { select: { levelId: true } } },
+    });
+    const levelId = lesson?.unit.levelId;
+    if (!levelId) {
+      return;
+    }
+
+    const existingCertificate = await this.appPrisma.certificate.findFirst({
+      where: { userId, levelId },
+    });
+    if (existingCertificate) {
+      return;
+    }
+
+    const levelExercises = await this.appPrisma.exercise.findMany({
+      where: {
+        activity: { lesson: { unit: { levelId } } },
+        deletedAt: null,
+        type: { not: 'SPEAKING_PROMPT' },
+      },
+      select: { id: true },
+    });
+    if (levelExercises.length === 0) {
+      return;
+    }
+
+    const attemptedLevelExercises = await this.appPrisma.exerciseAttempt.findMany({
+      where: { userId, exerciseId: { in: levelExercises.map((e) => e.id) } },
+      select: { exerciseId: true },
+      distinct: ['exerciseId'],
+    });
+    if (attemptedLevelExercises.length < levelExercises.length) {
+      return;
+    }
+
+    await this.certificateService.issue(userId, { levelId });
   }
 }

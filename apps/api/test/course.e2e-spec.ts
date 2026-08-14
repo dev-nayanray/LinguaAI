@@ -85,6 +85,11 @@ describe('CourseModule (e2e)', () => {
 
   /** Bottom-up cascade delete — Course/Level/Unit carry no onDelete: Cascade on their own parent FK (content.prisma), so cleanup must walk the tree itself, deepest-first, the same discipline assessment.e2e-spec.ts's own per-language cleanup already established. */
   async function cleanupCourse(courseId: string): Promise<void> {
+    // E20 T1 -- a real Level-completion Certificate (Certificate.levelId,
+    // onDelete: Restrict) must be cleared before the Level row it
+    // references is deleted below, or level.deleteMany trips a real FK
+    // violation for any test that actually completed a Level.
+    await setupPrisma.certificate.deleteMany({ where: { level: { courseId } } });
     const lessons = await setupPrisma.lesson.findMany({
       where: { unit: { level: { courseId } } },
       select: { id: true },
@@ -801,6 +806,61 @@ describe('CourseModule (e2e)', () => {
           j.name === 'learning.lesson.completed' && j.data.userId === learner.userId,
       ).length;
       expect(jobsAfterReattempt).toBe(jobsBeforeReattempt);
+    }, 30000);
+  });
+
+  describe('Level-completion Certificate issuance (E20 T1)', () => {
+    it('issues a real Certificate once every attemptable exercise in the level (its own only lesson) is attempted', async () => {
+      const { lessonId, exerciseIds } = await authorAndPublishCourse();
+      const learner = await freshSession();
+      const auth = (req: request.Test) => req.set('Authorization', `Bearer ${learner.accessToken}`);
+
+      const lesson = await setupPrisma.lesson.findUniqueOrThrow({
+        where: { id: lessonId },
+        select: { unit: { select: { levelId: true } } },
+      });
+      const levelId = lesson.unit.levelId;
+
+      const noCertYet = await setupPrisma.certificate.findFirst({
+        where: { userId: learner.userId, levelId },
+      });
+      expect(noCertYet).toBeNull();
+
+      await auth(
+        request(app.getHttpServer()).post(`/v1/exercises/${exerciseIds.MULTIPLE_CHOICE}/attempts`),
+      ).send({ response: { selectedIndex: 0 } });
+      await auth(
+        request(app.getHttpServer()).post(`/v1/exercises/${exerciseIds.FILL_BLANK}/attempts`),
+      ).send({ response: { text: 'Hola' } });
+      await auth(
+        request(app.getHttpServer()).post(`/v1/exercises/${exerciseIds.TRANSLATION}/attempts`),
+      ).send({ response: { text: 'Adios' } });
+      await auth(
+        request(app.getHttpServer()).post(`/v1/exercises/${exerciseIds.MATCHING}/attempts`),
+      ).send({
+        response: {
+          matches: [
+            { left: 'Hola', right: 'Hello' },
+            { left: 'Adios', right: 'Goodbye' },
+          ],
+        },
+      });
+      // The last attemptable exercise -- this call completes the lesson,
+      // and since this course/level has only ever had this one lesson,
+      // it completes the level too.
+      await auth(
+        request(app.getHttpServer()).post(
+          `/v1/exercises/${exerciseIds.LISTENING_COMPREHENSION}/attempts`,
+        ),
+      ).send({ response: { selectedIndex: 1 } });
+
+      const certificate = await setupPrisma.certificate.findFirst({
+        where: { userId: learner.userId, levelId },
+      });
+      expect(certificate).not.toBeNull();
+      expect(certificate!.courseId).toBeNull();
+      expect(certificate!.examProgramId).toBeNull();
+      expect(certificate!.verificationTokenHash).toHaveLength(64);
     }, 30000);
   });
 });

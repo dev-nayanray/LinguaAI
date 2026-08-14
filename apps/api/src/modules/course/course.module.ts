@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { AiEngineClientModule } from '../ai-engine/ai-engine-client.module.js';
 import { AuthModule } from '../auth/index.js';
+import { CertificatesModule } from '../certificates/certificates.module.js';
 import { GamificationModule } from '../gamification/index.js';
 import { SpeechServiceClientModule } from '../speech-service-client/speech-service-client.module.js';
 import { ContentAuthoringController } from './content-authoring.controller.js';
@@ -29,9 +30,18 @@ import { LessonContentService } from './lesson-content.service.js';
  * into real, hosted audio before it's ever persisted — and
  * `GamificationModule` (E14 T1, ADR-054) — `ExerciseAttemptsService`'s own
  * synchronous, in-process consumer of `GamificationService.recordActivity()`.
+ * `CertificatesModule` (E20 T1) — `ExerciseAttemptsService`'s own real
+ * Level-completion `Certificate` issuance, via the same shared
+ * `CertificateService` `ExamsModule` already uses.
  */
 @Module({
-  imports: [AuthModule, AiEngineClientModule, SpeechServiceClientModule, GamificationModule],
+  imports: [
+    AuthModule,
+    AiEngineClientModule,
+    SpeechServiceClientModule,
+    GamificationModule,
+    CertificatesModule,
+  ],
   controllers: [
     CourseHierarchyController,
     LessonContentController,

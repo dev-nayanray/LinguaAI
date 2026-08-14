@@ -38,7 +38,7 @@ describe('MockTestAttemptsService', () => {
   const scoreExamSection = jest.fn();
   const attemptFindMany = jest.fn();
   const attemptCount = jest.fn();
-  const certificateCreate = jest.fn();
+  const issueCertificate = jest.fn();
   const publish = jest.fn();
   const prisma = {
     examProgram: { findUnique: examProgramFindUnique },
@@ -55,13 +55,18 @@ describe('MockTestAttemptsService', () => {
       findMany: scoreFindMany,
       create: scoreCreate,
     },
-    certificate: { create: certificateCreate },
   };
   const aiEngineClient = { scoreExamSection };
   const events = { publish };
+  const certificateService = { issue: issueCertificate };
 
   function buildService(): MockTestAttemptsService {
-    return new MockTestAttemptsService(prisma as never, aiEngineClient as never, events as never);
+    return new MockTestAttemptsService(
+      prisma as never,
+      aiEngineClient as never,
+      events as never,
+      certificateService as never,
+    );
   }
 
   beforeEach(() => {
@@ -278,7 +283,7 @@ describe('MockTestAttemptsService', () => {
       expect(result.status).toBe('COMPLETED');
       expect(result.certificateVerificationToken).toBeNull();
       expect(sectionFindMany).not.toHaveBeenCalled();
-      expect(certificateCreate).not.toHaveBeenCalled();
+      expect(issueCertificate).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
     });
 
@@ -290,15 +295,18 @@ describe('MockTestAttemptsService', () => {
 
       await expect(service.complete(caller, attemptId)).rejects.toBeInstanceOf(ConflictException);
       expect(attemptUpdate).not.toHaveBeenCalled();
-      expect(certificateCreate).not.toHaveBeenCalled();
+      expect(issueCertificate).not.toHaveBeenCalled();
     });
 
-    it('computes the real overall band as the mean of every section score, rounded to the nearest 0.5, issues a real Certificate, and publishes exam.mock_test.completed', async () => {
+    it('computes the real overall band as the mean of every section score, rounded to the nearest 0.5, issues a real Certificate via the shared CertificateService, and publishes exam.mock_test.completed', async () => {
       attemptFindUnique.mockResolvedValue(baseAttempt());
       sectionFindMany.mockResolvedValue([{}, {}, {}, {}]);
       scoreFindMany.mockResolvedValue([{ score: 7 }, { score: 6.5 }, { score: 7 }, { score: 6 }]);
       attemptUpdate.mockResolvedValue(baseAttempt({ status: 'COMPLETED', overallScore: 6.5 }));
-      certificateCreate.mockResolvedValue({ id: 'cert-1' });
+      issueCertificate.mockResolvedValue({
+        rawToken: 'real-raw-token',
+        certificate: { id: 'cert-1' },
+      });
       const service = buildService();
 
       const result = await service.complete(caller, attemptId);
@@ -309,15 +317,8 @@ describe('MockTestAttemptsService', () => {
           data: expect.objectContaining({ status: 'COMPLETED', overallScore: 6.5 }),
         }),
       );
-      expect(certificateCreate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ userId, examProgramId }),
-        }),
-      );
-      const certData = certificateCreate.mock.calls[0]![0].data;
-      expect(typeof certData.verificationTokenHash).toBe('string');
-      expect(certData.verificationTokenHash).toHaveLength(64); // SHA-256 hex digest
-      expect(typeof result.certificateVerificationToken).toBe('string');
+      expect(issueCertificate).toHaveBeenCalledWith(userId, { examProgramId });
+      expect(result.certificateVerificationToken).toBe('real-raw-token');
       expect(publish).toHaveBeenCalledWith('exam.mock_test.completed', {
         userId,
         payload: { mockTestAttemptId: attemptId, examProgramId, overallScore: 6.5 },

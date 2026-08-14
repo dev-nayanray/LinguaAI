@@ -3,6 +3,7 @@ import type { DomainEventPublisher } from '@linguaai/events';
 import type { PrismaClient } from '@linguaai/database';
 
 import type { RequestUser } from '../auth/strategies/jwt.strategy.js';
+import type { CertificateService } from '../certificates/certificate.service.js';
 import type { GamificationService } from '../gamification/index.js';
 import { ExerciseAttemptsService } from './exercise-attempts.service.js';
 import type { ContentVersioningService } from './content-versioning.service.js';
@@ -25,6 +26,8 @@ function fakePrisma() {
     exercise: { findUnique: jest.fn(), findMany: jest.fn() },
     exerciseAttempt: { create: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
     activity: { findUnique: jest.fn() },
+    lesson: { findUnique: jest.fn() },
+    certificate: { findFirst: jest.fn() },
   };
 }
 
@@ -49,6 +52,12 @@ function fakeGamification(): jest.Mocked<Pick<GamificationService, 'recordActivi
   return { recordActivity: jest.fn().mockResolvedValue(undefined) };
 }
 
+function fakeCertificateService(): jest.Mocked<Pick<CertificateService, 'issue'>> {
+  return {
+    issue: jest.fn().mockResolvedValue({ rawToken: 'raw-token', certificate: { id: 'cert-1' } }),
+  };
+}
+
 describe('ExerciseAttemptsService', () => {
   it('scores a correct response, pins the attempt to the current ContentVersion, and publishes learning.exercise.answered', async () => {
     const prisma = fakePrisma();
@@ -67,6 +76,7 @@ describe('ExerciseAttemptsService', () => {
       versioning as unknown as ContentVersioningService,
       events as unknown as DomainEventPublisher,
       gamification as unknown as GamificationService,
+      fakeCertificateService() as unknown as CertificateService,
     );
 
     const result = await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
@@ -107,6 +117,7 @@ describe('ExerciseAttemptsService', () => {
       fakeVersioning() as unknown as ContentVersioningService,
       fakeEvents() as unknown as DomainEventPublisher,
       fakeGamification() as unknown as GamificationService,
+      fakeCertificateService() as unknown as CertificateService,
     );
 
     await expect(
@@ -125,6 +136,7 @@ describe('ExerciseAttemptsService', () => {
       versioning as unknown as ContentVersioningService,
       events as unknown as DomainEventPublisher,
       fakeGamification() as unknown as GamificationService,
+      fakeCertificateService() as unknown as CertificateService,
     );
 
     await expect(
@@ -143,6 +155,7 @@ describe('ExerciseAttemptsService', () => {
       fakeVersioning() as unknown as ContentVersioningService,
       events as unknown as DomainEventPublisher,
       fakeGamification() as unknown as GamificationService,
+      fakeCertificateService() as unknown as CertificateService,
     );
 
     await expect(
@@ -168,6 +181,7 @@ describe('ExerciseAttemptsService', () => {
         fakeVersioning() as unknown as ContentVersioningService,
         events as unknown as DomainEventPublisher,
         gamification as unknown as GamificationService,
+        fakeCertificateService() as unknown as CertificateService,
       );
 
       await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
@@ -207,6 +221,7 @@ describe('ExerciseAttemptsService', () => {
         fakeVersioning() as unknown as ContentVersioningService,
         events as unknown as DomainEventPublisher,
         fakeGamification() as unknown as GamificationService,
+        fakeCertificateService() as unknown as CertificateService,
       );
 
       await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
@@ -241,6 +256,7 @@ describe('ExerciseAttemptsService', () => {
         fakeVersioning() as unknown as ContentVersioningService,
         events as unknown as DomainEventPublisher,
         fakeGamification() as unknown as GamificationService,
+        fakeCertificateService() as unknown as CertificateService,
       );
 
       await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
@@ -274,6 +290,7 @@ describe('ExerciseAttemptsService', () => {
         fakeVersioning() as unknown as ContentVersioningService,
         events as unknown as DomainEventPublisher,
         fakeGamification() as unknown as GamificationService,
+        fakeCertificateService() as unknown as CertificateService,
       );
 
       await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
@@ -287,6 +304,96 @@ describe('ExerciseAttemptsService', () => {
         'learning.lesson.completed',
         expect.objectContaining({ payload: expect.objectContaining({ score: 1 }) as unknown }),
       );
+    });
+  });
+
+  describe('Level-completion Certificate issuance (E20 T1)', () => {
+    it('issues a real Certificate on the levelId branch once every exercise across every lesson in the level is attempted', async () => {
+      const prisma = fakePrisma();
+      prisma.exercise.findUnique.mockResolvedValue(EXERCISE);
+      prisma.exerciseAttempt.findFirst.mockResolvedValueOnce(null); // no prior attempt
+      prisma.exerciseAttempt.create.mockResolvedValue({
+        id: 'attempt-1',
+        isCorrect: true,
+        score: 1,
+      });
+      prisma.activity.findUnique.mockResolvedValue({ lessonId: 'lesson-1' });
+      // A minimal level: exactly one lesson, one exercise — the lesson-level
+      // and level-level completion checks see the identical set.
+      prisma.exercise.findMany.mockResolvedValue([{ id: 'ex-1' }]);
+      prisma.exerciseAttempt.findMany.mockResolvedValue([{ exerciseId: 'ex-1' }]);
+      prisma.exerciseAttempt.findFirst.mockResolvedValueOnce({ score: 1 }); // completion score lookup
+      prisma.lesson.findUnique.mockResolvedValue({ unit: { levelId: 'level-1' } });
+      prisma.certificate.findFirst.mockResolvedValue(null); // not already certified
+      const certificateService = fakeCertificateService();
+      const service = new ExerciseAttemptsService(
+        prisma as unknown as PrismaClient,
+        fakeVersioning() as unknown as ContentVersioningService,
+        fakeEvents() as unknown as DomainEventPublisher,
+        fakeGamification() as unknown as GamificationService,
+        certificateService as unknown as CertificateService,
+      );
+
+      await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
+
+      expect(certificateService.issue).toHaveBeenCalledWith('user-1', { levelId: 'level-1' });
+    });
+
+    it('does not issue a second Certificate if the level is already certified', async () => {
+      const prisma = fakePrisma();
+      prisma.exercise.findUnique.mockResolvedValue(EXERCISE);
+      prisma.exerciseAttempt.findFirst.mockResolvedValueOnce(null);
+      prisma.exerciseAttempt.create.mockResolvedValue({
+        id: 'attempt-1',
+        isCorrect: true,
+        score: 1,
+      });
+      prisma.activity.findUnique.mockResolvedValue({ lessonId: 'lesson-1' });
+      prisma.exercise.findMany.mockResolvedValue([{ id: 'ex-1' }]);
+      prisma.exerciseAttempt.findMany.mockResolvedValue([{ exerciseId: 'ex-1' }]);
+      prisma.exerciseAttempt.findFirst.mockResolvedValueOnce({ score: 1 });
+      prisma.lesson.findUnique.mockResolvedValue({ unit: { levelId: 'level-1' } });
+      prisma.certificate.findFirst.mockResolvedValue({ id: 'existing-cert' }); // already certified
+      const certificateService = fakeCertificateService();
+      const service = new ExerciseAttemptsService(
+        prisma as unknown as PrismaClient,
+        fakeVersioning() as unknown as ContentVersioningService,
+        fakeEvents() as unknown as DomainEventPublisher,
+        fakeGamification() as unknown as GamificationService,
+        certificateService as unknown as CertificateService,
+      );
+
+      await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
+
+      expect(certificateService.issue).not.toHaveBeenCalled();
+    });
+
+    it('does not issue a Certificate when the lesson itself is not yet complete', async () => {
+      const prisma = fakePrisma();
+      prisma.exercise.findUnique.mockResolvedValue(EXERCISE);
+      prisma.exerciseAttempt.findFirst.mockResolvedValueOnce(null);
+      prisma.exerciseAttempt.create.mockResolvedValue({
+        id: 'attempt-1',
+        isCorrect: true,
+        score: 1,
+      });
+      prisma.activity.findUnique.mockResolvedValue({ lessonId: 'lesson-1' });
+      // Two exercises in the lesson, only one attempted — lesson (and thus level) not complete.
+      prisma.exercise.findMany.mockResolvedValue([{ id: 'ex-1' }, { id: 'ex-2' }]);
+      prisma.exerciseAttempt.findMany.mockResolvedValue([{ exerciseId: 'ex-1' }]);
+      const certificateService = fakeCertificateService();
+      const service = new ExerciseAttemptsService(
+        prisma as unknown as PrismaClient,
+        fakeVersioning() as unknown as ContentVersioningService,
+        fakeEvents() as unknown as DomainEventPublisher,
+        fakeGamification() as unknown as GamificationService,
+        certificateService as unknown as CertificateService,
+      );
+
+      await service.submitAttempt(USER, 'ex-1', { response: { selectedIndex: 0 } });
+
+      expect(certificateService.issue).not.toHaveBeenCalled();
+      expect(prisma.lesson.findUnique).not.toHaveBeenCalled();
     });
   });
 });

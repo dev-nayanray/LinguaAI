@@ -1,5 +1,3 @@
-import { createHash, randomBytes } from 'node:crypto';
-
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { PrismaClient, Skill } from '@linguaai/database';
 import {
@@ -19,6 +17,7 @@ import { APP_PRISMA_CLIENT } from '../../database/index.js';
 import { DomainEventPublisher } from '../../events/index.js';
 import type { RequestUser } from '../auth/strategies/jwt.strategy.js';
 import { AiEngineClientService } from '../ai-engine/ai-engine-client.service.js';
+import { CertificateService } from '../certificates/certificate.service.js';
 import { examBandFromCorrectCount } from './exam-band-conversion.util.js';
 
 const OBJECTIVE_SKILLS_WITH_QUESTIONS: readonly Skill[] = ['READING', 'LISTENING'];
@@ -27,13 +26,6 @@ const AI_SCORED_SKILLS: readonly Skill[] = ['WRITING', 'SPEAKING'];
 /** IELTS's own real overall-score convention: mean of the 4 section bands, rounded to the nearest 0.5 (design doc §3.5) — 0.25 rounds up, matching `Math.round`'s own "round half towards +Infinity" behavior for positive numbers. */
 function roundToNearestHalfBand(value: number): number {
   return Math.round(value * 2) / 2;
-}
-
-/** `exams.prisma`'s own documented entropy/hash spec (E4 T8 header comment) — 32 random bytes, base64url-encoded raw token; SHA-256 hex digest is what's actually stored. Mirrors `auth.service.ts`'s own established `hashToken` pattern (`PasswordResetToken`/`MfaChallengeToken`). */
-function generateVerificationToken(): { rawToken: string; tokenHash: string } {
-  const rawToken = randomBytes(32).toString('base64url');
-  const tokenHash = createHash('sha256').update(rawToken).digest('hex');
-  return { rawToken, tokenHash };
 }
 
 /**
@@ -109,6 +101,7 @@ export class MockTestAttemptsService {
     @Inject(APP_PRISMA_CLIENT) private readonly appPrisma: PrismaClient,
     private readonly aiEngineClient: AiEngineClientService,
     private readonly events: DomainEventPublisher,
+    private readonly certificateService: CertificateService,
   ) {}
 
   async start(
@@ -271,13 +264,8 @@ export class MockTestAttemptsService {
       data: { status: 'COMPLETED', completedAt: new Date(), overallScore },
     });
 
-    const { rawToken, tokenHash } = generateVerificationToken();
-    await this.appPrisma.certificate.create({
-      data: {
-        userId: caller.userId,
-        examProgramId: attempt.examProgramId,
-        verificationTokenHash: tokenHash,
-      },
+    const { rawToken } = await this.certificateService.issue(caller.userId, {
+      examProgramId: attempt.examProgramId,
     });
 
     const eventPayload = examMockTestCompletedPayloadSchema.parse({

@@ -53,6 +53,11 @@ describe('LessonContentController — LISTENING synthesis (e2e)', () => {
 
   /** Bottom-up cascade delete, mirroring course.e2e-spec.ts's own established cleanup discipline. */
   async function cleanupCourse(courseId: string): Promise<void> {
+    // E20 T1 -- a real Level-completion Certificate (Certificate.levelId,
+    // onDelete: Restrict) must be cleared before the Level row it
+    // references is deleted below, or level.deleteMany trips a real FK
+    // violation for any test that actually completed a Level.
+    await setupPrisma.certificate.deleteMany({ where: { level: { courseId } } });
     const lessons = await setupPrisma.lesson.findMany({
       where: { unit: { level: { courseId } } },
       select: { id: true },
