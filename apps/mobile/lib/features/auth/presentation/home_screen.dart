@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../course/presentation/course_list_screen.dart';
+import '../../notifications/presentation/notifications_providers.dart';
 import '../../progress/presentation/progress_screen.dart';
 import '../../vocabulary/presentation/srs_review_screen.dart';
 import 'auth_controller.dart';
@@ -11,12 +12,27 @@ import 'auth_state.dart';
 /// vocabulary-review, and progress UIs (E21 T3) live in their own
 /// features; this screen is the entry point into each, plus a real proof
 /// the session survives past login (the caller's own name, sourced from
-/// the real `AuthAuthenticated` state).
-class HomeScreen extends ConsumerWidget {
+/// the real `AuthAuthenticated` state). Also the real call site for
+/// `DeviceTokenRegistrar.registerIfAvailable()` (E21 T4) — a genuine
+/// no-op today (`UnavailablePushTokenProvider`, no real Firebase project
+/// in this environment), but a real, tested, correctly-wired integration
+/// point for whenever one exists.
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    ref.read(deviceTokenRegistrarProvider).registerIfAvailable();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(authControllerProvider);
     final user = state is AuthAuthenticated ? state.user : null;
 

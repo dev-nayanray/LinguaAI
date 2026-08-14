@@ -6,9 +6,11 @@ import {
   identityPasswordResetRequestedPayloadSchema,
   identityUserRegisteredPayloadSchema,
 } from '@linguaai/validation/identity';
+import { recommendationDailyGoalReadyPayloadSchema } from '@linguaai/validation/learning';
 
 import { NOTIFICATION_SERVICE_PRISMA_CLIENT } from '../database/database.config.js';
 import { EmailClientService } from '../email/email-client.service.js';
+import { PushClientService } from '../push/push-client.service.js';
 import { NOTIFICATION_SERVER_URL_CONFIG } from './notification.constants.js';
 import { NotificationPreferenceService } from './notification-preference.service.js';
 import { renderPasswordResetEmail } from './templates/password-reset-email.template.js';
@@ -40,6 +42,7 @@ export class NotificationDispatcher {
     @Inject(NOTIFICATION_SERVER_URL_CONFIG) private readonly serverUrlConfig: ServerUrlEnv,
     private readonly preferences: NotificationPreferenceService,
     private readonly emailClient: EmailClientService,
+    private readonly pushClient: PushClientService,
   ) {}
 
   async dispatch(jobName: string, event: DomainEvent): Promise<void> {
@@ -49,6 +52,10 @@ export class NotificationDispatcher {
     }
     if (jobName === 'identity.password.reset_requested') {
       await this.handlePasswordResetRequested(event);
+      return;
+    }
+    if (jobName === 'recommendation.daily_goal.ready') {
+      await this.handleDailyGoalReady(event);
       return;
     }
     // Every other cataloged event (§1's own out-of-scope list) — a real,
@@ -123,6 +130,62 @@ export class NotificationDispatcher {
     await this.sendAndLog(user.id, user.email, 'SECURITY_ALERT', content);
   }
 
+  /**
+   * `recommendation.daily_goal.ready` (E7 T4) — not consumed by
+   * `notification-service` at all until this task; `recommendation-engine`
+   * publishes it, but nothing read it. The one real, currently-available
+   * push trigger this epic names (design doc §3.1) — a real streak-at-risk
+   * producer doesn't exist yet (E14's own tracked `atRisk`-always-`false`
+   * gap), so it isn't wired here either.
+   */
+  private async handleDailyGoalReady(event: DomainEvent): Promise<void> {
+    if (!event.userId) {
+      this.logger.warn(
+        `recommendation.daily_goal.ready event ${event.eventId} has no userId — skipping`,
+      );
+      return;
+    }
+    const payload = recommendationDailyGoalReadyPayloadSchema.parse(event.payload);
+
+    const user = await this.prisma.user.findUnique({ where: { id: event.userId } });
+    if (!user) {
+      this.logger.warn(
+        `recommendation.daily_goal.ready event ${event.eventId}: no User row for userId ${event.userId} — skipping`,
+      );
+      return;
+    }
+
+    const optedIn = await this.preferences.isOptedIn(user.id, 'PUSH', 'SYSTEM');
+    if (!optedIn) {
+      this.logger.log(
+        `recommendation.daily_goal.ready: user ${user.id} opted out of SYSTEM/PUSH — suppressed`,
+      );
+      return;
+    }
+
+    const deviceTokens = await this.prisma.deviceToken.findMany({
+      where: { userId: user.id, active: true },
+    });
+    if (deviceTokens.length === 0) {
+      // A real, deliberate no-op — no attempt was actually made, so no
+      // NotificationLog row either, the same "a suppressed/impossible
+      // send is never logged" reasoning §3.4 already establishes for a
+      // preference-suppressed EMAIL send.
+      this.logger.log(
+        `recommendation.daily_goal.ready: user ${user.id} has no registered device tokens — nothing to push`,
+      );
+      return;
+    }
+
+    await this.sendAndLogPush(
+      user.id,
+      deviceTokens.map((deviceToken) => deviceToken.token),
+      'SYSTEM',
+      "Today's goal is ready",
+      `${payload.targetXp} XP · ${payload.targetMinutes} min · ${payload.targetActivities} activities`,
+    );
+  }
+
   private async sendAndLog(
     userId: string,
     email: string,
@@ -131,10 +194,10 @@ export class NotificationDispatcher {
   ): Promise<void> {
     try {
       await this.emailClient.send({ to: email, ...content });
-      await this.writeLog(userId, type, 'SENT', null);
+      await this.writeLog(userId, 'EMAIL', type, 'SENT', null);
     } catch (error) {
       const failureReason = error instanceof Error ? error.message : String(error);
-      await this.writeLog(userId, type, 'FAILED', failureReason);
+      await this.writeLog(userId, 'EMAIL', type, 'FAILED', failureReason);
       // Re-thrown so BullMQ's own attempts/backoff (E16 T1) retries a real
       // transient SMTP failure, matching `DomainEventDispatcher`'s own
       // "never silently skipped" discipline — the FAILED log row above
@@ -144,8 +207,35 @@ export class NotificationDispatcher {
     }
   }
 
+  /**
+   * A caller can have multiple active device tokens (multiple installs) —
+   * sent to all of them in one batch. A real, disclosed limitation: one
+   * fatal token (e.g. a stale/uninstalled registration) fails the whole
+   * batch and marks it `FAILED` rather than isolating per-token success —
+   * per-token failure isolation (deactivating just the stale
+   * `DeviceToken` row) is real, deferred follow-up work, not attempted
+   * speculatively here.
+   */
+  private async sendAndLogPush(
+    userId: string,
+    tokens: string[],
+    type: 'SYSTEM' | 'SECURITY_ALERT',
+    title: string,
+    body: string,
+  ): Promise<void> {
+    try {
+      await Promise.all(tokens.map((token) => this.pushClient.send({ token, title, body })));
+      await this.writeLog(userId, 'PUSH', type, 'SENT', null);
+    } catch (error) {
+      const failureReason = error instanceof Error ? error.message : String(error);
+      await this.writeLog(userId, 'PUSH', type, 'FAILED', failureReason);
+      throw error;
+    }
+  }
+
   private async writeLog(
     userId: string,
+    channel: 'EMAIL' | 'PUSH',
     type: 'SYSTEM' | 'SECURITY_ALERT',
     status: 'SENT' | 'FAILED',
     failureReason: string | null,
@@ -153,7 +243,7 @@ export class NotificationDispatcher {
     await this.prisma.notificationLog.create({
       data: {
         userId,
-        channel: 'EMAIL',
+        channel,
         type,
         status,
         sentAt: status === 'SENT' ? new Date() : null,

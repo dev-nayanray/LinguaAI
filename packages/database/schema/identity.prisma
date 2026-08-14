@@ -262,11 +262,17 @@ model ConsentRecord {
   @@index([userId])
 }
 
+/// `token` is `@unique` (E21 T4) — a device re-registering an
+/// already-known token (app reinstall on the same device re-issues the
+/// same FCM token) upserts this row rather than creating a duplicate;
+/// `token`, not `(userId, platform)`, is the natural key, since a token
+/// can move between accounts (shared device, account switch) and the
+/// newest registrant is the real, current owner.
 model DeviceToken {
   id       String         @id @default(uuid()) @db.Uuid
   userId   String         @db.Uuid
   platform DevicePlatform
-  token    String
+  token    String         @unique
   active   Boolean        @default(true)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

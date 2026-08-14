@@ -340,6 +340,27 @@ export const emailEnvSchema = z.object({
 });
 export type EmailEnv = z.infer<typeof emailEnvSchema>;
 
+/**
+ * Firebase Cloud Messaging service-account credentials (E21 T4) — all
+ * three deliberately `optionalNonEmptyString`, unlike `emailEnvSchema`'s
+ * own required fields: no real Firebase project exists in this
+ * environment (a real, tracked blocker, mirroring RISK_REGISTER R-88's
+ * own "credential-less environment" precedent for `ai-engine`'s e2e
+ * suite), and `PushClientService` itself checks for a present
+ * `FCM_PROJECT_ID` before ever calling `admin.initializeApp` — a blank
+ * config here means `apps/api`/`notification-service` still boot cleanly,
+ * with `PushClientService.send()` throwing a clear, real "not configured"
+ * error only if actually invoked, the same "boots clean, fails loud only
+ * on real use" shape `StripeClientService`'s own placeholder-key fallback
+ * already established for E15.
+ */
+export const pushEnvSchema = z.object({
+  FCM_PROJECT_ID: optionalNonEmptyString,
+  FCM_CLIENT_EMAIL: optionalNonEmptyString,
+  FCM_PRIVATE_KEY: optionalNonEmptyString,
+});
+export type PushEnv = z.infer<typeof pushEnvSchema>;
+
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
 export type ServerUrlEnv = z.infer<typeof serverUrlEnvSchema>;
 export type DatabaseEnv = z.infer<typeof databaseEnvSchema>;

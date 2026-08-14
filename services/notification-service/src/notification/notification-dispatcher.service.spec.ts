@@ -22,18 +22,22 @@ function makeEvent(
 describe('NotificationDispatcher', () => {
   const findUnique = jest.fn();
   const create = jest.fn();
+  const deviceTokenFindMany = jest.fn();
   const prisma = {
     user: { findUnique },
     notificationLog: { create },
+    deviceToken: { findMany: deviceTokenFindMany },
   } as never;
   const isOptedIn = jest.fn();
   const preferences = { isOptedIn } as never;
   const send = jest.fn();
   const emailClient = { send } as never;
+  const pushSend = jest.fn();
+  const pushClient = { send: pushSend } as never;
   const serverUrlConfig: { APP_URL: string | undefined } = { APP_URL: 'https://app.linguaai.test' };
 
   function makeDispatcher(url = serverUrlConfig): NotificationDispatcher {
-    return new NotificationDispatcher(prisma, url as never, preferences, emailClient);
+    return new NotificationDispatcher(prisma, url as never, preferences, emailClient, pushClient);
   }
 
   beforeEach(() => {
@@ -242,6 +246,141 @@ describe('NotificationDispatcher', () => {
           makeEvent('identity.password.reset_requested', {
             resetTokenReference: '11111111-1111-1111-1111-111111111111',
           }),
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
+  describe('recommendation.daily_goal.ready', () => {
+    function makePayload(): Record<string, unknown> {
+      return {
+        userId: '11111111-1111-1111-1111-111111111111',
+        date: '2026-08-14',
+        targetXp: 50,
+        targetMinutes: 15,
+        targetActivities: 3,
+      };
+    }
+
+    it('skips with no userId', async () => {
+      const dispatcher = makeDispatcher();
+
+      await dispatcher.dispatch(
+        'recommendation.daily_goal.ready',
+        makeEvent('recommendation.daily_goal.ready', makePayload(), null),
+      );
+
+      expect(findUnique).not.toHaveBeenCalled();
+    });
+
+    it('skips when no User row exists for the userId', async () => {
+      findUnique.mockResolvedValue(null);
+      const dispatcher = makeDispatcher();
+
+      await dispatcher.dispatch(
+        'recommendation.daily_goal.ready',
+        makeEvent('recommendation.daily_goal.ready', makePayload()),
+      );
+
+      expect(pushSend).not.toHaveBeenCalled();
+    });
+
+    it('suppresses (no send, no log row) when the user opted out of SYSTEM/PUSH', async () => {
+      findUnique.mockResolvedValue({ id: 'user-1' });
+      isOptedIn.mockResolvedValue(false);
+      const dispatcher = makeDispatcher();
+
+      await dispatcher.dispatch(
+        'recommendation.daily_goal.ready',
+        makeEvent('recommendation.daily_goal.ready', makePayload()),
+      );
+
+      expect(pushSend).not.toHaveBeenCalled();
+      expect(create).not.toHaveBeenCalled();
+      expect(isOptedIn).toHaveBeenCalledWith('user-1', 'PUSH', 'SYSTEM');
+    });
+
+    it('is a real, unlogged no-op when the user has no registered device tokens — no attempt was actually made', async () => {
+      findUnique.mockResolvedValue({ id: 'user-1' });
+      isOptedIn.mockResolvedValue(true);
+      deviceTokenFindMany.mockResolvedValue([]);
+      const dispatcher = makeDispatcher();
+
+      await dispatcher.dispatch(
+        'recommendation.daily_goal.ready',
+        makeEvent('recommendation.daily_goal.ready', makePayload()),
+      );
+
+      expect(pushSend).not.toHaveBeenCalled();
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it('sends to every real active device token and writes a SENT PUSH NotificationLog row', async () => {
+      findUnique.mockResolvedValue({ id: 'user-1' });
+      isOptedIn.mockResolvedValue(true);
+      deviceTokenFindMany.mockResolvedValue([{ token: 'fcm-token-1' }, { token: 'fcm-token-2' }]);
+      pushSend.mockResolvedValue(undefined);
+      const dispatcher = makeDispatcher();
+
+      await dispatcher.dispatch(
+        'recommendation.daily_goal.ready',
+        makeEvent('recommendation.daily_goal.ready', makePayload()),
+      );
+
+      expect(deviceTokenFindMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1', active: true },
+      });
+      expect(pushSend).toHaveBeenCalledTimes(2);
+      expect(pushSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          token: 'fcm-token-1',
+          body: expect.stringContaining('50 XP') as unknown as string,
+        }),
+      );
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: 'user-1',
+            channel: 'PUSH',
+            type: 'SYSTEM',
+            status: 'SENT',
+          }),
+        }),
+      );
+    });
+
+    it('writes a FAILED PUSH NotificationLog row and rethrows on a real FCM failure', async () => {
+      findUnique.mockResolvedValue({ id: 'user-1' });
+      isOptedIn.mockResolvedValue(true);
+      deviceTokenFindMany.mockResolvedValue([{ token: 'fcm-token-1' }]);
+      pushSend.mockRejectedValue(new Error('FCM is not configured'));
+      const dispatcher = makeDispatcher();
+
+      await expect(
+        dispatcher.dispatch(
+          'recommendation.daily_goal.ready',
+          makeEvent('recommendation.daily_goal.ready', makePayload()),
+        ),
+      ).rejects.toThrow('FCM is not configured');
+
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            channel: 'PUSH',
+            status: 'FAILED',
+            failureReason: 'FCM is not configured',
+          }),
+        }),
+      );
+    });
+
+    it('throws on a malformed payload — never silently skipped', async () => {
+      const dispatcher = makeDispatcher();
+
+      await expect(
+        dispatcher.dispatch(
+          'recommendation.daily_goal.ready',
+          makeEvent('recommendation.daily_goal.ready', {}),
         ),
       ).rejects.toThrow();
     });

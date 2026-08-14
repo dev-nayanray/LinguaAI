@@ -151,6 +151,19 @@ export const deviceTokenSchema = z.object({
 });
 assertExtends<DeviceToken, z.infer<typeof deviceTokenSchema>>();
 
+/**
+ * `POST /v1/notifications/device-tokens` (E21 T4) — `token` is `@unique`
+ * on `DeviceToken` (this same migration), so this is a real upsert: a
+ * device re-registering an already-known token (app reinstall re-issuing
+ * the same FCM token) reactivates that row rather than creating a
+ * duplicate.
+ */
+export const registerDeviceTokenRequestSchema = z.object({
+  platform: devicePlatformSchema,
+  token: z.string().min(1),
+});
+export type RegisterDeviceTokenRequest = z.infer<typeof registerDeviceTokenRequestSchema>;
+
 export const passwordResetTokenSchema = z.object({
   id: z.string().uuid(),
   userId: z.string().uuid(),
