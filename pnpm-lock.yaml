@@ -861,9 +861,21 @@ importers:
 
   services/notification-service:
     dependencies:
+      '@linguaai/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@linguaai/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@linguaai/events':
+        specifier: workspace:*
+        version: link:../../packages/events
       '@linguaai/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@linguaai/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
       '@nestjs/common':
         specifier: ^11.0.0
         version: 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -873,6 +885,12 @@ importers:
       '@nestjs/platform-express':
         specifier: ^11.0.0
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)
+      bullmq:
+        specifier: ^5.0.0
+        version: 5.81.3
+      nodemailer:
+        specifier: ^6.9.0
+        version: 6.10.1
       reflect-metadata:
         specifier: ^0.2.0
         version: 0.2.2
@@ -895,9 +913,15 @@ importers:
       '@types/node':
         specifier: ^22.9.0
         version: 22.20.1
+      '@types/nodemailer':
+        specifier: ^6.4.0
+        version: 6.4.24
       '@types/supertest':
         specifier: ^6.0.0
         version: 6.0.3
+      dotenv-cli:
+        specifier: ^7.4.4
+        version: 7.4.4
       jest:
         specifier: ^29.7.0
         version: 29.7.0(@types/node@22.20.1)
@@ -4503,6 +4527,9 @@ packages:
   '@types/node@26.1.2':
     resolution: {integrity: sha512-Vu4a5UFA9rIIFJ7rB/Vaafh9lrCQszopTCx6KjFboXTGQbPNasehVR5TEiithSDGyd1DEiUByggTZsg8jukeIg==}
 
+  '@types/nodemailer@6.4.24':
+    resolution: {integrity: sha512-Ww4u0rT9wQNXh4JiQaIwx3QWdcOFXzOjQA2zc+jtFYNmQiT4mIUqcDin51bDFdkzKubFnQCZNK7FIHlPKQ/q9w==}
+
   '@types/oauth@0.9.6':
     resolution: {integrity: sha512-H9TRCVKBNOhZZmyHLqFt9drPM9l+ShWiqqJijU1B8P3DX3ub84NjxDuy+Hjrz+fEca5Kwip3qPMKNyiLgNJtIA==}
 
@@ -7524,6 +7551,10 @@ packages:
   node-releases@2.0.51:
     resolution: {integrity: sha512-wRNIrw4DmVLKQlbgOMdkMx27Wrpzes2hh5Jtbi2bjPd+4wJstWIqP5A+lscnqbm0xxmT5Bpg8Lec5ItEBwx6BQ==}
     engines: {node: '>=18'}
+
+  nodemailer@6.10.1:
+    resolution: {integrity: sha512-Z+iLaBGVaSjbIzQ4pX6XV41HrooLsQ10ZWPUehGmuantvzWoDVBnmsdUcOIDM1t+yPor5pDhVlDESgOMEGxhHA==}
+    engines: {node: '>=6.0.0'}
 
   normalize-path@3.0.0:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
@@ -12726,6 +12757,10 @@ snapshots:
     dependencies:
       undici-types: 8.3.0
 
+  '@types/nodemailer@6.4.24':
+    dependencies:
+      '@types/node': 22.20.1
+
   '@types/oauth@0.9.6':
     dependencies:
       '@types/node': 22.20.1
@@ -16281,6 +16316,8 @@ snapshots:
       process-on-spawn: 1.1.0
 
   node-releases@2.0.51: {}
+
+  nodemailer@6.10.1: {}
 
   normalize-path@3.0.0: {}
 

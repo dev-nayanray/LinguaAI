@@ -12,11 +12,12 @@ import type { LoginFailureEnv } from '@linguaai/config';
 import type { Prisma, PrismaClient, User } from '@linguaai/database';
 import { Prisma as PrismaNamespace } from '@linguaai/database';
 import { hashPassword, hmacHash, verifyPassword } from '@linguaai/utils';
-import type {
-  LoginResponse,
-  PasswordResetRequestResponse,
-  PublicUser,
-  RegisterRequest,
+import {
+  identityPasswordResetRequestedPayloadSchema,
+  type LoginResponse,
+  type PasswordResetRequestResponse,
+  type PublicUser,
+  type RegisterRequest,
 } from '@linguaai/validation/identity';
 
 import { APP_PRISMA_CLIENT, SERVICE_ROLE_PRISMA_CLIENT } from '../../database/index.js';
@@ -499,17 +500,16 @@ export class AuthService {
    * `passwordResetRequestResponseSchema`'s own doc comment explains the one
    * narrow, deliberate exception (`OAUTH_ACCOUNT`).
    *
-   * NOT YET IMPLEMENTED: actual email delivery (BullMQ → notification-service,
-   * per the design doc's "Email delivery unavailable... durably queued and
-   * retried" text) — no message-queue producer exists anywhere in this
-   * codebase yet; building one is genuinely separate infrastructure, out of
-   * this task's own scope, the same class of deferral already applied to
-   * `identity.user.registered` (E2-T8) and the GDPR deletion-request event
-   * (E2-T18). The created `PasswordResetToken` row is the durable, correct
-   * artifact in the meantime. The raw token is deliberately never returned
-   * in this response — unlike the missing-event-bus cases above, that
-   * wouldn't be a harmless stand-in, it would be a genuine account-takeover
-   * vector (anyone who knows an email could reset that account's password).
+   * Real email delivery (BullMQ → `notification-service`) as of E16 T2 —
+   * `notification-service`'s own `Worker` consumes `identity.password.reset_requested`
+   * from its own fan-out queue (E16 T1) and sends the actual reset email.
+   * The raw token is deliberately never returned in this HTTP response (that
+   * would be a genuine account-takeover vector — anyone who knows an email
+   * could reset that account's password) but IS published in the event
+   * payload below, alongside `resetTokenReference` — `identityPasswordResetRequestedPayloadSchema`'s
+   * own doc comment explains why that's a deliberate, bounded trade-off, not
+   * an oversight: `notification-service` cannot construct a working reset
+   * link from an irreversible hash alone.
    */
   async requestPasswordReset(email: string): Promise<PasswordResetRequestResponse> {
     const user = await this.servicePrisma.user.findUnique({ where: { email } });
@@ -535,12 +535,17 @@ export class AuthService {
       },
     });
 
-    // `resetToken-reference`, never the raw token (Part 10) — the
-    // PasswordResetToken row's own id, which reveals nothing usable to
-    // complete a reset (the raw token itself is never persisted anywhere).
+    // Raw token included from E16 T2 onward (see this method's own doc
+    // comment) — validated against the shared schema before publish, the
+    // same discipline `assessment.service.ts`'s own event-publish call site
+    // already established.
+    const eventPayload = identityPasswordResetRequestedPayloadSchema.parse({
+      resetTokenReference: resetToken.id,
+      resetToken: rawToken,
+    });
     await this.events.publish('identity.password.reset_requested', {
       userId: user.id,
-      payload: { resetTokenReference: resetToken.id },
+      payload: eventPayload,
     });
 
     return { status: 'EMAIL_SENT' };

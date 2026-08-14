@@ -89,6 +89,27 @@ export const appRoleDatabaseEnvSchema = z.object({
   APP_DATABASE_URL: z.string().url(),
 });
 
+/**
+ * The `app_service_role` (`BYPASSRLS`)-only mirror of `appRoleDatabaseEnvSchema`
+ * above — for a `services/*` consumer (`notification-service`, E16 T2) that
+ * has no ordinary RLS-scoped writes of its own (its own `NotificationLog`/
+ * `NotificationPreference` tables carry no RLS policy at all) but genuinely
+ * needs BYPASSRLS to read an arbitrary user's `email`/`displayName` from a
+ * background BullMQ worker with no per-request session context to set
+ * `app.current_user_id` against — the same "no `app.current_user_id` exists
+ * yet" class of pre-session case `appDatabaseEnvSchema`'s own doc comment
+ * already names (registration, login's pre-auth lookup, bootstrap, GDPR
+ * erasure), just from a background consumer rather than an HTTP request.
+ * Kept as its own minimal fragment, not `appDatabaseEnvSchema` wholesale —
+ * a service with no ordinary `app_role`-scoped use case is never required
+ * to configure a credential it will never use, the same reasoning
+ * `appRoleDatabaseEnvSchema`'s own header comment already established.
+ */
+export const serviceRoleDatabaseEnvSchema = z.object({
+  APP_SERVICE_ROLE_DATABASE_URL: z.string().url(),
+});
+export type ServiceRoleDatabaseEnv = z.infer<typeof serviceRoleDatabaseEnvSchema>;
+
 /** Consumed by apps/api's AuthModule (E2-T8/T9) — JWT signing/verification only; database URLs live in `appDatabaseEnvSchema`. */
 export const authEnvSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(1),
@@ -202,6 +223,28 @@ export const billingEnvSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string(),
 });
 export type BillingEnv = z.infer<typeof billingEnvSchema>;
+
+/**
+ * Consumed by `services/notification-service`'s own new email module (E16
+ * T2). `.env`'s own already-committed `EMAIL_PROVIDER=smtp` (predates this
+ * epic) is respected, not overridden — `nodemailer`'s SMTP transport is
+ * the direct fit, sending through the real local `mailhog` container in
+ * dev/test (`docker-compose.yml`) and a real SMTP relay in production.
+ * `SMTP_USER`/`SMTP_PASSWORD` are blank-tolerant (`optionalNonEmptyString`)
+ * since MailHog needs no auth — a strict `.min(1)` here would fail this
+ * environment's own `.env`, the same blank-tolerance reasoning
+ * `optionalUrl`'s own header comment already established for optional
+ * fields.
+ */
+export const emailEnvSchema = z.object({
+  EMAIL_PROVIDER: z.literal('smtp'),
+  SMTP_HOST: z.string().min(1),
+  SMTP_PORT: z.coerce.number().int().positive(),
+  SMTP_USER: optionalNonEmptyString,
+  SMTP_PASSWORD: optionalNonEmptyString,
+  EMAIL_FROM: z.string().email(),
+});
+export type EmailEnv = z.infer<typeof emailEnvSchema>;
 
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
 export type ServerUrlEnv = z.infer<typeof serverUrlEnvSchema>;
