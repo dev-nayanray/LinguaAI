@@ -509,3 +509,45 @@ export const passwordResetConfirmSchema = z.object({
   newPassword: z.string().min(12).max(256),
 });
 export type PasswordResetConfirmRequest = z.infer<typeof passwordResetConfirmSchema>;
+
+// --- Domain event payloads (EVENT_ARCHITECTURE.md §3) ---
+
+/**
+ * The real payload shape `AuthService.register()`/`OAuthService`'s own
+ * registration path publish for `identity.user.registered` (E2-T8,
+ * `EVENT_ARCHITECTURE.md`'s own catalog). Moved here (E16 T2) — a consumer
+ * outside `apps/api` (`notification-service`, the epic's own second real
+ * consumer) cannot import from `apps/*` (ADR-015), so this schema has to
+ * live in a shared package either way, matching `assessmentAttemptCompletedPayloadSchema`'s
+ * own precedent (`@linguaai/validation/learning`) for the identical reason.
+ */
+export const identityUserRegisteredPayloadSchema = z.object({
+  signupSource: z.string().min(1),
+});
+export type IdentityUserRegisteredPayload = z.infer<typeof identityUserRegisteredPayloadSchema>;
+
+/**
+ * The real payload shape `AuthService.requestPasswordReset()` publishes for
+ * `identity.password.reset_requested` (Part 6, E2-T19; extended E16 T2).
+ * `resetToken` (the raw, one-time token) was added at E16 T2 specifically
+ * to unblock `notification-service`'s own real password-reset email: the
+ * `PasswordResetToken` row stores only `tokenHash` (an irreversible hash,
+ * Part 10) and `resetTokenReference` is just that row's own `id`, which
+ * "reveals nothing usable to complete a reset" — true, and by design, right
+ * up until a real consumer needs to build a working reset link, which is
+ * exactly `notification-service`'s own job. Passing the raw token through
+ * the event is the same trade-off any async "send this one-time secret by
+ * email" delivery pipeline makes; the token is already 1-hour-lived and
+ * single-use-enforced by `confirmPasswordReset()`'s own atomic claim
+ * (`updateMany({ where: { usedAt: null } })`), bounding real exposure to a
+ * short-lived BullMQ job payload on internal-only Redis infrastructure, not
+ * an unbounded new risk. A real, flagged trade-off (RISK_REGISTER), not a
+ * silent one.
+ */
+export const identityPasswordResetRequestedPayloadSchema = z.object({
+  resetTokenReference: z.string().uuid(),
+  resetToken: z.string().min(1),
+});
+export type IdentityPasswordResetRequestedPayload = z.infer<
+  typeof identityPasswordResetRequestedPayloadSchema
+>;
