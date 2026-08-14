@@ -1,6 +1,6 @@
 /**
  * Domain-event envelope + transport (E2-T20, real per-consumer fan-out
- * since E16 T1/ADR-054). Follows EVENT_ARCHITECTURE.md §1/§2 — "ride on
+ * since E16 T1/ADR-055). Follows EVENT_ARCHITECTURE.md §1/§2 — "ride on
  * the same Redis infrastructure already used for BullMQ... no new
  * infrastructure is introduced" and the fixed envelope shape
  * (`eventId`/`type`/`version`/`occurredAt`/`producedBy`/`tenantId`/
