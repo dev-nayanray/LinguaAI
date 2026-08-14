@@ -1,5 +1,6 @@
 import { BookOpen, Brain, Mic, PenLine, Sparkles, Target, Trophy, Headphones } from 'lucide-react';
 import { Button } from '@linguaai/ui';
+import { AgentPersonaHeader, InlineCorrection, MessageBubble } from '@linguaai/ui/ai-chat';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@linguaai/ui/cards';
 import { CefrBadge } from '@linguaai/ui/progress';
 
@@ -95,61 +96,92 @@ export default function LandingPage() {
     <div className="flex min-h-screen flex-col">
       <SiteHeader />
 
-      <main className="flex-1">
+      <main id="main-content" className="flex-1">
         {/* Hero */}
-        <section className="mx-auto max-w-6xl px-4 py-20 tablet:py-28">
-          <div className="mx-auto max-w-3xl text-center">
-            <span className="inline-flex items-center gap-1.5 rounded-pill border border-ai px-3 py-1 type-caption font-semibold text-ai-text">
-              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-              AI-powered language coaching
-            </span>
-            <h1 className="mt-6 type-display-xl text-text">
-              Your personal AI teacher for every language.
-            </h1>
-            <p className="mt-4 type-body-lg text-neutral-text">
-              LinguaAI combines an adaptive AI tutor, structured CEFR courses, real-time speaking
-              practice, and Duolingo-style motivation into one place to actually learn a language —
-              not just collect streak badges.
-            </p>
-            <div className="mt-8 flex flex-col items-center justify-center gap-3 tablet:flex-row">
-              <Button variant="primary" size="default" asChild className="w-full tablet:w-auto">
-                <a href="/register">Start learning free</a>
-              </Button>
-              <Button variant="secondary" size="default" asChild className="w-full tablet:w-auto">
-                <a href="/login">Log in</a>
-              </Button>
-            </div>
-            <div className="mt-6 flex items-center justify-center gap-2">
-              {(['A1', 'B1', 'C1'] as const).map((level) => (
-                <CefrBadge key={level} level={level} />
-              ))}
-              <span className="type-caption text-neutral-text">
-                Every level, from first words to fluency
+        <section className="mx-auto max-w-6xl px-4 py-16 tablet:py-24">
+          <div className="grid grid-cols-1 items-center gap-12 desktop:grid-cols-2 desktop:gap-16">
+            <div>
+              <span className="inline-flex items-center gap-1.5 rounded-pill border border-ai px-3 py-1 type-caption font-semibold text-ai-text">
+                <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+                AI-powered language coaching
               </span>
+              <h1 className="mt-6 type-display-xl text-text">
+                Your personal AI teacher for every language.
+              </h1>
+              <p className="mt-4 type-body-lg text-neutral-text">
+                LinguaAI combines an adaptive AI tutor, structured CEFR courses, real-time speaking
+                practice, and Duolingo-style motivation into one place to actually learn a language
+                — not just collect streak badges.
+              </p>
+              <div className="mt-8 flex flex-col gap-3 tablet:flex-row">
+                <Button variant="primary" size="default" asChild className="w-full tablet:w-auto">
+                  <a href="/register">Start learning free</a>
+                </Button>
+                <Button variant="secondary" size="default" asChild className="w-full tablet:w-auto">
+                  <a href="/login">Log in</a>
+                </Button>
+              </div>
+              <div className="mt-6 flex items-center gap-2">
+                {(['A1', 'B1', 'C1'] as const).map((level) => (
+                  <CefrBadge key={level} level={level} />
+                ))}
+                <span className="type-caption text-neutral-text">
+                  Every level, from first words to fluency
+                </span>
+              </div>
             </div>
+
+            <Card aria-hidden="true" className="shadow-medium">
+              <CardContent className="flex flex-col gap-4 pt-6">
+                <AgentPersonaHeader name="Aria" title="AI Language Tutor" />
+                <div className="flex flex-col gap-3">
+                  <MessageBubble role="user">
+                    How do I say &ldquo;I would like a coffee&rdquo; in Spanish?
+                  </MessageBubble>
+                  <MessageBubble role="ai">Quisiera un café, por favor.</MessageBubble>
+                  <MessageBubble role="user">I go to the store yesterday.</MessageBubble>
+                  <MessageBubble role="ai">
+                    <InlineCorrection
+                      parts={[
+                        { text: 'I go', type: 'original' },
+                        { text: 'I went', type: 'correction' },
+                        { text: ' to the store yesterday.', type: 'original' },
+                      ]}
+                    />
+                  </MessageBubble>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </section>
 
-        {/* Core journeys */}
+        {/* Core journeys — a numbered sequence, not an unordered grid */}
         <section id="how-it-works" className="border-t border-border bg-surface-muted">
           <div className="mx-auto max-w-6xl px-4 py-16 tablet:py-20">
             <div className="mx-auto max-w-2xl text-center">
               <h2 className="type-heading-xl text-text">How LinguaAI teaches you</h2>
               <p className="mt-3 type-body-md text-neutral-text">
-                Four connected loops, not four separate apps bolted together.
+                One connected loop, not four separate apps bolted together.
               </p>
             </div>
-            <div className="mt-12 grid grid-cols-1 gap-6 tablet:grid-cols-2 desktop:grid-cols-4">
-              {JOURNEYS.map((journey) => (
-                <Card key={journey.title}>
-                  <CardHeader>
-                    <journey.icon className="h-6 w-6 text-primary-text" aria-hidden="true" />
-                    <CardTitle className="mt-3">{journey.title}</CardTitle>
-                    <CardDescription>{journey.description}</CardDescription>
-                  </CardHeader>
-                </Card>
+            <ol className="mt-12 grid grid-cols-1 gap-6 tablet:grid-cols-2 desktop:grid-cols-4">
+              {JOURNEYS.map((journey, index) => (
+                <li key={journey.title}>
+                  <Card className="h-full">
+                    <CardHeader>
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-solid type-body-sm font-semibold text-white">
+                          {index + 1}
+                        </span>
+                        <journey.icon className="h-5 w-5 text-primary-text" aria-hidden="true" />
+                      </div>
+                      <CardTitle className="mt-3">{journey.title}</CardTitle>
+                      <CardDescription>{journey.description}</CardDescription>
+                    </CardHeader>
+                  </Card>
+                </li>
               ))}
-            </div>
+            </ol>
           </div>
         </section>
 
@@ -216,7 +248,7 @@ export default function LandingPage() {
                   <li>Daily goals & streaks</li>
                 </ul>
                 <Button variant="secondary" asChild className="w-full">
-                  <a href="/register">Get started</a>
+                  <a href="/register">Create a free account</a>
                 </Button>
               </CardContent>
             </Card>
@@ -249,7 +281,7 @@ export default function LandingPage() {
               Take your free AI assessment and get a roadmap built around your real level.
             </p>
             <Button variant="secondary" size="default" asChild className="mt-8">
-              <a href="/register">Start learning free</a>
+              <a href="/register">Take the free assessment</a>
             </Button>
           </div>
         </section>

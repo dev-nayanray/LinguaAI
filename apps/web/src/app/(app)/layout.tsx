@@ -119,7 +119,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 pb-20 tablet:pb-0">{children}</main>
+        <main id="main-content" className="flex-1 pb-20 tablet:pb-0">
+          {children}
+        </main>
 
         <BottomTabBar
           items={NAV_ITEMS}
