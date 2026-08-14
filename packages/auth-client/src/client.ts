@@ -34,7 +34,7 @@ export class ApiError extends Error {
   }
 }
 
-interface RequestOptions {
+export interface RequestOptions {
   method?: string;
   body?: unknown;
 }
@@ -153,6 +153,16 @@ export function createAuthClient(baseUrl: string) {
     mfaVerify: (dto: MfaVerifyRequest) =>
       authed<void>('/v1/auth/mfa/verify', { method: 'POST', body: dto }),
     logout: () => authed<void>('/v1/auth/logout', { method: 'POST' }),
+    /**
+     * The same 401-retry-aware Bearer-authenticated call `getCurrentUser`/
+     * `mfaEnroll`/etc. above already use internally, exposed generically —
+     * every non-auth REST resource (courses, daily-goals, and whatever
+     * follows) needs this exact transport and previously had no way to
+     * reach it without hand-rolling its own fetch wrapper per app. Lives
+     * here, not duplicated into apps/web and apps/admin separately, per
+     * this repo's own "cross-app logic belongs in packages/" rule.
+     */
+    request: <T>(path: string, options?: RequestOptions) => authed<T>(path, options),
   };
 }
 
