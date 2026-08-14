@@ -76,7 +76,15 @@ export default function DashboardPage() {
       )}
 
       <h2 className="mt-10 type-heading-lg text-text">Continue learning</h2>
-      <div className="mt-4 grid grid-cols-1 gap-4 tablet:grid-cols-3">
+      <div className="mt-4 grid grid-cols-1 gap-4 tablet:grid-cols-4">
+        <a href="/assessment">
+          <Card className="h-full transition-colors duration-micro hover:bg-surface-muted">
+            <CardHeader>
+              <CardTitle>Take assessment</CardTitle>
+              <CardDescription>Find your real CEFR level, skill by skill.</CardDescription>
+            </CardHeader>
+          </Card>
+        </a>
         <a href="/courses">
           <Card className="h-full transition-colors duration-micro hover:bg-surface-muted">
             <CardHeader>
