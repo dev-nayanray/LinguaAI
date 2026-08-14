@@ -1,0 +1,175 @@
+# Epic E21 — Mobile Application (Flutter Parity)
+
+**Epic ID:** E21 (ROADMAP.md)
+**Status:** Design phase only — **not implemented**. This is a genuine, tooling-driven scope limit, not a judgment call: the Flutter SDK is not installed in this environment (`flutter --version` → command not found), so no Dart/Flutter code can be written and actually verified (real `flutter analyze`/`flutter test`/`flutter build` runs) to this repo's own quality bar. Per explicit user direction, this epic proceeds through the design gates only (IMPLEMENTATION_GUIDE.md phases 1–10) and stops there — no scaffold, no `pubspec.yaml`, no Dart source is added in this pass. `apps/mobile/` remains its current `.gitkeep`-only placeholder.
+**Tech lead:** Mobile Platform (TBD)
+**Gate owners assigned:** Architecture, Database, API, Security (Frontend/Accessibility/Performance gates apply once Flutter tooling is available and implementation actually starts — see §13)
+
+## 0. Why this document exists now, and what it is not
+
+Per ROADMAP.md's own dependency table, E21 depends on **E2–E17**. Direct inspection of every one of those epics' own ROADMAP.md rows (not re-derived from code) confirms all sixteen are genuinely implementation-complete as of 2026-08-14 — the full real API/event surface E21 needs to consume already exists. E21 is therefore the first mobile-facing epic in this project's history, not a partial one: nothing about its own scope is blocked by an unfinished dependency, only by the missing Flutter toolchain in this environment.
+
+This is the **first, single-pass design** for the Mobile Application (PRD.md module 28). Per PRD.md's own MVP scope line ("Ship web (responsive) first; mobile (Flutter) and admin follow in the same major phase") and ROADMAP.md's own MVP module description ("Module 28 — Mobile Application (Flutter, core learning loop, last-write-wins offline sync)"), this epic's real scope is narrower than "rebuild every web screen in Dart" — it is the **core learning loop**, explicitly bounded in §1 below. This document does not write any application code; it designs the module, surfaces real gaps found while doing so (§3), and proposes the ADRs implementation will need (§7). Because implementation cannot proceed in this environment, §9's task table is written as a real, sequenced plan for whoever (human or a future agent run with Flutter tooling available) picks this up next — not retrofitted after the fact the way E19/E20's task tables were.
+
+## 1. Epic Definition
+
+PRD.md names one module this epic covers:
+
+| #   | Module             | Description         | Differentiator                              |
+| --- | ------------------ | ------------------- | ------------------------------------------- |
+| 28  | Mobile Application | Flutter iOS/Android | Same major phase as web, may trail by weeks |
+
+ROADMAP.md's own MVP-scope line (§33) narrows this further: **"Flutter, core learning loop, last-write-wins offline sync."** "Full mobile offline conflict-resolution UX" is explicitly Growth-phase (ROADMAP.md:141), and "full multi-device/offline conflict resolution" is explicitly classified Version 1.1 (ROADMAP.md:116) — this epic ships the simpler last-write-wins semantics only, by design, not as a shortcut.
+
+**In scope (the "core learning loop"):**
+
+- **Auth** — register/login/OAuth (Google/Apple)/MFA challenge against the existing `/v1/auth/*` contract (E2), Bearer-JWT access tokens (ADR-018, already written specifically anticipating this epic), refresh tokens in platform-secure storage (Keychain/Keystore).
+- **Course consumption + exercise attempts** — the published-content read API and exercise-attempt submission (E8), including offline capture of an attempt while disconnected and last-write-wins sync on reconnect (§6.3, §3.2).
+- **Vocabulary review (SRS)** — due-cards query and review submission (E9).
+- **Gamification display** — XP/streak/badges/missions read (`GET /v1/gamification/me`/`badges`/`missions`, E14) and daily goal (E7).
+- **Push notifications** — device-token registration and receipt of a real push (streak-at-risk, daily-goal-ready style reminders), a real, found gap this epic closes (§3.1).
+- **Design-token parity** — Flutter theme sourced from the same `packages/ui` tokens web/admin already use, via ADR-024's already-built, never-committed generation pipeline (§6.1).
+
+**Explicitly out of scope** (cited against ROADMAP.md/PRD.md's own classification, not silently absorbed):
+
+- **Speaking Practice / Pronunciation Lab** (E10/E11) — real-time WebSocket audio streaming, microphone permission handling, and background-audio-session management are a materially larger mobile-specific build (buffering, interruption handling, platform-divergent audio APIs) than this epic's own "core learning loop" bar justifies at first pass. A real, separately-scoped follow-up epic once the core loop ships and is validated.
+- **Writing Assistant / AI Story Generator** (E13) — no PRD/ROADMAP requirement names mobile parity for this module at MVP; a real, later follow-up.
+- **Exam Preparation System** (E19) — same reasoning; a real, later follow-up, likely paired with the Certificate-listing screen (E20) once built.
+- **Billing/subscription management screens** (E15) — App Store/Play Store in-app-purchase policy (Apple/Google's own mandatory IAP cut for digital subscriptions sold inside the app) is a real, separate legal/commercial decision this epic does not make; a caller who subscribed on web simply sees their existing entitlement reflected (read-only), never a mobile purchase flow.
+- **Admin Platform** (E18) — no PRD requirement names a mobile admin surface at all.
+- **Full offline conflict resolution** — Version 1.1 per ROADMAP.md's own classification (§0 above); this epic ships last-write-wins only.
+
+## 2. Business Objective
+
+Without this epic, PRD.md's own module-28 promise ("same major phase as web") is unfulfilled — web (E1–E20) and the design system (E3) are real and complete, but no mobile client exists at all (`apps/mobile/` is an empty placeholder). Mobile is the platform's primary acquisition channel for the "Maria"/"Kenji" personas' actual daily-use pattern (short sessions, commute/downtime use), and the gamification/streak mechanics E14 already built lose most of their real-world retention power without a device that can push a notification when a streak is at risk — this epic is what turns E14's already-shipped `atRisk` streak field (currently always `false`, per E14's own row: "a real 'about to lose your streak' prediction needs a scheduled job, out of T1's own scope") and E7's `recommendation.daily_goal.ready` event into something a learner actually receives.
+
+## 3. Real gaps found while designing this epic, and the decisions made about each
+
+### 3.1 No mechanism exists anywhere for a client to register a push-notification device token — a real, load-bearing gap this epic must close, not inherit already-solved
+
+EVENT_ARCHITECTURE.md's full ~27-row event catalog has no `identity.*`/`notification.*` event for "a device registered a push token," and no REST endpoint anywhere in `apps/api` or `services/notification-service` accepts one. `notification-service` (E16) is real and complete, but its only real delivery channel is SMTP email (`nodemailer`) — no `PushProvider` exists, mirroring the same "provider adapter" pattern `speech-service` already established for STT/TTS/pronunciation (`SttProvider`/`TtsProvider`/`PronunciationProvider`). Per EVENT_ARCHITECTURE.md §6 ("what is not an event" — request-scoped synchronous state-sets are not event-worthy occurrences), device-token registration is a synchronous REST write (`POST /v1/notifications/device-tokens`), not a new catalog event — the same reasoning that already governs `notification.preference.changed`'s own narrow scope. **Decision:** add a new `DeviceToken` model (userId, platform `IOS`/`ANDROID`, token, `lastSeenAt`) to `identity.prisma` (device identity is an Identity-domain concern, not a Notification-domain one — the model's write path is `apps/api`, its read path is `notification-service` at send time, the same cross-service-read-via-internal-API pattern ADR-044 already established for `speech-service`↔`ai-engine`), a real `PushProvider` adapter in `notification-service` (Firebase Cloud Messaging — a single unified API for both iOS and Android via APNs-through-FCM, avoiding two independent provider integrations), and reuse of `recommendation.daily_goal.ready`/a new streak-at-risk producer as the real triggers. Proposed as **ADR-060** (§7).
+
+### 3.2 No offline-storage or last-write-wins sync architecture is specified anywhere — PRD.md names the requirement in one line, this epic must give it a real mechanism
+
+PRD.md/ROADMAP.md commit to "last-write-wins offline sync" as an MVP requirement but specify no mechanism. **Decision:** a local SQLite cache (via `drift`, Flutter's most-adopted typed-SQLite layer) mirrors the subset of server state needed for the core loop read screens (published course content, the caller's own due-cards, gamification summary) and queues writes (exercise attempts, SRS reviews) made while offline. On reconnect, queued writes replay in original order against the same idempotent endpoints already in place (`ExerciseAttempt`/`ReviewLog` creation is naturally append-only, not an update — there is no actual "conflict" to resolve for the two write types this epic's own scope covers, only an ordering question, which queue-replay-in-order answers directly). "Last-write-wins" therefore applies concretely to exactly one case this epic's scope reaches: the cached _read_ copy of mutable server state (e.g., `UserXP` totals) is discarded and replaced wholesale by the server's response on every successful sync, never merged field-by-field — the server is always the winner, by construction, which is the actual, simple meaning of "last-write-wins" this epic needs (not per-field CRDT-style merging, which is real, explicitly-deferred Version 1.1 scope per §1). Proposed as part of **ADR-062** (§7).
+
+### 3.3 No Flutter state-management or app-architecture choice has ever been made — a real, foundational decision this epic cannot defer
+
+Neither ARCHITECTURE.md nor DESIGN_SYSTEM.md names a Flutter state-management library (the closest existing precedent, `apps/web`'s Zustand choice, is React-specific and doesn't transfer). **Decision:** Riverpod (code-generation variant, `riverpod_generator`) — compile-time-safe, testable without a widget tree, the closest idiomatic Flutter analogue to Zustand's own "small, explicit, no boilerplate-heavy Redux ceremony" positioning already chosen for web. Proposed as part of **ADR-061** (§7).
+
+### 3.4 Two epics this epic nominally depends on (E10/E11) are explicitly excluded from this epic's own scope
+
+ROADMAP.md's dependency line names E2–E17 in full, which technically includes E10 (Speaking) and E11 (Pronunciation). §1 above explicitly excludes both from this pass's scope. This is not a contradiction: the dependency line states what must exist _before this epic can safely build against the platform_, not what this epic must itself consume. Named here so the gap is visible, not silently resolved by scoping around it without comment.
+
+## 4. Schema reference
+
+**New model** (`identity.prisma`, ADR-060):
+
+```
+model DeviceToken {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform   DevicePlatform
+  token      String   @unique
+  lastSeenAt DateTime @default(now()) @updatedAt
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+}
+
+enum DevicePlatform {
+  IOS
+  ANDROID
+}
+```
+
+A device re-registering an already-known `token` (e.g., app reinstall on the same device re-issues the same FCM token) upserts `lastSeenAt` rather than erroring — `token` is the natural unique key, not `(userId, platform)`, since a token can move between accounts (shared device, account switch) and the newest registrant is the real, current owner.
+
+No other schema changes — every read/write endpoint this epic's core-loop scope needs already exists against E2/E7/E8/E9/E14's own real models.
+
+## 5. API surface
+
+| Endpoint                                                                                                                                         | Method | Auth               | Notes                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/v1/notifications/device-tokens`                                                                                                                | POST   | `AuthGuard('jwt')` | New (§3.1, ADR-060). Upserts on `token`. Body: `{ platform: 'IOS' \| 'ANDROID', token: string }`                                                                                     |
+| `/v1/notifications/device-tokens/:token`                                                                                                         | DELETE | `AuthGuard('jwt')` | New — sign-out/uninstall cleanup; caller may only delete their own token (404 otherwise, not 403, matching this repo's own enumeration-resistance convention already used elsewhere) |
+| Everything else (`/v1/auth/*`, `/v1/courses/*`, `/v1/vocabulary/*`, `/v1/gamification/*`, `/v1/learning-plans/current`, `/v1/daily-goals/today`) | —      | —                  | Already real (E2/E7/E8/E9/E14) — mobile is a new consumer, not a new producer, of these                                                                                              |
+
+`/v1/notifications/device-tokens` lives in `notification-service`'s own module boundary conceptually but is exposed through `apps/api` (mirroring `SpeechServiceClientService`'s own established "browser/mobile clients never call a backend service directly, only `apps/api`" convention) — `apps/api` writes the `DeviceToken` row directly (it already owns `identity.prisma`) and `notification-service` reads it via its own already-established internal-service Postgres-role access, not a new HTTP hop.
+
+## 6. Cross-cutting mechanics
+
+### 6.1 Design tokens (T1)
+
+`apps/mobile`'s build pipeline invokes `packages/ui`'s `generate:tokens` script (real, already built at E3 T18 per ADR-024 — confirmed present in `packages/ui/package.json`'s own `scripts` block) fresh on every build. The generated `design-tokens.json` is never committed, exactly as ADR-024 already specifies — this epic is that mechanism's first real consumer, not a new design for it.
+
+### 6.2 Auth (T1)
+
+Bearer JWT access token (15 min) in memory only; refresh token (30 day) in `flutter_secure_storage` (Keychain/Keystore-backed) — the concrete mobile-side implementation of ADR-018's own already-written "secure device storage" requirement. Silent refresh on 401, matching web's own existing refresh-rotation contract (E2) exactly — no new server-side behavior needed.
+
+### 6.3 Offline queue (T2, ADR-062)
+
+A `drift`-backed local `PendingWrite` table (endpoint, payload, `createdAt`) records an exercise-attempt or SRS-review submission made while offline; a connectivity-restored listener replays the queue in FIFO order against the real, already-idempotent-by-construction (append-only) endpoints. A replay failure (e.g., the underlying `Exercise` was unpublished server-side in the interim) surfaces to the user as a real, visible sync-conflict notice rather than being silently dropped — §10 open question #1 names the exact UX for this as not yet resolved.
+
+### 6.4 Push (T4, ADR-060)
+
+`firebase_messaging` (Flutter package) obtains the platform token, `POST`s it to §5's new endpoint on every app foreground (idempotent upsert). `notification-service`'s new `FcmPushProvider` sends on the same `Worker`-consumed queue E16 already built, reading the caller's `DeviceToken` rows and respecting `NotificationPreference` exactly as the email channel already does — a new channel on an existing mechanism, not a new mechanism.
+
+## 7. ADR impact
+
+**ADR-060 (proposed):** A new `DeviceToken` model and synchronous `POST /v1/notifications/device-tokens` endpoint, plus a new `FcmPushProvider` in `notification-service`, close the real device-registration gap found at §3.1.
+
+**ADR-061 (proposed):** Riverpod (code-generation variant) as `apps/mobile`'s state-management library (§3.3).
+
+**ADR-062 (proposed):** `drift`-backed local cache + FIFO offline write-queue as the concrete mechanism behind PRD.md's "last-write-wins offline sync" requirement (§3.2/§6.3).
+
+All three formally accepted only once actually implemented, not pre-committed here ahead of the implementation that would make them real — the same discipline every prior epic in this project (ADR-056/057/058/059 most recently) has already established.
+
+## 8. Alternatives considered
+
+- **A dedicated mobile BFF (backend-for-frontend) service** (rejected) — ARCHITECTURE.md §3 already states mobile "calls the same `apps/api` and `services/*` contracts as web," and this epic's own core-loop scope needs no aggregation beyond what already exists (§6 already names the one real BFF-style pattern, admin/mobile dashboard aggregation, as pre-existing).
+- **APNs and FCM as two independent provider integrations** (rejected, §3.1) — FCM's own unified send API already covers APNs delivery for iOS without a second, parallel Apple-specific integration; mirrors this repo's own "one adapter interface, swappable providers" pattern (`SttProvider`/`TtsProvider`) rather than reinventing it per-platform.
+- **A committed `design-tokens.json`** (rejected) — already settled by ADR-024 itself (§6.1); not reopened here.
+- **A general-purpose local database (Hive, ObjectBox) instead of `drift`/SQLite** (rejected, §3.2) — `drift`'s typed, migration-versioned SQL schema is a closer structural match to this project's own Postgres/Prisma-everywhere discipline (ARCHITECTURE.md §5) than a schemaless key-value store, and its query surface is expressive enough for the due-cards/course-content read-cache use case without hand-rolled indexing.
+- **Bloc/Cubit instead of Riverpod** (rejected, §3.3) — both are legitimate; Riverpod's compile-time DI and lack of a required `BuildContext` for state access made it the marginally better fit for a codebase that already leans toward Zustand's "call it from anywhere" ergonomics on web, not a strong rejection of Bloc on its own merits.
+- **Full multi-field conflict resolution instead of last-write-wins** (rejected) — already out of scope per ROADMAP.md's own MVP/Version-1.1 classification (§1); not this epic's decision to make.
+
+## 9. Task sequence
+
+| Task   | Deliverable                                                                                                                                                               | Depends on      | Evidence (design-phase — none yet, blocked on Flutter tooling) |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | -------------------------------------------------------------- |
+| **T1** | `apps/mobile` Flutter project scaffold, design-token consumption (§6.1), Riverpod app shell (ADR-061), auth flows against `/v1/auth/*` (§6.2)                             | E2, E3          | Not started — requires Flutter SDK                             |
+| **T2** | Course/lesson read screens + exercise-attempt submission, `drift`-backed offline queue (§6.3, ADR-062)                                                                    | T1, E8          | Not started                                                    |
+| **T3** | Vocabulary SRS review screen, gamification/daily-goal display                                                                                                             | T1, E7, E9, E14 | Not started                                                    |
+| **T4** | Device-token registration (`DeviceToken` model + `/v1/notifications/device-tokens*`, §5) and `FcmPushProvider` (`notification-service`), push receipt on-device (ADR-060) | T1, E16         | Not started                                                    |
+| **T5** | Fastlane-driven CI/CD (DEPLOYMENT.md §8's existing stub — TestFlight/Play Store internal-track builds per merge to `main`), staging/prod API base-URL environment config  | T1–T4           | Not started                                                    |
+
+## 10. Open questions
+
+1. **Replay-failure UX for the offline queue** (§6.3) — a real product-design question (silent retry-with-backoff vs. an explicit, dismissible in-app conflict notice) not resolved here; deferred to T2's own implementation.
+2. **Crash/error reporting tool** — no client-side crash-reporting tool is established anywhere in this project yet, not even for web (confirmed absent from OBSERVABILITY.md). A real, cross-platform decision (e.g., Sentry) that this epic alone should not make unilaterally just because mobile needs one first; flagged for a platform-wide decision, not silently resolved as a mobile-only choice here.
+3. **App-store signing/certificate management** — DEPLOYMENT.md §8's own stub names Fastlane/TestFlight/Play Store but specifies no signing-key custody model (e.g., Fastlane `match` + a dedicated encrypted certificates repo). Real, deferred to T5.
+
+## 11. Risks
+
+| Risk                                                                                                                       | Mitigation                                                                                                                                               | Owner                 |
+| -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| This entire epic is blocked on Flutter/Dart tooling not present in the current environment                                 | Explicit, tracked blocker (§0) — implementation resumes once tooling is available; design work is not wasted meanwhile                                   | Mobile Platform (TBD) |
+| Push-notification deliverability depends on FCM project credentials that don't yet exist anywhere in this project's config | Real, deferred to T4 — mirrors the same "credential not yet provisioned" pattern RISK_REGISTER R-88 already tracks for `ai-engine`'s own e2e environment | Mobile Platform (TBD) |
+| App Store/Play Store review-timeline latency (DEPLOYMENT.md §8) means a mobile hotfix cannot ship as fast as a web/API one | Kept architecturally separate deploy cadence, already named in DEPLOYMENT.md §8 — not solved by this epic, only inherited                                | Mobile Platform (TBD) |
+
+## 12. Gate sign-off log
+
+| Gate         | Status        | Reviewer | Date | Notes                                                                                                   |
+| ------------ | ------------- | -------- | ---- | ------------------------------------------------------------------------------------------------------- |
+| Architecture | ☐ Not started | —        | —    | Device-token model/endpoint (§3.1/§4/§5), offline-queue mechanism (§3.2/§6.3), state-mgmt choice (§3.3) |
+| Database     | ☐ Not started | —        | —    | New `DeviceToken` model, `DevicePlatform` enum (§4)                                                     |
+| API          | ☐ Not started | —        | —    | New `/v1/notifications/device-tokens*` endpoints (§5)                                                   |
+| Security     | ☐ Not started | —        | —    | Refresh-token secure-storage (§6.2), device-token ownership/enumeration resistance (§5)                 |
+
+Frontend, Accessibility, and Performance gates are not yet applicable — no UI has been built (§0).
+
+## 13. Epic Approval
+
+Design not yet formally approved by an independent Architecture Gate review. **Implementation is explicitly blocked** on Flutter SDK availability in this environment, per explicit user direction after being asked how to proceed given the missing toolchain (§0) — this document itself, not code, is the deliverable of this pass. Once Flutter tooling is available, implementation proceeds task-by-task (§9) under this same design, subject to the same "implement → verify → document → commit → push" discipline every other epic in this project has followed.
