@@ -14,9 +14,12 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import {
   startMockTestAttemptRequestSchema,
+  submitSectionResponseRequestSchema,
   type MockTestAttemptResponse,
+  type MockTestSectionScoreResponse,
   type StartMockTestAttemptRequest,
   type StartMockTestAttemptResponse,
+  type SubmitSectionResponseRequest,
 } from '@linguaai/validation/exams';
 
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
@@ -61,5 +64,34 @@ export class MockTestAttemptsController {
     @Param('id') id: string,
   ): Promise<MockTestAttemptResponse> {
     return this.mockTestAttemptsService.get(req.user, id);
+  }
+
+  @Post(':id/sections/:skill/responses')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      'Submit a section response — objective score (Reading/Listening) or AI band score (Writing/Speaking)',
+  })
+  async submitSectionResponse(
+    @Req() req: JwtAuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('skill') skill: string,
+    @Body(new ZodValidationPipe(submitSectionResponseRequestSchema))
+    dto: SubmitSectionResponseRequest,
+  ): Promise<MockTestSectionScoreResponse> {
+    return this.mockTestAttemptsService.submitSectionResponse(req.user, id, skill, dto);
+  }
+
+  @Post(':id/complete')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Complete an attempt once every section has been scored (idempotent on repeat calls) — real overall band aggregation, exam.mock_test.completed emission',
+  })
+  async complete(
+    @Req() req: JwtAuthenticatedRequest,
+    @Param('id') id: string,
+  ): Promise<MockTestAttemptResponse> {
+    return this.mockTestAttemptsService.complete(req.user, id);
   }
 }

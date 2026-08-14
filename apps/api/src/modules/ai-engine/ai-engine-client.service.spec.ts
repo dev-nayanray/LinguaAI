@@ -350,6 +350,53 @@ describe('AiEngineClientService', () => {
     });
   });
 
+  describe('scoreExamSection', () => {
+    const request = {
+      skill: 'WRITING' as const,
+      taskPrompt: 'Describe a chart.',
+      learnerResponse: 'The chart shows a steady increase.',
+    };
+
+    it('POSTs the validated request body and returns the parsed band score', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ band: 6.5, feedback: 'Solid response overall.' }),
+      } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new AiEngineClientService(config);
+
+      const result = await client.scoreExamSection(request);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://ai-engine.internal:4001/v1/exam-scoring/section',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      const [, init] = fetchMock.mock.calls[0]!;
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual(request);
+      expect(result).toEqual({ band: 6.5, feedback: 'Solid response overall.' });
+    });
+
+    it('throws a clear error, including the upstream message, when ai-engine responds with a non-2xx status', async () => {
+      const fetchMock = fakeFetch();
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { message: 'model response failed schema validation' } }),
+      } as unknown as Response);
+      global.fetch = fetchMock;
+      const client = new AiEngineClientService(config);
+
+      await expect(client.scoreExamSection(request)).rejects.toThrow(
+        'ai-engine returned 500 scoring an exam section: model response failed schema validation',
+      );
+    });
+  });
+
   describe('draftLesson', () => {
     const request = {
       languageId: '22222222-2222-2222-2222-222222222222',

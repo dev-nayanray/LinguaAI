@@ -147,6 +147,8 @@ model MockTestSectionScore {
   mockTestAttemptId String @db.Uuid
   skill             Skill
   score             Float
+  /// E19 T2 — real AI-generated feedback for Writing/Speaking (RAG-grounded, `ExamScoringService`); always null for objectively-scored Reading/Listening (nothing to explain beyond a right/wrong count).
+  feedback          String?
 
   createdAt DateTime @default(now())
 

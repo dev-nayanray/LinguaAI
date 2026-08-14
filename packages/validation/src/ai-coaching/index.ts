@@ -212,6 +212,31 @@ export const scoreWritingRequestSchema = z.object({
 });
 export type ScoreWritingRequest = z.infer<typeof scoreWritingRequestSchema>;
 
+// --- Exam (IELTS) Writing/Speaking band scoring (E19 T2, design doc §6.2, ADR-058) ---
+
+/**
+ * `POST /v1/exam-scoring/section` request body — grounds
+ * `ExamScoringService`'s own RAG-scoring call against the real
+ * `EXAM_RUBRIC` knowledge base (no `languageId` filter: IELTS assesses
+ * English proficiency specifically, not a caller-chosen target language,
+ * and the seeded `EXAM_RUBRIC` entries themselves carry no `languageId`
+ * either — `RagRetrievalService`'s own retrieval already matches a
+ * null-`languageId` row regardless of what's passed).
+ */
+export const scoreExamSectionRequestSchema = z.object({
+  skill: z.enum(['WRITING', 'SPEAKING']),
+  taskPrompt: z.string().min(1),
+  learnerResponse: z.string().min(1).max(10000),
+});
+export type ScoreExamSectionRequest = z.infer<typeof scoreExamSectionRequestSchema>;
+
+/** IELTS's own real 0–9 band scale, always a multiple of 0.5. */
+export const examSectionScoreSchema = z.object({
+  band: z.number().min(0).max(9).multipleOf(0.5),
+  feedback: z.string().min(1),
+});
+export type ExamSectionScore = z.infer<typeof examSectionScoreSchema>;
+
 // --- Session-end fluency scoring (E10 T5, design doc §6.4, ADR-048) ---
 
 /** `FluencyScore.componentScores`'s own real shape (the schema column itself only documents an *example* shape — this is the actual source of truth, per that column's own doc comment). */

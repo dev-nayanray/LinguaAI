@@ -8,23 +8,26 @@ import { authenticator } from 'otplib';
 import request from 'supertest';
 
 import { AppModule } from '../src/app.module.js';
+import { AiEngineClientService } from '../src/modules/ai-engine/ai-engine-client.service.js';
 import { SpeechServiceClientService } from '../src/modules/speech-service-client/speech-service-client.service.js';
 import { registerAndLogin, TEST_PASSWORD, type RegisteredSession } from './helpers/auth-flow.js';
 
 /**
- * Real integration tests against live Postgres (E19 T1, design doc §5).
- * `SpeechServiceClientService` is stubbed — mirroring
- * `listening-content.e2e-spec.ts`'s own established "mock the boundary, not
- * the system under test" discipline (E12 T1): `synthesizeSpeech` is a real
- * HTTP call to a separately-deployed `services/speech-service` process this
- * test environment doesn't run with real OpenAI credentials
- * (RISK_REGISTER R-88). What this suite verifies for real: `ADMIN`
- * authoring of a full `ExamProgram` + four `MockTestSection`s, that a
- * `LISTENING` section's real persisted content ends up with the
- * server-side-synthesized `{ audioUrl, transcript, questions }` shape
- * (never the draft `{ script, questions }` shape), the learner-facing
- * catalog/attempt-start flow, and that `correctIndex` never reaches a
- * learner in a started attempt's own served sections.
+ * Real integration tests against live Postgres (E19 T1/T2, design doc §5).
+ * `SpeechServiceClientService`/`AiEngineClientService` are both stubbed —
+ * mirroring `listening-content.e2e-spec.ts`'s (E12 T1) and
+ * `writing-submissions.e2e-spec.ts`'s (E13 T2) own established "mock the
+ * boundary, not the system under test" discipline: both are real HTTP
+ * calls to separately-deployed processes this test environment doesn't run
+ * with real credentials (RISK_REGISTER R-88). What this suite verifies for
+ * real: `ADMIN` authoring of a full `ExamProgram` + four
+ * `MockTestSection`s, that a `LISTENING` section's real persisted content
+ * ends up with the server-side-synthesized `{ audioUrl, transcript,
+ * questions }` shape, the learner-facing catalog/attempt-start flow,
+ * `correctIndex` never reaching a learner, real objective Reading/Listening
+ * scoring against the section's own real answer key, real AI-scored
+ * Writing/Speaking sections, and real overall band aggregation on
+ * completion.
  */
 describe('ExamsModule (e2e)', () => {
   let app: INestApplication;
@@ -35,6 +38,10 @@ describe('ExamsModule (e2e)', () => {
   const speechServiceClientStub: Pick<SpeechServiceClientService, 'synthesizeSpeech'> = {
     synthesizeSpeech,
   };
+  const scoreExamSection = jest.fn();
+  const aiEngineClientStub: Pick<AiEngineClientService, 'scoreExamSection'> = {
+    scoreExamSection,
+  };
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
@@ -42,6 +49,8 @@ describe('ExamsModule (e2e)', () => {
     })
       .overrideProvider(SpeechServiceClientService)
       .useValue(speechServiceClientStub)
+      .overrideProvider(AiEngineClientService)
+      .useValue(aiEngineClientStub)
       .compile();
     app = moduleRef.createNestApplication();
     app.use(cookieParser());
@@ -51,9 +60,13 @@ describe('ExamsModule (e2e)', () => {
 
   afterEach(() => {
     synthesizeSpeech.mockReset();
+    scoreExamSection.mockReset();
   });
 
   afterAll(async () => {
+    await setupPrisma.mockTestSectionScore.deleteMany({
+      where: { mockTestAttempt: { examProgramId: { in: createdExamProgramIds } } },
+    });
     await setupPrisma.mockTestAttempt.deleteMany({
       where: { examProgramId: { in: createdExamProgramIds } },
     });
@@ -288,5 +301,147 @@ describe('ExamsModule (e2e)', () => {
       .send({ examProgramId: randomUUID() });
 
     expect(res.status).toBe(404);
+  });
+
+  describe('section-response submission & completion (T2)', () => {
+    async function startIeltsAttempt(learner: RegisteredSession): Promise<string> {
+      const ielts = await setupPrisma.examProgram.findUniqueOrThrow({ where: { code: 'IELTS' } });
+      const startRes = await request(app.getHttpServer())
+        .post('/v1/mock-test-attempts')
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ examProgramId: ielts.id });
+      expect(startRes.status).toBe(201);
+      return startRes.body.id as string;
+    }
+
+    it('objectively scores Reading/Listening against the real seeded answer key and computes a real overall band on completion', async () => {
+      const learner = await freshSession();
+      const attemptId = await startIeltsAttempt(learner);
+
+      // Real seeded IELTS Reading answer key (packages/database/scripts/seed.ts): both correct -> 100% -> band 9.
+      const readingRes = await request(app.getHttpServer())
+        .post(`/v1/mock-test-attempts/${attemptId}/sections/READING/responses`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({
+          answers: [
+            { questionIndex: 0, selectedIndex: 2 },
+            { questionIndex: 1, selectedIndex: 1 },
+          ],
+        });
+      expect(readingRes.status).toBe(201);
+      expect(readingRes.body).toEqual({ skill: 'READING', score: 9, feedback: null });
+
+      // Real seeded IELTS Listening answer key: correct -> 100% -> band 9.
+      const listeningRes = await request(app.getHttpServer())
+        .post(`/v1/mock-test-attempts/${attemptId}/sections/LISTENING/responses`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ answers: [{ questionIndex: 0, selectedIndex: 1 }] });
+      expect(listeningRes.status).toBe(201);
+      expect(listeningRes.body).toEqual({ skill: 'LISTENING', score: 9, feedback: null });
+
+      scoreExamSection.mockResolvedValueOnce({ band: 6.5, feedback: 'Solid task response.' });
+      const writingRes = await request(app.getHttpServer())
+        .post(`/v1/mock-test-attempts/${attemptId}/sections/WRITING/responses`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ text: 'The chart shows internet access rising steadily from 2000 to 2020.' });
+      expect(writingRes.status).toBe(201);
+      expect(writingRes.body).toEqual({
+        skill: 'WRITING',
+        score: 6.5,
+        feedback: 'Solid task response.',
+      });
+      expect(scoreExamSection).toHaveBeenCalledWith(expect.objectContaining({ skill: 'WRITING' }));
+
+      scoreExamSection.mockResolvedValueOnce({
+        band: 6,
+        feedback: 'Fairly fluent, some hesitation.',
+      });
+      const speakingRes = await request(app.getHttpServer())
+        .post(`/v1/mock-test-attempts/${attemptId}/sections/SPEAKING/responses`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ text: 'I grew up in a small town near the coast.' });
+      expect(speakingRes.status).toBe(201);
+      expect(speakingRes.body).toEqual({
+        skill: 'SPEAKING',
+        score: 6,
+        feedback: 'Fairly fluent, some hesitation.',
+      });
+
+      // mean(9, 9, 6.5, 6) = 7.625 -> rounds to 7.5.
+      const completeRes = await request(app.getHttpServer())
+        .post(`/v1/mock-test-attempts/${attemptId}/complete`)
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+      expect(completeRes.status).toBe(200);
+      expect(completeRes.body.status).toBe('COMPLETED');
+      expect(completeRes.body.overallScore).toBe(7.5);
+
+      // Idempotent on repeat calls — matches AssessmentService's own established contract.
+      const repeatCompleteRes = await request(app.getHttpServer())
+        .post(`/v1/mock-test-attempts/${attemptId}/complete`)
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+      expect(repeatCompleteRes.status).toBe(200);
+      expect(repeatCompleteRes.body.overallScore).toBe(7.5);
+
+      await setupPrisma.mockTestSectionScore.deleteMany({
+        where: { mockTestAttemptId: attemptId },
+      });
+      await setupPrisma.mockTestAttempt.delete({ where: { id: attemptId } });
+    });
+
+    it('rejects completing an attempt before every section has been scored', async () => {
+      const learner = await freshSession();
+      const attemptId = await startIeltsAttempt(learner);
+
+      const readingRes = await request(app.getHttpServer())
+        .post(`/v1/mock-test-attempts/${attemptId}/sections/READING/responses`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ answers: [{ questionIndex: 0, selectedIndex: 2 }] });
+      expect(readingRes.status).toBe(201);
+
+      const completeRes = await request(app.getHttpServer())
+        .post(`/v1/mock-test-attempts/${attemptId}/complete`)
+        .set('Authorization', `Bearer ${learner.accessToken}`);
+      expect(completeRes.status).toBe(409);
+
+      await setupPrisma.mockTestSectionScore.deleteMany({
+        where: { mockTestAttemptId: attemptId },
+      });
+      await setupPrisma.mockTestAttempt.delete({ where: { id: attemptId } });
+    });
+
+    it('rejects submitting a response twice for the same section', async () => {
+      const learner = await freshSession();
+      const attemptId = await startIeltsAttempt(learner);
+
+      const first = await request(app.getHttpServer())
+        .post(`/v1/mock-test-attempts/${attemptId}/sections/READING/responses`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ answers: [{ questionIndex: 0, selectedIndex: 2 }] });
+      expect(first.status).toBe(201);
+
+      const second = await request(app.getHttpServer())
+        .post(`/v1/mock-test-attempts/${attemptId}/sections/READING/responses`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ answers: [{ questionIndex: 0, selectedIndex: 2 }] });
+      expect(second.status).toBe(409);
+
+      await setupPrisma.mockTestSectionScore.deleteMany({
+        where: { mockTestAttemptId: attemptId },
+      });
+      await setupPrisma.mockTestAttempt.delete({ where: { id: attemptId } });
+    });
+
+    it('rejects submitting "text" for an objectively-scored Reading section', async () => {
+      const learner = await freshSession();
+      const attemptId = await startIeltsAttempt(learner);
+
+      const res = await request(app.getHttpServer())
+        .post(`/v1/mock-test-attempts/${attemptId}/sections/READING/responses`)
+        .set('Authorization', `Bearer ${learner.accessToken}`)
+        .send({ text: 'not valid for this skill' });
+      expect(res.status).toBe(409);
+
+      await setupPrisma.mockTestAttempt.delete({ where: { id: attemptId } });
+    });
   });
 });

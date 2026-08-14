@@ -177,6 +177,8 @@ export const aiGatewayEnvSchema = z.object({
   AI_MODEL_FLUENCY_DEFAULT: z.string().min(1),
   /** E13 T1 (ADR-052) — the fifth `AiRequestClass`, RAG-grounded writing correction (`services/ai-engine/src/writing-coaching/`). A materially different rubric/purpose from single-essay placement `'assessment'` scoring: ongoing, repeatable formative practice, not a CEFR-banded placement critique — the same category-error avoidance ADR-039/041/048 each already established for their own domains. */
   AI_MODEL_WRITING_DEFAULT: z.string().min(1),
+  /** E19 T2 (ADR-058) — the sixth `AiRequestClass`, RAG-grounded IELTS band scoring (`services/ai-engine/src/exam-scoring/`). IELTS's own real per-skill criteria and 0-9 band scale are materially different rubrics from both `'assessment'`'s CEFR placement critique and `'writing'`'s grammar-correction rubric — the same category-error avoidance ADR-039/041/048/052 each already established for their own domains. */
+  AI_MODEL_EXAM_DEFAULT: z.string().min(1),
   /**
    * ADR-034 (E5 T9): the cost circuit breaker's DEGRADE stage target —
    * "degrade new requests to a cheaper model tier where the request
@@ -190,6 +192,7 @@ export const aiGatewayEnvSchema = z.object({
   AI_MODEL_CONTENT_ECONOMY: optionalNonEmptyString,
   AI_MODEL_FLUENCY_ECONOMY: optionalNonEmptyString,
   AI_MODEL_WRITING_ECONOMY: optionalNonEmptyString,
+  AI_MODEL_EXAM_ECONOMY: optionalNonEmptyString,
 });
 export type AiGatewayEnv = z.infer<typeof aiGatewayEnvSchema>;
 

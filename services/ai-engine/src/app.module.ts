@@ -7,6 +7,7 @@ import { RegistryModule } from './agents/registry/registry.module.js';
 import { AssessmentScoringModule } from './assessment-scoring/assessment-scoring.module.js';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter.js';
 import { ContentAuthoringModule } from './content-authoring/content-authoring.module.js';
+import { ExamScoringModule } from './exam-scoring/exam-scoring.module.js';
 import { FluencyScoringModule } from './fluency-scoring/fluency-scoring.module.js';
 import { GatewayModule } from './gateway/gateway.module.js';
 import { HealthController } from './health/health.controller.js';
@@ -34,6 +35,7 @@ import { WritingCoachingModule } from './writing-coaching/writing-coaching.modul
     PartitionMaintenanceModule,
     FluencyScoringModule,
     WritingCoachingModule,
+    ExamScoringModule,
   ],
   controllers: [HealthController],
   providers: [

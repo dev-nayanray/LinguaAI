@@ -5,6 +5,8 @@ import {
   correctWritingRequestSchema,
   draftStoryRequestSchema,
   endAgentSessionRequestSchema,
+  examSectionScoreSchema,
+  scoreExamSectionRequestSchema,
   scoreFluencyRequestSchema,
   scoreFluencyResponseSchema,
   scoreWritingRequestSchema,
@@ -17,6 +19,8 @@ import {
   type AgentMessageStreamEvent,
   type CorrectWritingRequest,
   type DraftStoryRequest,
+  type ExamSectionScore,
+  type ScoreExamSectionRequest,
   type ScoreFluencyResponse,
   type ScoreWritingRequest,
   type SendAgentMessageRequest,
@@ -246,6 +250,29 @@ export class AiEngineClientService {
       );
     }
     return writingCorrectionResultSchema.parse(await response.json());
+  }
+
+  /**
+   * E19 T2 (ADR-058, design doc §6.2) — wired into
+   * `MockTestAttemptsService.submitSectionResponse()` for the Writing/
+   * Speaking sections only (Reading/Listening are scored objectively,
+   * in-process, no AI call).
+   */
+  async scoreExamSection(input: ScoreExamSectionRequest): Promise<ExamSectionScore> {
+    const response = await fetch(`${this.config.AI_ENGINE_URL}/v1/exam-scoring/section`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(scoreExamSectionRequestSchema.parse(input)),
+    });
+    if (!response.ok) {
+      const errorBody = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      throw new Error(
+        `ai-engine returned ${response.status} scoring an exam section: ${errorBody?.error?.message ?? 'unknown error'}`,
+      );
+    }
+    return examSectionScoreSchema.parse(await response.json());
   }
 
   /**

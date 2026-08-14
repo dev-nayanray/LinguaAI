@@ -112,6 +112,7 @@ describe('loadConfig', () => {
         AI_MODEL_CONTENT_DEFAULT: 'claude-sonnet-5',
         AI_MODEL_FLUENCY_DEFAULT: 'claude-sonnet-5',
         AI_MODEL_WRITING_DEFAULT: 'claude-sonnet-5',
+        AI_MODEL_EXAM_DEFAULT: 'claude-sonnet-5',
       });
       expect(result.AI_GATEWAY_DEFAULT_PROVIDER).toBe('anthropic');
     });
@@ -125,6 +126,7 @@ describe('loadConfig', () => {
         AI_MODEL_CONTENT_DEFAULT: 'claude-sonnet-5',
         AI_MODEL_FLUENCY_DEFAULT: 'claude-sonnet-5',
         AI_MODEL_WRITING_DEFAULT: 'claude-sonnet-5',
+        AI_MODEL_EXAM_DEFAULT: 'claude-sonnet-5',
         AI_MODEL_TEACHER_ECONOMY: '',
       });
       expect(result.AI_MODEL_TEACHER_ECONOMY).toBeUndefined();
@@ -141,6 +143,7 @@ describe('loadConfig', () => {
           AI_MODEL_CONTENT_DEFAULT: 'claude-sonnet-5',
           AI_MODEL_FLUENCY_DEFAULT: 'claude-sonnet-5',
           AI_MODEL_WRITING_DEFAULT: 'claude-sonnet-5',
+          AI_MODEL_EXAM_DEFAULT: 'claude-sonnet-5',
         }),
       ).toThrow(ConfigValidationError);
     });

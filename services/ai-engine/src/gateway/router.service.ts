@@ -34,8 +34,13 @@ import type {
  * writing correction, a materially different rubric/purpose from
  * `'assessment'`'s own single-essay placement-test critique (ongoing,
  * repeatable formative practice, not a CEFR-banded placement score).
+ * `'exam'` (E19 T2, ADR-058) is the sixth — RAG-grounded IELTS band
+ * scoring, again materially different: a real 0-9 band scale judged
+ * against IELTS's own named per-skill criteria (Task Achievement,
+ * Coherence and Cohesion, etc.), grounded in `EXAM_RUBRIC`-category
+ * descriptors rather than `CEFR_DESCRIPTOR`/`GRAMMAR_REFERENCE` ones.
  */
-export type AiRequestClass = 'teacher' | 'assessment' | 'content' | 'fluency' | 'writing';
+export type AiRequestClass = 'teacher' | 'assessment' | 'content' | 'fluency' | 'writing' | 'exam';
 
 /** ADR-034 (T9): 'economy' is the cost circuit breaker's DEGRADE target — falls back to 'default' per class if no economy model is configured, rather than failing the request over a config gap. */
 export type ModelTier = 'default' | 'economy';
@@ -69,6 +74,8 @@ export class RouterService {
         return this.config.fluencyModel;
       case 'writing':
         return this.config.writingModel;
+      case 'exam':
+        return this.config.examModel;
     }
   }
 
@@ -84,6 +91,8 @@ export class RouterService {
         return this.config.fluencyEconomyModel;
       case 'writing':
         return this.config.writingEconomyModel;
+      case 'exam':
+        return this.config.examEconomyModel;
     }
   }
 

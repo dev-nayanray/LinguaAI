@@ -226,3 +226,45 @@ export const startMockTestAttemptResponseSchema = mockTestAttemptSchema.extend({
   sections: z.array(mockTestSectionPublicViewSchema),
 });
 export type StartMockTestAttemptResponse = z.infer<typeof startMockTestAttemptResponseSchema>;
+
+// --- Section-response submission & scoring (T2, design doc §6.3/§6.2) ---
+
+/** READING/LISTENING — objectively scored, no AI call. `questionIndex` refers to the section's own `content.questions` array position. */
+export const objectiveSectionResponseRequestSchema = z.object({
+  answers: z
+    .array(
+      z.object({
+        questionIndex: z.number().int().min(0),
+        selectedIndex: z.number().int().min(0),
+      }),
+    )
+    .min(1),
+});
+export type ObjectiveSectionResponseRequest = z.infer<typeof objectiveSectionResponseRequestSchema>;
+
+/** WRITING/SPEAKING — RAG-grounded AI band scoring (design doc §6.2). For SPEAKING, `text` is a written transcript of the learner's own spoken response — this epic does not integrate a real live speech-capture session into the mock-test flow (a materially larger, separately-scoped integration, design doc §10); grading a transcript reuses `FluencyScoringService`'s own already-established "read the persisted transcript" precedent (E10 T5). */
+export const writtenSectionResponseRequestSchema = z.object({
+  text: z.string().min(1).max(10000),
+});
+export type WrittenSectionResponseRequest = z.infer<typeof writtenSectionResponseRequestSchema>;
+
+export const submitSectionResponseRequestSchema = z.union([
+  objectiveSectionResponseRequestSchema,
+  writtenSectionResponseRequestSchema,
+]);
+export type SubmitSectionResponseRequest = z.infer<typeof submitSectionResponseRequestSchema>;
+
+export const mockTestSectionScoreResponseSchema = z.object({
+  skill: skillSchema,
+  score: z.number().min(0).max(9),
+  feedback: z.string().nullable(),
+});
+export type MockTestSectionScoreResponse = z.infer<typeof mockTestSectionScoreResponseSchema>;
+
+/** `exam.mock_test.completed` (EVENT_ARCHITECTURE.md catalog, E19 T2) — the real payload `MockTestAttemptsService.complete()` publishes. */
+export const examMockTestCompletedPayloadSchema = z.object({
+  mockTestAttemptId: z.string().uuid(),
+  examProgramId: z.string().uuid(),
+  overallScore: z.number().min(0).max(9),
+});
+export type ExamMockTestCompletedPayload = z.infer<typeof examMockTestCompletedPayloadSchema>;
