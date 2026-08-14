@@ -51,12 +51,14 @@ export default function CoursesPage() {
       {!isLoading && !isError && data && data.data.length > 0 && (
         <div className="mt-6 grid grid-cols-1 gap-4 tablet:grid-cols-2 desktop:grid-cols-3">
           {data.data.map((course) => (
-            <Card key={course.id}>
-              <CardHeader>
-                <CardTitle>{course.title}</CardTitle>
-                {course.description && <CardDescription>{course.description}</CardDescription>}
-              </CardHeader>
-            </Card>
+            <a key={course.id} href={`/courses/${course.id}`}>
+              <Card className="h-full transition-colors duration-micro hover:bg-surface-muted">
+                <CardHeader>
+                  <CardTitle>{course.title}</CardTitle>
+                  {course.description && <CardDescription>{course.description}</CardDescription>}
+                </CardHeader>
+              </Card>
+            </a>
           ))}
         </div>
       )}
