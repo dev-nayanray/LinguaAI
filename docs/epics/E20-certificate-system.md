@@ -1,0 +1,143 @@
+# Epic E20 — Certificate System
+
+**Epic ID:** E20 (ROADMAP.md)
+**Status:** Design — first, single-pass design (2026-08-14), proceeding to implementation by explicit user direction ("next"), the same pattern E9–E19 each followed.
+**Tech lead:** Backend Platform (TBD)
+**Gate owners assigned:** Architecture, Database, API, Security, Testing, Documentation (Frontend/Accessibility gates apply to a later UI epic that builds the actual certificate-display/download screens, not this backend epic — see §3.5)
+
+## 0. Why this document exists now, and what it is not
+
+E19 (Exam Preparation System) is implementation-complete (T1–T3, 2026-08-14 — its own §9 task table's full sequence, confirmed no further task remains). Per ROADMAP.md's own dependency table, E20 (Certificate System) depends only on **E8** (Course Management System, already complete) — not E19, even though E19 T3 already built this epic's own first real `Certificate` producer. E18 (Admin Platform) remains out of this session's own scope (real, standing, uncommitted work-in-progress under a different, unrelated effort, preserved via `git stash` under `e18-admin-wip-standing-exclusion`).
+
+This is the **first, single-pass design** for the Certificate System (PRD.md module 21). This document does not write any application code; it designs the module, surfaces real gaps found while doing so (§3), and proposes the ADR implementation will need (§7).
+
+Confirmed via direct inspection, an unusually favorable starting position — more so even than E19's own: `packages/database/schema/exams.prisma`'s `Certificate` model is **already fully real** (E4 T8, ADR-030) — every field, the hand-written "exactly one of courseId/levelId/examProgramId" CHECK constraint, and the full token-entropy/hashing spec are already specified in that model's own header comment. `apps/api/src/modules/exams/mock-test-attempts.service.ts` (E19 T3) is already this table's own **first real write path**, on the `examProgramId` branch. This epic's own real, remaining scope is narrower than a typical "own dedicated service" epic: **extract** that already-proven issuance logic into a shared, reusable place (§3.1), build the **second** real producer (Course/Level completion, §3.2 — the branch E19 never touched), and build the **public verification endpoint** `exams.prisma`'s own header comment already named, in full, as "E20's own implementation" (§3.3) — a rate limit spec (10 requests/IP/5 minutes) was written down four epics before this one, at schema-design time, and never used until now.
+
+## 1. Epic Definition
+
+PRD.md names one module this epic covers:
+
+| #   | Module             | Description                           | Differentiator                                                                                  |
+| --- | ------------------ | ------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| 21  | Certificate System | Completion certificates, verification | Publicly verifiable via unique URL, explicitly linked to its triggering milestone (DATABASE.md) |
+
+PRD.md names no dedicated journey or numbered acceptance criteria for this module beyond the table row above — the "publicly verifiable via unique URL, explicitly linked to its triggering milestone" phrasing is itself lifted near-verbatim from `exams.prisma`'s own header comment (E4 T8), which is this epic's own real, load-bearing spec.
+
+**In scope:**
+
+- A shared `CertificateService` (`apps/api/src/modules/certificates/`) — the real issuance logic (token generation, hashing, row creation) E19 T3 already built once, inline and private to `mock-test-attempts.service.ts`. Extracted so a second real producer doesn't duplicate it (§3.1). `ExamsModule`'s own existing `examProgramId`-branch call site is refactored to call the shared service instead of its own private helper — a real, in-place consolidation, not a rewrite of already-working, already-tested logic.
+- A second real producer: **Level completion** (§3.2) — `apps/api`'s `ExerciseAttemptsService` (E8 T3), which already computes "every attemptable `Exercise` across a `Lesson`'s own `Activity` set has an attempt on record" to detect lesson completion, is extended to also check "every `Lesson` across every `Unit` in this `Lesson`'s own `Level` is now complete" and, on that real transition, issue a real `Certificate` on the `levelId` branch.
+- A real, public (unauthenticated), rate-limited verification endpoint — `GET /v1/certificates/verify/:token` (§3.3) — the exact "10 requests per IP per 5 minutes" spec `exams.prisma`'s own header comment already committed to, reusing `RateLimitGuard`/`@RateLimit(...)` (E2-T21, already built, already the platform's own established mechanism for exactly this kind of route).
+- A real, authenticated, learner-facing `GET /v1/certificates` listing (own certificates, newest first) — the same "prove a learner can see what they earned" bar `MockTestAttemptsService.list()` (E19 T3) already established for mock-test history.
+
+**Explicitly out of scope** (cited against ROADMAP.md/PRD.md's own classification, not silently absorbed):
+
+- **Course-level completion certificates** (the `courseId` branch) — real, separately-scoped follow-up work (§10 open question #1): a `Course`'s own real "completed" definition (every `Level` complete? An explicit publish-time "capstone" flag?) is a genuine product question this epic's own scope does not resolve; `Level` completion is the real, well-defined unit this epic ships instead, and the schema needs no further migration to add `Course` certificates later.
+- **A PDF/downloadable rendering of a certificate** — no PRD/ROADMAP requirement names one; this epic's own scope is the real data/verification layer, the same "build the API, not the screen" split every prior epic in this codebase has already drawn (E17 §0, E19 §0).
+- **The actual certificate-display/verification-page UI** — a future UI-focused epic's own scope (§3.5), matching E17/E19's own precedent exactly.
+- **Re-issuing or revoking a certificate** — `Certificate` is documented as "never deleted... a legal/verification artifact" (`exams.prisma`'s own header comment, same immutability class as `AuditLog`); no PRD requirement names a revocation flow, and building one is real, separately-scoped trust/safety work this epic does not take on speculatively.
+
+## 2. Business Objective
+
+Without this epic, `Certificate`'s own "publicly verifiable via unique URL" promise — named in PRD.md's own module table — is unfulfilled: a real `Certificate` row exists (since E19 T3) but nothing anywhere can actually verify it. A learner who completes a real IELTS mock test today receives a raw verification token from `POST /v1/mock-test-attempts/:id/complete`'s own response and has no real URL that token resolves against. This epic closes that gap for real, and extends the same real mechanism to the platform's own largest completion surface (Course/Level, not just the newer Exam Preparation module) — proving the shared mechanism generalizes rather than staying a one-off built for a single caller.
+
+## 3. Real gaps found while designing this epic, and the decisions made about each
+
+### 3.1 Certificate issuance logic is currently private to one module — a real, found duplication risk closed by extraction, not by copy-pasting a second time
+
+Confirmed via direct inspection: `mock-test-attempts.service.ts`'s own `generateVerificationToken()` (raw 32-byte `crypto.randomBytes`, base64url-encoded; SHA-256 hex digest stored) is a private, module-local function — not exported, not shared. Building this epic's own second real producer (Level completion, §3.2) by copy-pasting the same function into `apps/api/src/modules/course/` would create the exact "two independently-hand-maintained shapes that could quietly diverge" risk `assessment.attempt.completed`'s own event-catalog-conformance test (E6 T6) was built specifically to catch for a different kind of drift. This epic extracts a real, shared `CertificateService` instead — a genuine consolidation found while implementing a second real caller, the same "the third caller reveals it should have been shared all along" discovery class this codebase has already hit more than once (e.g., `RagRetrievalService`'s own two intended callers, Grammar Coach and Exam Coach, both eventually real).
+
+### 3.2 Level completion is a real, computable milestone using only E8's own existing data — no new event, no new dependency on E14/E17
+
+`ExerciseAttemptsService.maybeEmitLessonCompleted()` (E8 T3) already proves, per lesson, that "every attemptable `Exercise` (excluding never-attemptable `SPEAKING_PROMPT`) across this `Lesson`'s own `Activity` set has at least one attempt on record for this user" — the exact same shape of check, one level up the `Level → Unit → Lesson` hierarchy, answers "has this user completed every `Lesson` in this `Level`." This epic's own real Level-completion check reuses that identical pattern (a real `ExerciseAttempt`-existence query across every exercise transitively under the `Level`, not a query against `LearningEvent`/`analytics-service`, which E20's own ROADMAP.md dependency — E8 only — does not name as available). A real existence check against `Certificate` itself (`findFirst({ where: { userId, levelId } })`) guards against issuing a second certificate for a `Level` already certified — `Certificate` carries no unique constraint on `(userId, levelId)` (only `verificationTokenHash` is unique), so this epic's own service code is the real enforcement point, the same "the database's own constraint isn't the whole story" discipline `MockTestSectionService`'s own one-section-per-skill check (E19 T1) already established for a different table.
+
+### 3.3 The public verification endpoint's own rate-limit spec was already written, four epics ago — this epic is the first to actually build against it
+
+`exams.prisma`'s own header comment (E4 T8) names the exact number: "the public verification endpoint is limited to 10 requests per IP per 5 minutes, stricter than the platform's general `RATE_LIMIT_WINDOW_MS`/`RATE_LIMIT_MAX_REQUESTS` default... given this endpoint has no auth to fall back on." This epic's own `GET /v1/certificates/verify/:token` implements exactly that number, reusing `RateLimitGuard`/`@RateLimit(...)` (E2-T21) — the identical mechanism `PASSWORD_RESET_REQUEST_RATE_LIMIT`/`MFA_CHALLENGE_RATE_LIMIT` (E2-T21/T22) already use for the platform's own other unauthenticated, enumeration-sensitive endpoints. Only a by-IP rule applies (no `byIdentifier` counter) — the token itself is the _subject_ being checked, not a caller-supplied recurring identity an attacker controls the way an email/challengeToken is in the login-class endpoints; a by-IP-only counter matches the schema's own literal spec, which names only "per IP."
+
+### 3.4 Verification response: real proof, no unnecessary disclosure
+
+A successful verification returns real, non-sensitive proof — `issuedAt`, which real milestone triggered it (`courseId`/`levelId`/`examProgramId`, whichever is set, resolved to a human-readable name via a real join), and the certificate holder's own **display name only** (not email, not `userId`) — enough for a real third party (e.g., an employer) to confirm "this person really earned this," without leaking an account identifier or contact information a public, unauthenticated endpoint should never expose. An invalid/unknown token returns a real, generic "not found," the same enumeration-resistant shape `password-reset/request`'s own E2-T19 precedent already established (never distinguishing "wrong token" from "token that never existed").
+
+### 3.5 Auth model: public for verification, authenticated-own-only for listing — two real, different trust boundaries on the same resource, not one blanket rule
+
+`GET /v1/certificates/verify/:token` is deliberately public — that is the entire point of a "publicly verifiable via unique URL" credential (PRD.md's own wording). `GET /v1/certificates` (a learner's own listing) is deliberately the opposite — `AuthGuard('jwt')`, scoped to the caller's own `userId`, the same shape `MockTestAttemptsService.list()`/`ExamCatalogController` already established. No `ADMIN`-only endpoint is needed at this epic's own scope — nothing here is an authoring surface (unlike `ExamProgramAdminController`); every `Certificate` row is issued automatically by a real completion event, never hand-created by a human operator.
+
+## 4. Schema reference (already real, E4 T8 — no change needed)
+
+`Certificate` (`packages/database/schema/exams.prisma`): `id`, `userId` (FK→`User`, Restrict/Cascade), `courseId`/`levelId`/`examProgramId` (all nullable FKs, Restrict/Cascade — never SET NULL, so a hard-deleted parent row can never silently violate the "exactly one is set" CHECK constraint), `verificationTokenHash` (unique), `issuedAt`, `createdAt`, `updatedAt`. Index on `[userId]`. Never deleted (same immutability class as `AuditLog`).
+
+This epic adds no migration — every model it touches (`Certificate`, `Level`, `Unit`, `Lesson`, `Exercise`, `ExerciseAttempt`) is already real.
+
+## 5. API surface
+
+| Endpoint                             | Auth                        | Task | Purpose                                                                                                         |
+| ------------------------------------ | --------------------------- | ---- | --------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/certificates/verify/:token` | Public, rate-limited (§3.3) | T2   | Real, non-sensitive proof a certificate is genuine — issuedAt, triggering milestone name, holder's display name |
+| `GET /v1/certificates`               | Bearer, own only            | T2   | A learner's own certificates, newest first — the same "historical visibility" bar E19 T3 already established    |
+
+(`Certificate` issuance itself, on both branches, is a real side effect of an already-existing endpoint — `POST /v1/mock-test-attempts/:id/complete`, and `POST /v1/exercises/:id/attempts` once it completes a `Level` — not a new endpoint of its own.)
+
+## 6. Cross-cutting mechanics
+
+### 6.1 `CertificateService` (T1, `apps/api/src/modules/certificates/`)
+
+```ts
+async issue(userId: string, milestone: { courseId?: string; levelId?: string; examProgramId?: string }): Promise<{ rawToken: string; certificate: Certificate }>
+```
+
+Real 32-byte `crypto.randomBytes` → base64url raw token; SHA-256 hex digest is what's actually persisted — extracted verbatim from `mock-test-attempts.service.ts`'s own already-working, already-tested `generateVerificationToken()`, not reimplemented. `ExamsModule` (E19 T3) is refactored to call this shared service; its own existing tests continue to assert the same observable behavior (a real Certificate row, a real raw token returned once), now proven against the shared implementation instead of the module-local one.
+
+### 6.2 Level-completion producer (T1, `apps/api/src/modules/course/exercise-attempts.service.ts`)
+
+`maybeEmitLessonCompleted()` is extended with a real `maybeIssueLevelCertificate(userId, lessonId)` call after a lesson genuinely completes — walks `Lesson → Unit → Level`, checks every `Lesson` in that `Level` is itself complete (the same per-exercise-attempt-existence check, one level up), and calls `CertificateService.issue()` on the `levelId` branch exactly once (guarded by a real `Certificate` existence check, §3.2). No new domain event — `Certificate` issuance itself is not currently a cataloged event; whether it should become one (e.g. for a future `notification-service` "you earned a certificate!" email) is a real, named open question (§10), not silently decided here.
+
+### 6.3 Verification endpoint (T2, `apps/api/src/modules/certificates/`)
+
+Looks up by `verificationTokenHash` (SHA-256 of the caller-supplied raw token — never a raw-token lookup, matching `PasswordResetToken`'s own established discipline), resolves the real triggering milestone's own display name via whichever of `courseId`/`levelId`/`examProgramId` is set, and the certificate holder's own `UserProfile.displayName`. A real, generic 404 on no match — the token itself is 256-bit entropy, so brute-force enumeration is already computationally infeasible regardless of the rate limit (`exams.prisma`'s own header comment); the rate limit is a defense-in-depth backstop, not the primary security mechanism.
+
+## 7. ADR impact
+
+**ADR-059 (proposed, T1):** Certificate issuance is consolidated into a shared `CertificateService` rather than duplicated per producer — the real, found "the second caller reveals shared logic" consolidation (§3.1), extracted from E19 T3's own already-proven implementation rather than a redesign.
+
+Formally accepted once T1 actually ships this decision, not pre-committed here ahead of the implementation that would make it real — the same discipline ADR-056/ADR-058 each already established this session.
+
+## 8. Alternatives considered
+
+- **Copy-pasting `generateVerificationToken()` into the course module instead of extracting a shared service** (rejected, §3.1) — a real, avoidable drift risk for logic this security-sensitive (token entropy/hashing), not a meaningful implementation-speed win.
+- **Deriving Level completion from `LearningEvent`/`analytics-service` instead of a direct `ExerciseAttempt` existence check** (rejected, §3.2) — E20's own ROADMAP.md dependency names only E8, not E17; a real dependency on `analytics-service`'s own ingestion consumer would be an unstated, unreviewed scope expansion, and the direct check this epic uses is the identical pattern `maybeEmitLessonCompleted()` already proved correct one level down.
+- **A `byIdentifier` rate-limit counter (e.g. keyed by the token itself) on the verification endpoint, in addition to by-IP** (rejected, §3.3) — the schema's own literal spec names only a per-IP limit; a token-keyed counter would let an attacker cheaply exhaust a _specific_ certificate holder's own verification attempts by supplying their real token repeatedly, a real, self-inflicted denial-of-service surface with no corresponding security benefit (unlike login/MFA's own `byIdentifier` counters, which defend against credential-guessing across many _different_ identifiers, not repeated presentation of one already-known-valid token).
+- **Course-level completion certificates in this same epic** (rejected, §1) — a real, separate product-definition question ("what does 'completed a Course' actually mean") this epic's own scope does not resolve; Level completion is the well-defined unit shipped instead.
+
+## 9. Task sequence
+
+| Task   | Deliverable                                                                                                                                                                                                                 | Depends on                                                                                       | Evidence (design-phase) |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------- |
+| **T1** | Not started. Shared `CertificateService` (§6.1, ADR-059) extracted from E19 T3's own existing implementation; `ExamsModule` refactored to call it. Real Level-completion producer (§3.2/§6.2) in `ExerciseAttemptsService`. | E8, E19 T3 (branch-stacking — inherits the exact `Certificate`-issuance code this task extracts) | Design-phase only.      |
+| **T2** | Not started. Real, public, rate-limited `GET /v1/certificates/verify/:token` (§3.3/§3.4/§6.3, the exact "10/IP/5min" spec named at E4 T8). Real, authenticated `GET /v1/certificates` learner listing (§5).                 | T1                                                                                               | Design-phase only.      |
+
+## 10. Open questions
+
+1. **What "Course completed" should really mean** (§1's own named out-of-scope item) — a real product-definition question (every `Level` complete? An explicit capstone flag?) for whichever future epic/task takes on the `courseId` branch.
+2. **Whether `Certificate` issuance should become a cataloged domain event** (e.g. `certificate.issued`, for a future `notification-service` congratulatory email) — real, deferred (§6.2); no current consumer names a need for it, and EVENT_ARCHITECTURE.md's own catalog is not extended speculatively ahead of a real consumer, the same discipline E17 T1's own generic-ingestion design already established for "the raw data can exist before a dedicated consumer does," but a _new_ event type is a different bar than routing an already-cataloged one through an already-generic consumer.
+
+## 11. Risks
+
+| Risk                                                                                                                                                          | Mitigation                                                                                                                    | Owner                  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Course-level completion certificates (the `courseId` branch) remain unimplemented — `exams.prisma`'s own CHECK constraint supports it, but no producer exists | Real, separately-scoped follow-up once "Course completed" (§10 open question #1) has a real product answer                    | Backend Platform (TBD) |
+| `Certificate` issuance is not yet a cataloged domain event — no downstream consumer (e.g. a congratulatory notification) can react to it today                | Real, deferred (§10 open question #2); add a cataloged event the moment a real consumer names the need, not speculatively now | Backend Platform (TBD) |
+
+## 12. Gate sign-off log
+
+| Gate         | Status        | Reviewer | Date | Notes                                                                                          |
+| ------------ | ------------- | -------- | ---- | ---------------------------------------------------------------------------------------------- |
+| Architecture | ☐ Not started | —        | —    | Shared `CertificateService` extraction (§3.1/§6.1, ADR-059), Level-completion detection (§3.2) |
+| Database     | ☐ Not started | —        | —    | No migration — confirms `Certificate`/`Level`/`Unit`/`Lesson` already fit                      |
+| API          | ☐ Not started | —        | —    | New `/v1/certificates*` endpoints (§5), public verification trust boundary (§3.5)              |
+| Security     | ☐ Not started | —        | —    | Rate limiting (§3.3), enumeration resistance (§3.4), no PII exposure on the public endpoint    |
+| Testing      | ☐ Not started | —        | —    | Real e2e proof of Level-completion issuance, verification success/404, rate-limit enforcement  |
+
+## 13. Epic Approval
+
+Design not yet formally approved by an independent Architecture Gate review — proceeding to implementation by explicit user direction ("next"), the same pattern E9–E19 each followed.
