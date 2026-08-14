@@ -99,6 +99,10 @@ export default function ProfilePage() {
           </a>
         )}
 
+        <a href="/billing" className="block text-sm text-primary hover:underline">
+          Billing & subscription
+        </a>
+
         <Button
           variant="secondary"
           className="w-full"
