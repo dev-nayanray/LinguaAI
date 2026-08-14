@@ -14,6 +14,7 @@ import { AuthModule } from './modules/auth/index.js';
 import { BillingModule } from './modules/billing/index.js';
 import { CourseModule } from './modules/course/index.js';
 import { GamificationModule } from './modules/gamification/index.js';
+import { NotificationPreferencesModule } from './modules/notification-preferences/index.js';
 import { OrganizationsModule } from './modules/organizations/index.js';
 import { RecommendationsModule } from './modules/recommendations/index.js';
 import { UsersModule } from './modules/users/index.js';
@@ -36,6 +37,7 @@ import { VocabularyModule } from './modules/vocabulary/index.js';
     AuditModule,
     AiEngineClientModule,
     BillingModule,
+    NotificationPreferencesModule,
   ],
   controllers: [HealthController],
   providers: [

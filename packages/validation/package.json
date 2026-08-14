@@ -94,6 +94,16 @@
         "default": "./dist-cjs/gamification/index.js"
       }
     },
+    "./notification": {
+      "import": {
+        "types": "./dist/notification/index.d.ts",
+        "default": "./dist/notification/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/notification/index.d.ts",
+        "default": "./dist-cjs/notification/index.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
